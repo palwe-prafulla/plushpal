@@ -1,16 +1,106 @@
 # PlushBuddy
 
-PlushBuddy is a local-first voice companion app for pretend play. A parent creates kid profiles and toy-character profiles, uploads a short sample of how each toy should sound, approves a cloned voice preview, and then a child can talk to the toy. The child-facing app captures speech or typed text, asks a parent-selected cloud LLM for a safe age-appropriate response, sends only the response text to a local Mac voice appliance, receives a generated WAV in the toy voice, and plays it back.
+**A local-first pretend-play voice companion for kids’ plush toys.**
 
-The current product architecture has four user-facing clients and one local voice appliance:
+PlushBuddy lets a parent create kid profiles, create toy buddies, upload a short
+sample of how each toy should sound, approve the cloned voice, and then let a
+child talk to that toy through an Android app, iPhone app, browser, or Mac app.
+
+The project combines a cross-platform Flutter client with a local macOS “Magic
+Voice Box” that runs the heavier voice model. Cloud LLM reasoning is optional
+and uses the parent’s own Gemini/OpenAI API key; the voice profile and family
+state stay local.
+
+> This is a prototype/product-engineering project, not a hosted service. It is
+> designed to be cloned, built locally, studied, and extended.
+
+## Screenshots
+
+<p>
+  <img src="docs/assets/screenshots/android-welcome.png" alt="PlushBuddy Android welcome screen" width="210" />
+  <img src="docs/assets/screenshots/iphone-simulator-welcome.png" alt="PlushBuddy iPhone simulator welcome screen" width="210" />
+  <img src="docs/assets/screenshots/browser-welcome.png" alt="PlushBuddy browser client welcome screen" width="420" />
+</p>
+
+| Android app | iPhone simulator | Browser client |
+|---|---|---|
+| Parent setup and child-mode entry on a real Android device. | Same shared Flutter client running in the iOS simulator. | Local browser client opened from PlushBuddy Station. |
+
+<p>
+  <img src="docs/assets/screenshots/mac-client-welcome.png" alt="PlushBuddy Mac client welcome screen" width="650" />
+</p>
+
+The Mac app uses the same client experience as the browser version, wrapped in a
+native macOS shell and opened from PlushBuddy Station.
+
+## What it does
+
+- Creates up to four kid profiles with names, birthdates, and photos.
+- Creates toy-buddy characters per kid, each with photo, personality, guidance,
+  persona age, and a separate voice profile.
+- Uploads M4A/WAV/MP3/AAC/OGG/WebM voice samples and creates a local voice
+  profile through LuxTTS.
+- Requires parent approval before a voice can be used in conversation.
+- Supports speech or typed child input on mobile, typed input on desktop/web.
+- Calls Gemini or OpenAI with parent-provided API keys.
+- Redacts/pseudonymizes kid information before cloud reasoning.
+- Synthesizes the response locally on the Mac in the selected toy voice.
+- Keeps conversation history scoped by kid and character.
+
+## Architecture at a glance
+
+PlushBuddy has four user-facing clients and one local voice appliance:
 
 - **Android app**: primary MVP client for parent setup and child conversation.
-- **iPhone app**: same Flutter UI as Android, with iOS-native Keychain, Speech, file picker, cloud reasoning, pairing, and playback.
-- **Browser client**: local web client served by MacStation; it auto-attaches when opened from Station.
-- **Mac client app**: native macOS wrapper around the same browser client UI; it auto-attaches when opened from Station.
-- **PlushBuddy Station / MacStation**: double-clickable macOS setup and voice server. It installs/verifies local voice dependencies, starts the Rust host, shows service health, opens local browser/Mac clients, and displays pairing QR only for Android/iPhone.
+- **iPhone app**: same Flutter UI as Android, with iOS-native Keychain, Speech,
+  file picker, cloud reasoning, pairing, and playback.
+- **Browser client**: local web client served by MacStation; it auto-attaches
+  when opened from Station.
+- **Mac client app**: native macOS wrapper around the same browser client UI; it
+  auto-attaches when opened from Station.
+- **PlushBuddy Station / MacStation**: double-clickable macOS setup and voice
+  server. It installs/verifies local voice dependencies, starts the Rust host,
+  shows service health, opens local browser/Mac clients, and displays pairing QR
+  only for Android/iPhone.
 
-MacStation is intentionally not the main app. It is the local “Magic Voice Box” that runs the heavy voice model.
+MacStation is intentionally not the main app. It is the local **Magic Voice
+Box** that runs the heavy voice model.
+
+```mermaid
+flowchart LR
+    Mobile["Android / iPhone"] --> Station["PlushBuddy Station<br/>local Mac voice appliance"]
+    Desktop["Browser / Mac app"] --> Station
+    Mobile --> LLM["Gemini / OpenAI<br/>parent API key"]
+    Desktop --> LLM
+    Station --> Voice["LuxTTS voice synthesis<br/>approved toy voice profiles"]
+    LLM --> Mobile
+    LLM --> Desktop
+    Voice --> Mobile
+    Voice --> Desktop
+```
+
+## Quick start
+
+From a fresh clone on macOS:
+
+```sh
+make public-artifacts
+```
+
+Artifacts are written outside the source checkout under:
+
+```text
+~/Downloads/PlushPal/artifacts
+```
+
+Open:
+
+```text
+~/Downloads/PlushPal/artifacts/macos/PlushBuddy Station.app
+```
+
+Then use Station to open the Mac app, open the browser client, or scan the QR
+code from Android/iPhone.
 
 ## Documentation map
 
