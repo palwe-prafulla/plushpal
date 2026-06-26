@@ -672,12 +672,25 @@ Generated evidence is written under `~/Downloads/PlushPal/test-results` by defau
 - Windows is not currently verified.
 - App Store / Play Store privacy labels, notarization, and managed distribution are not done.
 
-## Suggested next milestones
+## Remaining production milestones
 
-1. Physical iPhone E2E test with QR, microphone, local network, M4A upload, preview, approval, and conversation.
-2. Add browser/Mac microphone support.
-3. Add visible latency metrics for STT, LLM, Station queue, LuxTTS synth, WAV transfer, and playback.
-4. Add export/import for kid/character profiles.
-5. Harden browser storage with PIN-derived encryption.
-6. Add production signing/notarization for MacStation and Mac client.
-7. Create real release build pipelines for Android/iPhone/Mac.
+The current prerelease can be built locally and publishes downloadable dev
+artifacts for MacStation/Mac, Android, and iPhone simulator/unsigned device
+testing. The items below are still valid because they are product-release
+hardening work beyond the current `v0.1.0-dev.1` release:
+
+1. Run physical iPhone E2E with QR pairing, microphone, local-network
+   permission, M4A upload, preview, approval, and child conversation.
+2. Add browser/Mac microphone and speech-to-text support. Browser and Mac
+   currently support typed chat plus cloned-voice playback.
+3. Add visible latency metrics for STT, LLM, Station queue, LuxTTS synthesis,
+   WAV transfer, and playback.
+4. Add export/import or backup/restore for kid and character profiles.
+5. Harden browser profile/history storage with PIN-derived encryption. Provider
+   API keys are already session-only in browser, but the rest of browser state
+   still uses local browser storage for the MVP.
+6. Add production signing/notarization for MacStation and the Mac client.
+7. Add managed CI/CD release pipelines for Android, iPhone, and Mac. The repo
+   already has local build/release scripts and the current GitHub prerelease
+   artifacts; this milestone is about repeatable hosted release automation,
+   signing, and store-ready outputs.
