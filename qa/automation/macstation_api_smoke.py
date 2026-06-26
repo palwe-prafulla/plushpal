@@ -7,6 +7,7 @@ configures the parent PIN, creates characters, and optionally enrolls voice
 samples for each character.
 
 By default this is a fast API smoke and does not load LuxTTS. Pass
+`--runtime-mode demo --synthesize` to exercise the public demo mode,
 `--voice-engine luxtts --synthesize` to exercise the local voice runtime too,
 or `--voice-engine demo --synthesize` for a lightweight synthetic voice smoke.
 """
@@ -101,6 +102,11 @@ def read_line_until(process: subprocess.Popen[str], pattern: str, timeout: float
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--pin", default="1234")
+    parser.add_argument(
+        "--runtime-mode",
+        choices=["custom", "mock", "demo", "local_voice", "cloud", "full"],
+        default="custom",
+    )
     parser.add_argument("--voice-engine", choices=["none", "demo", "luxtts"], default="none")
     parser.add_argument("--synthesize", action="store_true")
     parser.add_argument(
@@ -133,6 +139,8 @@ def main() -> int:
             "PLUSHPAL_ENABLE_MAC_KEYCHAIN_GEMINI": "0",
         }
     )
+    if args.runtime_mode != "custom":
+        env["PLUSHPAL_RUNTIME_MODE"] = args.runtime_mode
     if args.voice_engine == "demo":
         env["PLUSHPAL_VOICE_ENGINE"] = "demo"
     elif args.voice_engine == "luxtts":
@@ -234,6 +242,18 @@ def main() -> int:
         status, headers, body = request(base_url, "GET", "/api/v1/status", cookie=cookie)
         expect(status, {200}, "status", body)
         report["checks"].append({"name": "status", "status": status, "body": parse_json(body)})
+
+        status, headers, body = request(base_url, "GET", "/api/v1/diagnostics")
+        expect(status, {401}, "unauthenticated diagnostics", body)
+        report["checks"].append({"name": "diagnostics_requires_authentication", "status": status})
+
+        status, headers, body = request(base_url, "GET", "/api/v1/diagnostics", cookie=cookie)
+        expect(status, {200}, "diagnostics", body)
+        diagnostics = parse_json(body)
+        for forbidden in ["pin", "api_key", "prompt", "child_text"]:
+            if forbidden in json.dumps(diagnostics).lower():
+                raise AssertionError(f"diagnostics leaked forbidden term {forbidden!r}")
+        report["checks"].append({"name": "diagnostics", "status": status, "body": diagnostics})
 
         pin_payload = {
             "pin": args.pin,
@@ -349,6 +369,57 @@ def main() -> int:
                 "name": "voice_profile_ids_unique",
                 "profile_ids": profile_ids,
                 "status_profile_ids": status_profile_ids,
+            })
+
+        if args.runtime_mode == "demo":
+            request_id = f"demo-turn-{int(time.time())}"
+            status, headers, body = request(
+                base_url,
+                "POST",
+                "/api/v1/commands",
+                cookie=cookie,
+                body={
+                    "schema_version": 1,
+                    "request_id": request_id,
+                    "command": "begin_local_turn",
+                    "payload": {
+                        "age_band": "4-5",
+                        "character_alias": "Buddy",
+                        "text": "Can we play puppy spaceship?",
+                    },
+                },
+            )
+            expect(status, {202}, "demo child turn command", body)
+            accepted = parse_json(body)
+            if accepted.get("event") != "command_accepted":
+                raise AssertionError(f"unexpected command event: {accepted}")
+            report["checks"].append({"name": "demo_child_turn_command", "status": status, "body": accepted})
+
+            history = []
+            deadline = time.time() + 10
+            while time.time() < deadline:
+                status, headers, body = request(
+                    base_url,
+                    "POST",
+                    "/api/v1/history/list",
+                    cookie=cookie,
+                    body={"pin": args.pin},
+                )
+                expect(status, {200}, "demo history list", body)
+                history = parse_json(body)
+                if any(item.get("child_text") == "Can we play puppy spaceship?" for item in history):
+                    break
+                time.sleep(0.2)
+            matching = [item for item in history if item.get("child_text") == "Can we play puppy spaceship?"]
+            if not matching:
+                raise AssertionError(f"demo turn was not recorded in history: {history}")
+            speech = matching[0].get("character_text", "")
+            if "Buddy heard you say" not in speech:
+                raise AssertionError(f"unexpected demo speech in history: {speech!r}")
+            report["checks"].append({
+                "name": "demo_child_turn_history",
+                "status": status,
+                "speech": speech,
             })
 
         report["status"] = "pass"

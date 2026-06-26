@@ -74,4 +74,9 @@ for match in re.finditer(r'<img src="([^"]+)"', readme):
 print("README image links OK")
 PY
 
+sh -n packaging/macos/install_luxtts_runtime.sh
+sh -n packaging/create-release-bundle.sh
+qa/automation/luxtts_installer_marker_test.py
+packaging/tests/check_release_bundle.sh
+
 echo "Public-repo hygiene check passed."

@@ -37,6 +37,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var pairAndroidButton: NSButton!
     private var openInAppButton: NSButton!
     private var configureGeminiButton: NSButton!
+    private var copyDiagnosticsButton: NSButton!
+    private var openLogsButton: NSButton!
+    private var resetVoiceRuntimeButton: NSButton!
     private var pairingWindow: NSWindow?
     private var currentPairingUrlText: String?
     private var hostProcess: Process?
@@ -205,6 +208,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         configureGeminiButton.isHidden = true
         configureGeminiButton.translatesAutoresizingMaskIntoConstraints = false
 
+        copyDiagnosticsButton = NSButton(title: "Copy diagnostics", target: self, action: #selector(copyDiagnostics))
+        copyDiagnosticsButton.bezelStyle = .rounded
+        copyDiagnosticsButton.isHidden = true
+        copyDiagnosticsButton.translatesAutoresizingMaskIntoConstraints = false
+
+        openLogsButton = NSButton(title: "Open logs", target: self, action: #selector(openLogFolder))
+        openLogsButton.bezelStyle = .rounded
+        openLogsButton.isHidden = true
+        openLogsButton.translatesAutoresizingMaskIntoConstraints = false
+
+        resetVoiceRuntimeButton = NSButton(title: "Reset voice runtime", target: self, action: #selector(resetVoiceRuntime))
+        resetVoiceRuntimeButton.bezelStyle = .rounded
+        resetVoiceRuntimeButton.isHidden = true
+        resetVoiceRuntimeButton.translatesAutoresizingMaskIntoConstraints = false
+
         let buttonStack = NSStackView(views: [
             openBrowserButton,
             pairAndroidButton,
@@ -219,11 +237,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         buttonStack.spacing = 12
         buttonStack.translatesAutoresizingMaskIntoConstraints = false
 
+        let diagnosticsButtonStack = NSStackView(views: [
+            copyDiagnosticsButton,
+            openLogsButton,
+            resetVoiceRuntimeButton,
+        ])
+        diagnosticsButtonStack.orientation = .horizontal
+        diagnosticsButtonStack.alignment = .centerY
+        diagnosticsButtonStack.distribution = .fill
+        diagnosticsButtonStack.spacing = 12
+        diagnosticsButtonStack.translatesAutoresizingMaskIntoConstraints = false
+
         splashView.addSubview(titleLabel)
         splashView.addSubview(detailLabel)
         splashView.addSubview(progress)
         splashView.addSubview(serviceStatusStack)
         splashView.addSubview(buttonStack)
+        splashView.addSubview(diagnosticsButtonStack)
 
         let content = NSView()
         content.addSubview(webView)
@@ -252,12 +282,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             serviceStatusStack.topAnchor.constraint(equalTo: detailLabel.bottomAnchor, constant: 28),
             buttonStack.centerXAnchor.constraint(equalTo: splashView.centerXAnchor),
             buttonStack.topAnchor.constraint(equalTo: serviceStatusStack.bottomAnchor, constant: 28),
+            diagnosticsButtonStack.centerXAnchor.constraint(equalTo: splashView.centerXAnchor),
+            diagnosticsButtonStack.topAnchor.constraint(equalTo: buttonStack.bottomAnchor, constant: 12),
             retryButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 120),
             quitButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 120),
             openBrowserButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 190),
             pairAndroidButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 180),
             openInAppButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 130),
             configureGeminiButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 170),
+            copyDiagnosticsButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 150),
+            openLogsButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 120),
+            resetVoiceRuntimeButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 160),
         ])
 
         window = NSWindow(
@@ -627,6 +662,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     @objc private func quitApp() {
         NSApp.terminate(nil)
+    }
+
+    @objc private func openLogFolder() {
+        let directory = logDirectory()
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(directory)
+    }
+
+    @objc private func copyDiagnostics() {
+        let diagnostics = diagnosticSnapshot()
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(diagnostics, forType: .string)
+
+        let alert = NSAlert()
+        alert.messageText = "Diagnostics copied"
+        alert.informativeText = "A redacted startup report was copied to the clipboard. It includes service status and recent log tails, but not API keys, PINs, pairing tokens, or audio/text content."
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
+    @objc private func resetVoiceRuntime() {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Reset local voice runtime?"
+        alert.informativeText = "This removes the local LuxTTS Python environment so PlushBuddy Station can rebuild it. It does not delete kids, characters, conversations, API keys, voice profiles, or downloaded model caches."
+        alert.addButton(withTitle: "Reset voice runtime")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return
+        }
+
+        installPipe?.fileHandleForReading.readabilityHandler = nil
+        hostPipe?.fileHandleForReading.readabilityHandler = nil
+        installProcess?.terminate()
+        hostProcess?.terminate()
+
+        let support = applicationSupportDirectory()
+        let targets = [
+            support.appendingPathComponent("luxtts-venv", isDirectory: true),
+        ]
+        do {
+            for target in targets where FileManager.default.fileExists(atPath: target.path) {
+                try FileManager.default.removeItem(at: target)
+            }
+            appendLog("app-shell.log", "reset LuxTTS voice runtime")
+            retryStartup()
+        } catch {
+            appendLog("app-shell.log", "failed to reset LuxTTS voice runtime: \(error.localizedDescription)")
+            update(.failed("Could not reset the local voice runtime: \(error.localizedDescription)\n\nOpen logs or copy diagnostics for details."))
+        }
     }
 
     @objc private func openPlushPalInBrowser() {
@@ -1008,6 +1093,74 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         return lines.isEmpty ? "Click Retry setup to try again." : lines.joined(separator: "\n")
     }
 
+    private func diagnosticSnapshot() -> String {
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        let lines = [
+            "PlushBuddy Station diagnostics",
+            "timestamp: \(timestamp)",
+            "app_support: \(applicationSupportDirectory().path)",
+            "logs: \(logDirectory().path)",
+            "host_url: \(redactedUrl(hostUrl))",
+            "lan_pairing_url: \(redactedUrl(lanPairingUrl))",
+            "parsed_host_url: \(redactedUrlText(parsedHostUrlText))",
+            "storage_status: \(storageStatusLabel.stringValue)",
+            "reasoning_status: \(reasoningStatusLabel.stringValue)",
+            "voice_status: \(voiceStatusLabel.stringValue)",
+            "host_status: \(hostStatusLabel.stringValue)",
+            "browser_status: \(browserStatusLabel.stringValue)",
+            "",
+            "setup_log_tail:",
+            redactedDiagnosticText(setupDiagnosticTail()),
+            "",
+            "host_log_tail:",
+            redactedDiagnosticText(hostDiagnosticTail()),
+        ]
+        return lines.joined(separator: "\n")
+    }
+
+    private func redactedUrl(_ url: URL?) -> String {
+        guard let url else { return "none" }
+        return redactedUrlText(url.absoluteString)
+    }
+
+    private func redactedUrlText(_ text: String?) -> String {
+        guard let text, !text.isEmpty else { return "none" }
+        guard var components = URLComponents(string: text) else {
+            return redactedDiagnosticText(text)
+        }
+        components.fragment = nil
+        return redactedDiagnosticText(components.string ?? text)
+    }
+
+    private func redactedDiagnosticText(_ text: String) -> String {
+        text
+            .replacingOccurrences(
+                of: #"#bootstrap=[A-Za-z0-9._~+/=-]+"#,
+                with: "#bootstrap=[REDACTED]",
+                options: .regularExpression
+            )
+            .replacingOccurrences(
+                of: #"bootstrap=[A-Za-z0-9._~+/=-]+"#,
+                with: "bootstrap=[REDACTED]",
+                options: .regularExpression
+            )
+            .replacingOccurrences(
+                of: #"AIza[0-9A-Za-z_-]{20,}"#,
+                with: "[REDACTED_GOOGLE_API_KEY]",
+                options: .regularExpression
+            )
+            .replacingOccurrences(
+                of: #"sk-[0-9A-Za-z_-]{20,}"#,
+                with: "[REDACTED_OPENAI_API_KEY]",
+                options: .regularExpression
+            )
+            .replacingOccurrences(
+                of: #"github_pat_[0-9A-Za-z_]{20,}"#,
+                with: "[REDACTED_GITHUB_TOKEN]",
+                options: .regularExpression
+            )
+    }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         appendLog("app-shell.log", "webView didFinish \(webView.url?.absoluteString ?? "unknown-url")")
         update(.ready)
@@ -1058,9 +1211,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     private func logFile(_ fileName: String) -> URL {
+        logDirectory()
+            .appendingPathComponent(fileName, isDirectory: false)
+    }
+
+    private func logDirectory() -> URL {
         applicationSupportDirectory()
             .appendingPathComponent("logs", isDirectory: true)
-            .appendingPathComponent(fileName, isDirectory: false)
     }
 
     func webView(
@@ -1108,6 +1265,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.pairAndroidButton.isHidden = true
                 self.openInAppButton.isHidden = true
                 self.configureGeminiButton.isHidden = true
+                self.copyDiagnosticsButton.isHidden = true
+                self.openLogsButton.isHidden = true
+                self.resetVoiceRuntimeButton.isHidden = true
             case .startingHost:
                 self.titleLabel.stringValue = "Starting local service"
                 self.detailLabel.stringValue = "Starting the local PlushPal service. Browser and Android pairing options will appear after health checks pass."
@@ -1118,6 +1278,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.pairAndroidButton.isHidden = true
                 self.openInAppButton.isHidden = true
                 self.configureGeminiButton.isHidden = true
+                self.copyDiagnosticsButton.isHidden = true
+                self.openLogsButton.isHidden = true
+                self.resetVoiceRuntimeButton.isHidden = true
             case .loadingApp:
                 self.titleLabel.stringValue = "Loading PlushPal"
                 self.detailLabel.stringValue = "Almost ready…"
@@ -1128,6 +1291,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.pairAndroidButton.isHidden = true
                 self.openInAppButton.isHidden = true
                 self.configureGeminiButton.isHidden = true
+                self.copyDiagnosticsButton.isHidden = true
+                self.openLogsButton.isHidden = true
+                self.resetVoiceRuntimeButton.isHidden = true
             case .stationReady(let url):
                 self.progress.stopAnimation(nil)
                 self.titleLabel.stringValue = "PlushBuddy Station is ready"
@@ -1140,6 +1306,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.pairAndroidButton.isHidden = false
                 self.openInAppButton.isHidden = false
                 self.configureGeminiButton.isHidden = true
+                self.copyDiagnosticsButton.isHidden = false
+                self.openLogsButton.isHidden = false
+                self.resetVoiceRuntimeButton.isHidden = false
                 self.hostUrl = url
                 self.persistStationClientUrl(url)
             case .ready:
@@ -1152,6 +1321,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.pairAndroidButton.isHidden = true
                 self.openInAppButton.isHidden = true
                 self.configureGeminiButton.isHidden = true
+                self.copyDiagnosticsButton.isHidden = true
+                self.openLogsButton.isHidden = true
+                self.resetVoiceRuntimeButton.isHidden = true
             case .failed(let message):
                 self.progress.stopAnimation(nil)
                 self.titleLabel.stringValue = "PlushPal needs setup"
@@ -1164,6 +1336,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.pairAndroidButton.isHidden = true
                 self.openInAppButton.isHidden = true
                 self.configureGeminiButton.isHidden = true
+                self.copyDiagnosticsButton.isHidden = false
+                self.openLogsButton.isHidden = false
+                self.resetVoiceRuntimeButton.isHidden = false
             }
         }
     }

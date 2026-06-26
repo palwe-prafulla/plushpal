@@ -419,6 +419,7 @@ pub fn build_router(state: HostState) -> Router {
         .route("/api/v1/health", get(health))
         .route("/api/v1/bootstrap", post(exchange_bootstrap))
         .route("/api/v1/status", get(status))
+        .route("/api/v1/diagnostics", get(diagnostics))
         .route("/api/v1/parent-pin/configure", post(configure_parent_pin))
         .route("/api/v1/parent-pin/authorize", post(authorize_parent_pin))
         .route("/api/v1/local-data/delete", post(delete_local_data))
@@ -1435,6 +1436,23 @@ struct StatusPayload {
     retention_days: Option<u16>,
 }
 
+#[derive(Serialize)]
+struct DiagnosticsPayload {
+    schema_version: u8,
+    status: &'static str,
+    loopback_origin: String,
+    local_service_ready: bool,
+    voice_engine_ready: bool,
+    conversation_engine_ready: bool,
+    model_install_supported: bool,
+    model_installing: bool,
+    browser_ui_ready: bool,
+    parent_profile_store_ready: bool,
+    parent_configured: bool,
+    voice_synthesis_busy: bool,
+    station_mode: &'static str,
+}
+
 async fn status(State(state): State<HostState>, headers: HeaderMap) -> Response {
     if !is_authenticated(&state, &headers) {
         return StatusCode::UNAUTHORIZED.into_response();
@@ -1477,6 +1495,43 @@ async fn status(State(state): State<HostState>, headers: HeaderMap) -> Response 
         retention_days: persisted_profile
             .as_ref()
             .and_then(|profile| profile.retention_days),
+    })
+    .into_response()
+}
+
+async fn diagnostics(State(state): State<HostState>, headers: HeaderMap) -> Response {
+    if !is_authenticated(&state, &headers) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let conversation_engine_ready = state
+        .conversation
+        .read()
+        .is_ok_and(|engine| engine.is_ready());
+    let voice_engine_ready = state.voice_engine.is_ready();
+    let parent_configured = state
+        .parent_profile_store
+        .as_ref()
+        .and_then(|store| store.load().ok().flatten())
+        .is_some();
+    let status = if voice_engine_ready {
+        "ready"
+    } else {
+        "degraded"
+    };
+    Json(DiagnosticsPayload {
+        schema_version: 1,
+        status,
+        loopback_origin: state.policy.endpoint().origin(false),
+        local_service_ready: true,
+        voice_engine_ready,
+        conversation_engine_ready,
+        model_install_supported: state.model_installer.supported(),
+        model_installing: state.model_installer.installing(),
+        browser_ui_ready: true,
+        parent_profile_store_ready: state.parent_profile_store.is_some(),
+        parent_configured,
+        voice_synthesis_busy: state.voice_synthesis_busy.load(Ordering::Acquire),
+        station_mode: "local",
     })
     .into_response()
 }
@@ -3678,6 +3733,43 @@ done
         client: reqwest::blocking::Client,
     }
 
+    #[derive(Debug)]
+    pub struct DemoConversationEngine;
+
+    impl ConversationEngine for DemoConversationEngine {
+        fn is_ready(&self) -> bool {
+            true
+        }
+
+        fn generate_local(
+            &self,
+            command: LocalTurnCommand,
+        ) -> Result<StructuredCharacterResponse, ConversationEngineError> {
+            let child_text = command.text.trim();
+            let speech = if child_text.is_empty() {
+                format!("{} is here and ready to play!", command.character_alias)
+            } else {
+                format!(
+                    "{} heard you say: “{}” Let’s pretend together!",
+                    command.character_alias,
+                    child_text.chars().take(90).collect::<String>()
+                )
+            };
+            Ok(StructuredCharacterResponse {
+                speech,
+                suggest_trusted_adult: false,
+            })
+        }
+
+        fn cancel(&self) -> Result<(), ConversationEngineError> {
+            Ok(())
+        }
+
+        fn clear_session(&self) -> Result<(), ConversationEngineError> {
+            Ok(())
+        }
+    }
+
     #[derive(Deserialize)]
     struct GeminiResponseEnvelope {
         candidates: Vec<GeminiCandidate>,
@@ -4408,6 +4500,55 @@ mod tests {
         let body = String::from_utf8_lossy(&body);
         assert!(body.contains(r#""local_only":true"#));
         assert!(body.contains(r#""model_ready":false"#));
+    }
+
+    #[tokio::test]
+    async fn diagnostics_requires_authentication_and_redacts_private_data() {
+        let store = Arc::new(MemoryProfileStore::default());
+        let state = HostState::new(
+            LoopbackEndpoint { port: 3210 },
+            b"bootstrap",
+            Arc::new(FixedToken),
+            Arc::new(FixedClock),
+        )
+        .with_parent_profile_store(store)
+        .unwrap()
+        .with_voice_engine(Arc::new(FixtureVoiceEngine));
+        let app = build_router(state);
+        let unauthenticated = app
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/diagnostics")
+                    .header(header::HOST, "127.0.0.1:3210")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+
+        let cookie = authenticated_cookie(&app).await;
+        let diagnostics = app
+            .oneshot(
+                Request::get("/api/v1/diagnostics")
+                    .header(header::HOST, "127.0.0.1:3210")
+                    .header(header::COOKIE, cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(diagnostics.status(), StatusCode::OK);
+        let body = diagnostics.into_body().collect().await.unwrap().to_bytes();
+        let body = String::from_utf8_lossy(&body);
+        assert!(body.contains(r#""schema_version":1"#));
+        assert!(body.contains(r#""loopback_origin":"http://127.0.0.1:3210""#));
+        assert!(body.contains(r#""voice_engine_ready":true"#));
+        assert!(body.contains(r#""parent_profile_store_ready":true"#));
+        assert!(!body.contains("pin"));
+        assert!(!body.contains("api_key"));
+        assert!(!body.contains("prompt"));
+        assert!(!body.contains("child_text"));
     }
 
     #[tokio::test]

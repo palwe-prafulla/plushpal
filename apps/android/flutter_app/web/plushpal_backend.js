@@ -1,7 +1,9 @@
 (() => {
   const STORE_KEY = 'plushbuddy-web-client-v1';
+  const SESSION_REASONING_KEY = 'plushbuddy-web-reasoning-session-v1';
   const DEFAULT_TRAITS = ['gentle', 'curious'];
   let activeAudio = null;
+  let volatileReasoning = null;
 
   const defaultState = () => ({
     parent: null,
@@ -14,18 +16,72 @@
     },
   });
 
+  const readSessionReasoning = () => {
+    try {
+      const raw = window.sessionStorage?.getItem(SESSION_REASONING_KEY);
+      if (!raw) return volatileReasoning;
+      const parsed = JSON.parse(raw);
+      if (!parsed?.apiKey) return volatileReasoning;
+      return {
+        provider: parsed.provider === 'openai' ? 'openai' : 'gemini',
+        apiKey: String(parsed.apiKey),
+      };
+    } catch (_) {
+      return volatileReasoning;
+    }
+  };
+
+  const writeSessionReasoning = (provider, apiKey) => {
+    const normalized = provider === 'openai' ? 'openai' : 'gemini';
+    volatileReasoning = {provider: normalized, apiKey};
+    try {
+      window.sessionStorage?.setItem(
+        SESSION_REASONING_KEY,
+        JSON.stringify(volatileReasoning),
+      );
+    } catch (_) {}
+  };
+
+  const clearSessionReasoning = () => {
+    volatileReasoning = null;
+    try {
+      window.sessionStorage?.removeItem(SESSION_REASONING_KEY);
+    } catch (_) {}
+  };
+
   const loadState = () => {
     try {
       const raw = window.localStorage.getItem(STORE_KEY);
-      if (!raw) return defaultState();
-      return {...defaultState(), ...JSON.parse(raw)};
+      const persisted = raw ? JSON.parse(raw) : defaultState();
+      const sessionReasoning = readSessionReasoning();
+      const provider =
+        persisted?.reasoning?.provider ||
+        sessionReasoning?.provider ||
+        defaultState().reasoning.provider;
+      return {
+        ...defaultState(),
+        ...persisted,
+        reasoning: {
+          provider,
+          apiKey: sessionReasoning?.provider === provider
+            ? sessionReasoning.apiKey
+            : null,
+        },
+      };
     } catch (_) {
       return defaultState();
     }
   };
 
   const saveState = (state) => {
-    window.localStorage.setItem(STORE_KEY, JSON.stringify(state));
+    const persisted = {
+      ...state,
+      reasoning: {
+        provider: state.reasoning?.provider || 'gemini',
+        apiKey: null,
+      },
+    };
+    window.localStorage.setItem(STORE_KEY, JSON.stringify(persisted));
   };
 
   const textEncoder = new TextEncoder();
@@ -313,6 +369,7 @@ Current child message: ${safeText}`;
     if (!apiKey || !apiKey.trim()) throw new Error('API key is required.');
     const state = loadState();
     state.reasoning = {provider: normalized, apiKey: apiKey.trim()};
+    writeSessionReasoning(normalized, apiKey.trim());
     saveState(state);
   };
 
@@ -421,6 +478,7 @@ Current child message: ${safeText}`;
   window.plushpalDeleteAllLocalData = async (pin) => {
     await requirePin(pin);
     window.localStorage.removeItem(STORE_KEY);
+    clearSessionReasoning();
   };
 
   window.plushpalKids = async () => JSON.stringify(loadState().kids || []);

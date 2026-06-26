@@ -381,7 +381,9 @@ That embedded web bundle is then served by the Rust desktop host.
 
 Runtime ownership:
 
-- browser stores parent/kid/character/history/provider state locally;
+- browser stores parent/kid/character/history/provider selection locally;
+- browser keeps provider API keys session-only rather than persisting them to
+  localStorage;
 - browser calls Gemini/OpenAI directly for reasoning;
 - browser calls MacStation only for bootstrap/status and `/api/v1/voice/*`;
 - MacStation CSP allows only same-origin plus Gemini/OpenAI provider connections.

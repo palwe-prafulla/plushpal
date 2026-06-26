@@ -38,7 +38,9 @@ Platform-specific secure storage is used where implemented:
 - Android: Android Keystore-backed storage for sensitive client state.
 - iPhone: iOS Keychain-backed storage for sensitive client state.
 - macOS: Keychain/encrypted local storage paths for Station-managed secrets.
-- Browser: currently uses browser local storage; this is a known hardening item.
+- Browser: parent/kid/character/history data uses browser local storage; provider
+  API keys are session-only and are not persisted to local storage. Production
+  browser encrypted-state storage remains a future hardening item.
 
 The public repository must not contain:
 
@@ -80,7 +82,7 @@ parent-visible safety controls.
 | Raw voice sample leaked to repo | sample folders ignored; docs point to private external folder | automated file-size/media scans |
 | External device talks to Station without pairing | bootstrap/session token, host/origin checks, QR pairing for mobile | mDNS pairing, pair-code confirmation, device revocation UI |
 | Cloud prompt contains kid PII | pseudonymization/redaction path in client | stronger PII detector and tests |
-| Browser state exposed on shared computer | browser localStorage only | browser-side encryption and explicit lock timeout |
+| Browser state exposed on shared computer | provider API key is session-only; other browser profile/history state is localStorage | browser-side encryption and explicit lock timeout |
 | Voice model runtime crashes | Station health/status and retry path | supervisor restart policy and structured diagnostics |
 | Unwanted public contributions | PR template + auto-close workflow + disabled repo features | archive repo if fully read-only is desired |
 

@@ -81,6 +81,11 @@ impl GatewayPolicy {
     }
 
     #[must_use]
+    pub fn endpoint(&self) -> LoopbackEndpoint {
+        self.endpoint
+    }
+
+    #[must_use]
     pub fn with_additional_http_host(mut self, host_header: impl Into<String>) -> Self {
         let host_header = host_header.into();
         if !host_header.is_empty() {

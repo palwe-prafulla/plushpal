@@ -14,13 +14,13 @@ understand it, run checks, and exercise core flows without hand-holding.
 | # | Original hardening item | Current status | Remaining work |
 |---:|---|---|---|
 | 1 | Make setup boringly reliable | Partial | Harden LuxTTS install/runtime verification and Station setup recovery |
-| 2 | Add a demo mode | Partial | Demo voice exists; full app demo data/reasoning mode still needed |
+| 2 | Add a demo mode | Partial | UI banner/demo seed data still needed for polished try-it flow |
 | 3 | Improve README onboarding | Done | Keep screenshots/docs current |
 | 4 | Add CI public clone validation | Done | Add more smoke coverage as new demo mode matures |
-| 5 | Separate mock vs real integrations cleanly | Partial | Formal mode matrix: mock/demo/local_voice/cloud/full |
+| 5 | Separate mock vs real integrations cleanly | Partial | Add UI labels and broader client-mode tests |
 | 6 | Harden security/privacy | Partial | Browser local encryption, safety corpus, network/privacy regression tests |
-| 7 | Better release artifacts | Partial | GitHub release script, checksums, release notes, optional signing path |
-| 8 | MacStation reliability dashboard | Not done | Add diagnostics/log viewer/reset/retry UI |
+| 7 | Better release artifacts | Partial | GitHub release upload automation and optional signing path |
+| 8 | MacStation reliability dashboard | Partial | Add reset/repair actions and richer setup phase detail |
 | 9 | Add more E2E scripted tests | Partial | Add UI journey automation across Android/iOS/browser/Mac where practical |
 | 10 | Document limitations clearly | Done | Keep updated as architecture evolves |
 
@@ -51,6 +51,13 @@ Reasoning:
 - `make doctor` validates local toolchain and repo prerequisites.
 - Public artifacts build outside the repo under `~/Downloads/PlushPal`.
 - Public repo hygiene checks prevent common secrets/private artifacts.
+- Packaged LuxTTS installer writes a runtime marker with installer version and
+  script/requirements checksums.
+- Packaged LuxTTS installer repairs missing, incomplete, or stale runtime
+  environments instead of silently reusing them.
+- Station includes a confirmation-gated “Reset voice runtime” action that
+  rebuilds only the local LuxTTS venv and preserves app data/model caches.
+- Public repo check runs a fast LuxTTS installer marker regression test.
 
 ### Remaining deliverables
 
@@ -73,8 +80,9 @@ Reasoning:
   - failed worker healthcheck;
   - stale host process/port conflict.
 - Version/checksum marker files for downloaded/runtime components where
-  practical.
-- Clear actionable error messages with copyable diagnostics.
+  practical. ✅ for packaged LuxTTS venv
+- Clear actionable error messages with copyable diagnostics. ✅ initial Station
+  diagnostics path
 
 ### Acceptance criteria
 
@@ -98,27 +106,23 @@ Reasoning:
 
 ### Already done
 
-- `PLUSHPAL_VOICE_ENGINE=demo` and `make run-mac-demo` provide synthetic voice
-  synthesis.
-- MacStation API smoke supports `--voice-engine demo --synthesize`.
+- `PLUSHPAL_RUNTIME_MODE=demo` and `make run-demo` provide deterministic demo
+  reasoning plus synthetic voice synthesis.
+- `PLUSHPAL_VOICE_ENGINE=demo` remains available as a lower-level override.
+- MacStation API smoke supports `--runtime-mode demo --synthesize`.
+- Demo/mock/local-voice modes do not call Gemini/OpenAI or the legacy local
+  model path.
+- Runtime mode parser has unit coverage.
 
 ### Remaining deliverables
 
-- Full demo app mode:
+- Polished demo app mode:
   - demo kid;
   - demo toy buddy;
   - demo voice profile;
-  - mock reasoning response;
-  - mock or synthetic WAV playback;
-  - no Gemini/OpenAI key required;
-  - no LuxTTS download required.
-- One-command demo:
-
-```sh
-make run-demo
-```
-
-- README path: “Try in 3 minutes.”
+  - seeded parent setup;
+  - visible demo-mode banner.
+- README path: “Try in 3 minutes.” ✅ initial command documented
 - UI banner clearly saying “Demo mode — synthetic voice, no cloud calls.”
 
 ### Acceptance criteria
@@ -183,23 +187,27 @@ Done for baseline clone health.
 ### Already done
 
 - Demo voice mode exists.
+- Demo conversation mode exists.
+- `PLUSHPAL_RUNTIME_MODE` supports `mock`, `demo`, `local_voice`, `cloud`, and
+  `full`.
 - Real LuxTTS path remains separate.
 
 ### Remaining deliverables
 
-- Define explicit runtime modes:
+- Keep explicit runtime modes current:
 
 | Mode | Reasoning | Voice | Intended use |
 |---|---|---|---|
 | `mock` | fixture response | synthetic WAV | CI and fast local demo |
 | `demo` | fixture/demo response | synthetic WAV | public try-it mode |
-| `local_voice` | cloud or typed fixture | LuxTTS | voice quality testing |
-| `cloud` | Gemini/OpenAI | synthetic/no voice | reasoning testing |
+| `local_voice` | fixture response | LuxTTS | voice quality testing |
+| `cloud` | Gemini/OpenAI | synthetic WAV | reasoning testing |
 | `full` | Gemini/OpenAI | LuxTTS | real product flow |
 
-- Central mode parser/config object shared by Station/app launch scripts.
+- Central mode parser/config object shared by Station/app launch scripts. ✅
 - UI labels for non-full modes.
-- Tests ensuring mock/demo modes never call cloud providers.
+- Tests ensuring mock/demo/local_voice modes never call cloud providers. ✅ for
+  Station mode selection
 
 ### Acceptance criteria
 
@@ -222,11 +230,17 @@ Done for baseline clone health.
 - Public secret scan.
 - API keys/private samples excluded from repo.
 - Existing client-side redaction/pseudonymization path.
+- Browser provider API keys are session-only and no longer persisted to
+  localStorage.
+- Browser backend test asserts localStorage does not contain the provider API
+  key after configuration.
+- MacStation diagnostics endpoint/smoke test verifies private diagnostic fields
+  are not exposed.
 
 ### Remaining deliverables
 
-- Browser local-state encryption or documented explicit “unsafe demo/browser”
-  mode until encryption is complete.
+- Browser local-state encryption for parent/kid/character/history data, or a
+  documented explicit “unsafe demo/browser” mode until encryption is complete.
 - Safety regression corpus:
   - PII requests;
   - secrets;
@@ -243,7 +257,8 @@ Done for baseline clone health.
 
 ### Acceptance criteria
 
-- Browser storage risk is reduced or explicitly gated.
+- Browser storage risk is reduced or explicitly gated. ✅ reduced for provider
+  API keys
 - Safety corpus passes deterministically for mock/provider test paths.
 - Privacy docs match implementation.
 
@@ -252,21 +267,24 @@ Done for baseline clone health.
 - Unit tests for redaction/pseudonymization.
 - Provider prompt snapshot tests without secrets.
 - Safety corpus tests.
-- Log/URL secret scan in QA artifacts.
+- Log/URL secret scan in QA artifacts. ✅ initial diagnostics/public-repo scans
 
 ## Item 7 — Better release artifacts
 
 ### Already done
 
 - `make public-artifacts` builds local artifacts outside the repo.
+- `make release-bundle` creates `~/Downloads/PlushPal/release/<version>/`.
+- Release bundles include `SHA256SUMS`.
+- Release bundles include generated `RELEASE_NOTES.md` that labels artifacts as
+  local unsigned/dev outputs.
+- Public repo check verifies release-bundle structure and checksums with fake
+  artifacts.
 - macOS zip/DMG, Android APK, iOS simulator/device app outputs exist when local
   prerequisites are available.
 
 ### Remaining deliverables
 
-- `make release-local` or `tools/release/create_release_bundle.sh`.
-- SHA-256 checksums for all artifacts.
-- `RELEASE_NOTES.md` generated from template.
 - GitHub release automation:
   - tag;
   - upload artifacts;
@@ -295,11 +313,31 @@ Done for baseline clone health.
 
 ### Status
 
-Not done.
+Partial.
+
+### Newly completed
+
+- Authenticated Rust host diagnostics endpoint:
+
+```text
+GET /api/v1/diagnostics
+```
+
+- Diagnostics endpoint reports safe service flags and loopback origin only.
+- Diagnostics endpoint test verifies authentication and redaction expectations.
+- MacStation API smoke now verifies authenticated diagnostics and scans for
+  private-field regressions.
+- Station setup UI now exposes:
+  - copy redacted diagnostics;
+  - open log folder;
+  - retry setup;
+  - quit.
+- Copied diagnostics redact bootstrap pairing tokens and common API-token
+  formats before placing text on the clipboard.
 
 ### Deliverables
 
-- Add a diagnostics panel in Station:
+- Finish a richer diagnostics panel in Station:
   - setup phase;
   - service health;
   - active mode;
@@ -310,13 +348,13 @@ Not done.
   - LuxTTS worker status;
   - last error.
 - Buttons:
-  - copy diagnostics;
-  - open log folder;
-  - retry setup;
-  - reset runtime only;
+  - copy diagnostics; ✅
+  - open log folder; ✅
+  - retry setup; ✅
+  - reset runtime only; ✅ for LuxTTS venv
   - reset app data;
   - stop/start local host.
-- Structured diagnostic JSON endpoint from Rust host:
+- Structured diagnostic JSON endpoint from Rust host: ✅
 
 ```text
 GET /api/v1/diagnostics

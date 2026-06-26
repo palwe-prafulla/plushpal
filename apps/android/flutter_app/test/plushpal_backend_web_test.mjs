@@ -12,6 +12,7 @@ const bootstrapSource = fs.readFileSync(
 
 function createHarness({runBootstrapScript = false} = {}) {
   const storage = new Map();
+  const sessionStorage = new Map();
   const requests = [];
   const context = {
     console,
@@ -75,6 +76,17 @@ function createHarness({runBootstrapScript = false} = {}) {
       },
       removeItem(key) {
         storage.delete(key);
+      },
+    },
+    sessionStorage: {
+      getItem(key) {
+        return sessionStorage.get(key) ?? null;
+      },
+      setItem(key, value) {
+        sessionStorage.set(key, value);
+      },
+      removeItem(key) {
+        sessionStorage.delete(key);
       },
     },
     fetch: async (url, options = {}) => {
@@ -150,11 +162,11 @@ function createHarness({runBootstrapScript = false} = {}) {
     vm.runInContext(bootstrapSource, context, {filename: 'plushpal_bootstrap.js'});
   }
   vm.runInContext(source, context, {filename: 'plushpal_backend.js'});
-  return {context, requests, storage};
+  return {context, requests, storage, sessionStorage};
 }
 
 test('browser backend stores app data locally and uses Station only for voice/status', async () => {
-  const {context, requests, storage} = createHarness();
+  const {context, requests, storage, sessionStorage} = createHarness();
 
   assert.equal(typeof context.plushpalModelStatus, 'function');
   assert.equal(typeof context.plushpalBeginLocalTurn, 'function');
@@ -225,6 +237,13 @@ test('browser backend stores app data locally and uses Station only for voice/st
   assert.equal(stored.kids[0].name, 'Inaaya');
   assert.equal(stored.characters[0].alias, 'Buddy');
   assert.equal(stored.history.length, 1);
+  assert.equal(stored.reasoning.provider, 'gemini');
+  assert.equal(stored.reasoning.apiKey, null);
+  assert.doesNotMatch(storage.get('plushbuddy-web-client-v1'), /test-key/);
+  assert.match(
+    sessionStorage.get('plushbuddy-web-reasoning-session-v1'),
+    /test-key/,
+  );
 });
 
 test('browser bootstrap script exchanges Station token before backend status checks', async () => {

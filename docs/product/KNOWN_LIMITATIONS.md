@@ -40,9 +40,9 @@ the current important limitations.
 - iOS artifacts require full Xcode and CocoaPods.
 - Full LuxTTS E2E is intentionally not run in GitHub CI because it is heavy and
   model/runtime dependent.
-- `PLUSHPAL_VOICE_ENGINE=demo` / `make run-mac-demo` is a synthetic flow-test
-  mode only. It does not clone voices and should not be used to judge product
-  voice quality.
+- `PLUSHPAL_RUNTIME_MODE=demo` / `make run-demo` is a synthetic flow-test mode
+  only. It does not clone voices, does not call Gemini/OpenAI, and should not
+  be used to judge product voice quality.
 
 ## Public repository policy
 

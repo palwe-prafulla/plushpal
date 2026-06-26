@@ -2,7 +2,7 @@ PUBLIC_ROOT ?= $(HOME)/Downloads/PlushPal
 ARTIFACTS_DIR ?= $(PUBLIC_ROOT)/artifacts
 BUILD_DIR ?= $(PUBLIC_ROOT)/build
 
-.PHONY: doctor format lint test native flutter desktop android-rust android-apk ios-simulator ios-device package-macos build-all build-product public-artifacts public-clean public-repo-check test-product-layout verify-release-local check setup-chatterbox-voice setup-luxtts-voice run-mac-demo run-mac-luxtts
+.PHONY: doctor format lint test native flutter desktop android-rust android-apk ios-simulator ios-device package-macos build-all build-product public-artifacts release-bundle public-clean public-repo-check test-product-layout verify-release-local check setup-chatterbox-voice setup-luxtts-voice run-demo run-mac-demo run-mac-luxtts
 
 doctor:
 	sh tools/product/doctor.sh
@@ -56,6 +56,9 @@ build-product: build-all
 public-artifacts:
 	sh packaging/build-public-artifacts.sh
 
+release-bundle:
+	sh packaging/create-release-bundle.sh
+
 public-clean:
 	rm -rf "$(PUBLIC_ROOT)"
 
@@ -71,8 +74,12 @@ setup-chatterbox-voice:
 setup-luxtts-voice:
 	sh tools/voice/setup_luxtts_macos.sh
 
+run-demo:
+	PLUSHPAL_RUNTIME_MODE=demo \
+	cargo run --release -p plushpal-desktop-host --features native-runtime
+
 run-mac-demo:
-	PLUSHPAL_VOICE_ENGINE=demo \
+	PLUSHPAL_RUNTIME_MODE=demo \
 	cargo run --release -p plushpal-desktop-host --features native-runtime
 
 run-mac-luxtts:

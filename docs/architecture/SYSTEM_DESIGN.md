@@ -454,7 +454,7 @@ Local browser and Mac clients are launched by Station itself, receive a one-time
 | Raw voice sample | transient | transient | transient | transient processing | no |
 | Processed voice reference | no | no | no | encrypted local Mac storage | no |
 | Voice profile id | local character state | local character state | local character state | maps to reference | no |
-| Gemini/OpenAI API key | encrypted local | Keychain | browser local storage | no | used by API call |
+| Gemini/OpenAI API key | encrypted local | Keychain | browser session storage / memory only | no | used by API call |
 | Conversation history | local scoped | local scoped | local scoped | no for mobile path | per-request payload only |
 
 ## 11. Main runtime flows

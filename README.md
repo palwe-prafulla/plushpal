@@ -93,12 +93,14 @@ From a fresh clone on macOS:
 ```sh
 make doctor
 make public-artifacts
+make release-bundle
 ```
 
 Artifacts are written outside the source checkout under:
 
 ```text
 ~/Downloads/PlushPal/artifacts
+~/Downloads/PlushPal/release
 ```
 
 Open:
@@ -110,14 +112,16 @@ Open:
 Then use Station to open the Mac app, open the browser client, or scan the QR
 code from Android/iPhone.
 
-For a lightweight developer demo without LuxTTS voice cloning, run:
+For a lightweight developer demo without LuxTTS voice cloning or a cloud API
+key, run:
 
 ```sh
-make run-mac-demo
+make run-demo
 ```
 
-This starts MacStation with a synthetic demo voice engine. It validates the app
-flow, but it does not represent the real cloned toy-voice quality.
+This starts MacStation in `PLUSHPAL_RUNTIME_MODE=demo`, with deterministic demo
+reasoning and a synthetic voice engine. It validates the app flow, but it does
+not represent the real cloned toy-voice quality.
 
 ## Documentation map
 

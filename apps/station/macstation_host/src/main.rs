@@ -14,6 +14,60 @@ use plushpal_desktop_gateway::LoopbackEndpoint;
 use plushpal_desktop_host::{build_router, HostState, OsTokenSource, SystemClock, TokenSource};
 use tokio::net::TcpListener;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RuntimeMode {
+    Custom,
+    Mock,
+    Demo,
+    LocalVoice,
+    Cloud,
+    Full,
+}
+
+impl RuntimeMode {
+    #[cfg_attr(not(feature = "native-runtime"), allow(dead_code))]
+    fn from_env() -> Self {
+        Self::parse(env::var("PLUSHPAL_RUNTIME_MODE").ok().as_deref())
+    }
+
+    fn parse(value: Option<&str>) -> Self {
+        match value {
+            Some(value) => match value.trim().to_ascii_lowercase().as_str() {
+                "" => Self::Custom,
+                "mock" => Self::Mock,
+                "demo" => Self::Demo,
+                "local_voice" | "local-voice" => Self::LocalVoice,
+                "cloud" => Self::Cloud,
+                "full" => Self::Full,
+                other => {
+                    eprintln!(
+                        "Unknown PLUSHPAL_RUNTIME_MODE={other}; falling back to custom environment."
+                    );
+                    Self::Custom
+                }
+            },
+            None => Self::Custom,
+        }
+    }
+
+    fn default_voice_engine(self) -> Option<&'static str> {
+        match self {
+            Self::Mock | Self::Demo | Self::Cloud => Some("demo"),
+            Self::LocalVoice | Self::Full => Some("luxtts"),
+            Self::Custom => None,
+        }
+    }
+
+    fn uses_demo_conversation(self) -> bool {
+        matches!(self, Self::Mock | Self::Demo | Self::LocalVoice)
+    }
+
+    #[cfg_attr(not(feature = "native-runtime"), allow(dead_code))]
+    fn suppress_cloud_and_local_model(self) -> bool {
+        matches!(self, Self::Mock | Self::Demo | Self::LocalVoice)
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let requested_port = match env::var("PLUSHPAL_PORT") {
@@ -51,11 +105,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(feature = "native-runtime")]
     let state = {
         use plushpal_desktop_host::native_runtime::{
-            ChatterboxVoiceEngine, DemoVoiceEngine, GeminiConversationEngine, LuxTtsVoiceEngine,
-            NativeConversationEngine, NativeModelInstaller, NativeParentProfileStore,
-            PocketVoiceEngine,
+            ChatterboxVoiceEngine, DemoConversationEngine, DemoVoiceEngine,
+            GeminiConversationEngine, LuxTtsVoiceEngine, NativeConversationEngine,
+            NativeModelInstaller, NativeParentProfileStore, PocketVoiceEngine,
         };
 
+        let runtime_mode = RuntimeMode::from_env();
+        eprintln!("PlushPal runtime mode: {runtime_mode:?}");
         let data_directory = application_data_directory()?;
         let profile_key = token_source
             .generate()
@@ -83,7 +139,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .with_model_installer(installer)
             .with_parent_profile_store(profile_store)
             .map_err(|error| std::io::Error::other(format!("{error:?}")))?;
-        let requested_voice_engine = env::var("PLUSHPAL_VOICE_ENGINE").unwrap_or_default();
+        let requested_voice_engine = env::var("PLUSHPAL_VOICE_ENGINE").unwrap_or_else(|_| {
+            runtime_mode
+                .default_voice_engine()
+                .unwrap_or_default()
+                .to_owned()
+        });
         if requested_voice_engine.eq_ignore_ascii_case("demo") {
             state = state.with_voice_engine(Arc::new(DemoVoiceEngine));
             eprintln!("PlushPal demo voice engine enabled; this validates flow but does not clone voices.");
@@ -197,22 +258,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 state = state.with_voice_engine(Arc::new(voice_engine));
             }
         }
-        if let Some(api_key) = gemini_api_key(&data_directory) {
-            let model =
-                env::var("PLUSHPAL_GEMINI_MODEL").unwrap_or_else(|_| "gemini-2.5-flash".to_owned());
-            match GeminiConversationEngine::new(api_key, model.clone()) {
-                Ok(engine) => {
-                    eprintln!("PlushPal Gemini reasoning enabled with model {model}");
-                    state = state.with_conversation_engine(Arc::new(engine));
+        if runtime_mode.uses_demo_conversation() {
+            eprintln!(
+                "PlushPal demo conversation engine enabled; no cloud reasoning calls will be made."
+            );
+            state = state.with_conversation_engine(Arc::new(DemoConversationEngine));
+        } else if !runtime_mode.suppress_cloud_and_local_model() {
+            if let Some(api_key) = gemini_api_key(&data_directory) {
+                let model = env::var("PLUSHPAL_GEMINI_MODEL")
+                    .unwrap_or_else(|_| "gemini-2.5-flash".to_owned());
+                match GeminiConversationEngine::new(api_key, model.clone()) {
+                    Ok(engine) => {
+                        eprintln!("PlushPal Gemini reasoning enabled with model {model}");
+                        state = state.with_conversation_engine(Arc::new(engine));
+                    }
+                    Err(error) => {
+                        eprintln!("PlushPal Gemini reasoning is unavailable: {error:?}");
+                    }
                 }
-                Err(error) => {
-                    eprintln!("PlushPal Gemini reasoning is unavailable: {error:?}");
-                }
+            } else if let Some(model_path) = model_path {
+                let engine = NativeConversationEngine::load(&model_path)
+                    .map_err(|error| std::io::Error::other(format!("{error:?}")))?;
+                state = state.with_conversation_engine(Arc::new(engine));
             }
-        } else if let Some(model_path) = model_path {
-            let engine = NativeConversationEngine::load(&model_path)
-                .map_err(|error| std::io::Error::other(format!("{error:?}")))?;
-            state = state.with_conversation_engine(Arc::new(engine));
         }
         state
     };
@@ -343,4 +411,51 @@ fn launch_browser(url: &str) {
         command
     };
     let _ = command.arg(url).spawn();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RuntimeMode;
+
+    #[test]
+    fn runtime_mode_defaults_to_custom() {
+        assert_eq!(RuntimeMode::parse(None), RuntimeMode::Custom);
+        assert_eq!(RuntimeMode::parse(Some("")), RuntimeMode::Custom);
+        assert_eq!(RuntimeMode::parse(Some("unknown")), RuntimeMode::Custom);
+    }
+
+    #[test]
+    fn runtime_mode_parses_supported_modes() {
+        assert_eq!(RuntimeMode::parse(Some("mock")), RuntimeMode::Mock);
+        assert_eq!(RuntimeMode::parse(Some("demo")), RuntimeMode::Demo);
+        assert_eq!(
+            RuntimeMode::parse(Some("local-voice")),
+            RuntimeMode::LocalVoice
+        );
+        assert_eq!(
+            RuntimeMode::parse(Some("local_voice")),
+            RuntimeMode::LocalVoice
+        );
+        assert_eq!(RuntimeMode::parse(Some("cloud")), RuntimeMode::Cloud);
+        assert_eq!(RuntimeMode::parse(Some("full")), RuntimeMode::Full);
+    }
+
+    #[test]
+    fn runtime_mode_selects_safe_defaults() {
+        assert_eq!(RuntimeMode::Mock.default_voice_engine(), Some("demo"));
+        assert_eq!(RuntimeMode::Demo.default_voice_engine(), Some("demo"));
+        assert_eq!(RuntimeMode::Cloud.default_voice_engine(), Some("demo"));
+        assert_eq!(
+            RuntimeMode::LocalVoice.default_voice_engine(),
+            Some("luxtts")
+        );
+        assert_eq!(RuntimeMode::Full.default_voice_engine(), Some("luxtts"));
+        assert_eq!(RuntimeMode::Custom.default_voice_engine(), None);
+
+        assert!(RuntimeMode::Mock.uses_demo_conversation());
+        assert!(RuntimeMode::Demo.uses_demo_conversation());
+        assert!(RuntimeMode::LocalVoice.uses_demo_conversation());
+        assert!(!RuntimeMode::Cloud.uses_demo_conversation());
+        assert!(!RuntimeMode::Full.uses_demo_conversation());
+    }
 }
