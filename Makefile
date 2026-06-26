@@ -2,7 +2,7 @@ PUBLIC_ROOT ?= $(HOME)/Downloads/PlushPal
 ARTIFACTS_DIR ?= $(PUBLIC_ROOT)/artifacts
 BUILD_DIR ?= $(PUBLIC_ROOT)/build
 
-.PHONY: doctor format lint test native flutter desktop android-rust android-apk ios-simulator ios-device package-macos build-all build-product public-artifacts release-bundle public-clean public-repo-check test-product-layout verify-release-local check setup-chatterbox-voice setup-luxtts-voice run-demo run-mac-demo run-mac-luxtts
+.PHONY: doctor format lint test native flutter desktop android-rust android-apk ios-simulator ios-device package-macos build-all build-product public-artifacts release-bundle publish-release public-clean public-repo-check test-product-layout verify-release-local check setup-chatterbox-voice setup-luxtts-voice run-demo run-mac-demo run-mac-luxtts
 
 doctor:
 	sh tools/product/doctor.sh
@@ -58,6 +58,11 @@ public-artifacts:
 
 release-bundle:
 	sh packaging/create-release-bundle.sh
+
+publish-release:
+	@if [ -z "$(TAG)" ]; then echo "Usage: make publish-release TAG=v0.1.0 RELEASE_DIR=$(PUBLIC_ROOT)/release/v0.1.0"; exit 2; fi
+	@if [ -z "$(RELEASE_DIR)" ]; then echo "Usage: make publish-release TAG=$(TAG) RELEASE_DIR=$(PUBLIC_ROOT)/release/$(TAG)"; exit 2; fi
+	tools/github/create_release.py palwe-prafulla plushpal "$(TAG)" "$(RELEASE_DIR)"
 
 public-clean:
 	rm -rf "$(PUBLIC_ROOT)"

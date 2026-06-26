@@ -78,5 +78,6 @@ sh -n packaging/macos/install_luxtts_runtime.sh
 sh -n packaging/create-release-bundle.sh
 qa/automation/luxtts_installer_marker_test.py
 packaging/tests/check_release_bundle.sh
+tools/github/tests/check_create_release_dry_run.sh
 
 echo "Public-repo hygiene check passed."

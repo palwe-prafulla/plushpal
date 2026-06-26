@@ -19,7 +19,7 @@ understand it, run checks, and exercise core flows without hand-holding.
 | 4 | Add CI public clone validation | Done | Add more smoke coverage as new demo mode matures |
 | 5 | Separate mock vs real integrations cleanly | Partial | Add UI labels and broader client-mode tests |
 | 6 | Harden security/privacy | Partial | Browser local encryption, safety corpus, network/privacy regression tests |
-| 7 | Better release artifacts | Partial | GitHub release upload automation and optional signing path |
+| 7 | Better release artifacts | Partial | Optional signing/notarization path |
 | 8 | MacStation reliability dashboard | Partial | Add reset/repair actions and richer setup phase detail |
 | 9 | Add more E2E scripted tests | Partial | Add UI journey automation across Android/iOS/browser/Mac where practical |
 | 10 | Document limitations clearly | Done | Keep updated as architecture evolves |
@@ -280,16 +280,14 @@ Done for baseline clone health.
   local unsigned/dev outputs.
 - Public repo check verifies release-bundle structure and checksums with fake
   artifacts.
+- `tools/github/create_release.py` can create a GitHub release and upload a
+  prepared bundle using `GITHUB_TOKEN` or `codex.github.token` from Keychain.
+- Public repo check verifies GitHub release publishing in dry-run mode.
 - macOS zip/DMG, Android APK, iOS simulator/device app outputs exist when local
   prerequisites are available.
 
 ### Remaining deliverables
 
-- GitHub release automation:
-  - tag;
-  - upload artifacts;
-  - upload checksums;
-  - mark unsigned/dev artifacts clearly.
 - Optional signing/notarization path:
   - signed macOS app;
   - notarized DMG;

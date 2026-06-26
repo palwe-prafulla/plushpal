@@ -103,6 +103,16 @@ Artifacts are written outside the source checkout under:
 ~/Downloads/PlushPal/release
 ```
 
+To publish a prepared release bundle to GitHub after creating a tag/versioned
+bundle, use:
+
+```sh
+make publish-release TAG=v0.1.0 RELEASE_DIR=~/Downloads/PlushPal/release/v0.1.0
+```
+
+The publisher reads `GITHUB_TOKEN` or the macOS Keychain service
+`codex.github.token`.
+
 Open:
 
 ```text
