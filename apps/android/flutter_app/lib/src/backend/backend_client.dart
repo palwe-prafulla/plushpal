@@ -20,6 +20,7 @@ class LocalModelReadiness {
     required this.ready,
     required this.installSupported,
     required this.installing,
+    this.runtimeMode = 'custom',
     this.parentConfigured = false,
     this.ageBand,
     this.characterAlias,
@@ -33,6 +34,7 @@ class LocalModelReadiness {
   final bool ready;
   final bool installSupported;
   final bool installing;
+  final String runtimeMode;
   final bool parentConfigured;
   final String? ageBand;
   final String? characterAlias;

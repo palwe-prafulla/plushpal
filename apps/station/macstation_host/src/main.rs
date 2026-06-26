@@ -66,6 +66,18 @@ impl RuntimeMode {
     fn suppress_cloud_and_local_model(self) -> bool {
         matches!(self, Self::Mock | Self::Demo | Self::LocalVoice)
     }
+
+    #[cfg_attr(not(feature = "native-runtime"), allow(dead_code))]
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Custom => "custom",
+            Self::Mock => "mock",
+            Self::Demo => "demo",
+            Self::LocalVoice => "local_voice",
+            Self::Cloud => "cloud",
+            Self::Full => "full",
+        }
+    }
 }
 
 #[tokio::main]
@@ -112,6 +124,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let runtime_mode = RuntimeMode::from_env();
         eprintln!("PlushPal runtime mode: {runtime_mode:?}");
+        let state = state.with_runtime_mode(runtime_mode.as_str());
         let data_directory = application_data_directory()?;
         let profile_key = token_source
             .generate()

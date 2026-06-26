@@ -503,6 +503,7 @@ class _PlushPalRootState extends State<PlushPalRoot>
             modelId: readiness.modelId,
             displayName: readiness.displayName,
             installed: readiness.ready,
+            runtimeMode: readiness.runtimeMode,
           ),
         ),
       );
@@ -2189,6 +2190,12 @@ class OnboardingScreen extends StatelessWidget {
                   'Make toy buddies, give them voices, and let your child jump into pretend play.',
                   textAlign: TextAlign.center,
                 ),
+                if (state.recommendation != null) ...[
+                  const SizedBox(height: 16),
+                  _RuntimeModeBanner(
+                    runtimeMode: state.recommendation!.runtimeMode,
+                  ),
+                ],
                 const SizedBox(height: 24),
                 Card(
                   child: Padding(
@@ -2280,6 +2287,12 @@ class OnboardingScreen extends StatelessWidget {
                     ? 'Complete these grown-up steps once. Parent data stays in this browser; the Magic Voice Box is used only for buddy voices.'
                     : 'Complete these grown-up steps once. Parent data stays encrypted on this device; the Magic Voice Box is used only for buddy voices.',
               ),
+              if (state.recommendation != null) ...[
+                const SizedBox(height: 16),
+                _RuntimeModeBanner(
+                  runtimeMode: state.recommendation!.runtimeMode,
+                ),
+              ],
               const SizedBox(height: 24),
               _SettingsCard(
                 icon: Icons.lock,
@@ -2788,6 +2801,12 @@ class ParentHomeScreen extends StatelessWidget {
           child: ListView(
             padding: const EdgeInsets.all(24),
             children: [
+              if (state.recommendation != null) ...[
+                _RuntimeModeBanner(
+                  runtimeMode: state.recommendation!.runtimeMode,
+                ),
+                const SizedBox(height: 16),
+              ],
               Card(
                 color: const Color(0xfffff0f7),
                 child: Padding(
@@ -4353,6 +4372,48 @@ class _SettingsTile extends StatelessWidget {
         trailing ?? (onTap == null ? null : const Icon(Icons.chevron_right)),
     onTap: onTap,
   );
+}
+
+class _RuntimeModeBanner extends StatelessWidget {
+  const _RuntimeModeBanner({required this.runtimeMode});
+
+  final String runtimeMode;
+
+  @override
+  Widget build(BuildContext context) {
+    final normalized = runtimeMode.toLowerCase();
+    final isDemo = normalized == 'demo' || normalized == 'mock';
+    if (!isDemo) return const SizedBox.shrink();
+    final colorScheme = Theme.of(context).colorScheme;
+    return Card(
+      color: const Color(0xfffff7cc),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.science, color: colorScheme.primary),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Demo mode',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  SizedBox(height: 2),
+                  Text(
+                    'Synthetic voice and pretend responses only. No Gemini/OpenAI calls, no real voice cloning quality.',
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _SettingsCard extends StatelessWidget {

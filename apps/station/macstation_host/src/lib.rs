@@ -301,6 +301,7 @@ pub struct HostState {
     parent_profile_store: Option<Arc<dyn ParentProfileStore>>,
     voice_engine: Arc<dyn VoiceEngine>,
     voice_synthesis_busy: Arc<AtomicBool>,
+    runtime_mode: Arc<str>,
 }
 
 #[derive(Debug)]
@@ -362,7 +363,14 @@ impl HostState {
             parent_profile_store: None,
             voice_engine: Arc::new(UnavailableVoiceEngine),
             voice_synthesis_busy: Arc::new(AtomicBool::new(false)),
+            runtime_mode: Arc::from("custom"),
         }
+    }
+
+    #[must_use]
+    pub fn with_runtime_mode(mut self, runtime_mode: impl Into<String>) -> Self {
+        self.runtime_mode = Arc::from(runtime_mode.into());
+        self
     }
 
     #[must_use]
@@ -1423,6 +1431,7 @@ struct StatusPayload {
     local_only: bool,
     model_id: &'static str,
     display_name: &'static str,
+    runtime_mode: String,
     model_ready: bool,
     model_install_supported: bool,
     model_installing: bool,
@@ -1450,7 +1459,7 @@ struct DiagnosticsPayload {
     parent_profile_store_ready: bool,
     parent_configured: bool,
     voice_synthesis_busy: bool,
-    station_mode: &'static str,
+    station_mode: String,
 }
 
 async fn status(State(state): State<HostState>, headers: HeaderMap) -> Response {
@@ -1472,6 +1481,7 @@ async fn status(State(state): State<HostState>, headers: HeaderMap) -> Response 
         local_only: true,
         model_id: "qwen3-local",
         display_name: "Qwen3 local conversation model",
+        runtime_mode: state.runtime_mode.to_string(),
         model_ready,
         model_install_supported: state.model_installer.supported(),
         model_installing: state.model_installer.installing(),
@@ -1531,7 +1541,7 @@ async fn diagnostics(State(state): State<HostState>, headers: HeaderMap) -> Resp
         parent_profile_store_ready: state.parent_profile_store.is_some(),
         parent_configured,
         voice_synthesis_busy: state.voice_synthesis_busy.load(Ordering::Acquire),
-        station_mode: "local",
+        station_mode: state.runtime_mode.to_string(),
     })
     .into_response()
 }

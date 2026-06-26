@@ -241,6 +241,7 @@ class WebBackendClient implements BackendClient {
       ready: decoded['model_ready']! as bool,
       installSupported: decoded['model_install_supported']! as bool,
       installing: decoded['model_installing']! as bool,
+      runtimeMode: decoded['runtime_mode'] as String? ?? 'custom',
       parentConfigured: decoded['parent_configured'] as bool? ?? false,
       ageBand: decoded['age_band'] as String?,
       characterAlias: decoded['character_alias'] as String?,

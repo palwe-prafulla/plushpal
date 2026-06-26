@@ -9,16 +9,19 @@ class ModelRecommendation {
     required this.modelId,
     required this.displayName,
     required this.installed,
+    this.runtimeMode = 'custom',
   });
 
   final String modelId;
   final String displayName;
   final bool installed;
+  final String runtimeMode;
 
   ModelRecommendation copyWith({bool? installed}) => ModelRecommendation(
     modelId: modelId,
     displayName: displayName,
     installed: installed ?? this.installed,
+    runtimeMode: runtimeMode,
   );
 }
 

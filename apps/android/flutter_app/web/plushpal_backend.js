@@ -384,6 +384,7 @@ Current child message: ${safeText}`;
       display_name: state.reasoning.apiKey
         ? `${providerDisplayName(state.reasoning.provider || 'gemini')} cloud reasoning`
         : 'Browser cloud reasoning',
+      runtime_mode: station?.runtime_mode || 'browser',
       model_ready: Boolean(state.reasoning.apiKey),
       model_install_supported: Boolean(station),
       model_installing: false,
