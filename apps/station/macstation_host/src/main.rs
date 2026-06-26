@@ -51,7 +51,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(feature = "native-runtime")]
     let state = {
         use plushpal_desktop_host::native_runtime::{
-            ChatterboxVoiceEngine, GeminiConversationEngine, LuxTtsVoiceEngine,
+            ChatterboxVoiceEngine, DemoVoiceEngine, GeminiConversationEngine, LuxTtsVoiceEngine,
             NativeConversationEngine, NativeModelInstaller, NativeParentProfileStore,
             PocketVoiceEngine,
         };
@@ -84,7 +84,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .with_parent_profile_store(profile_store)
             .map_err(|error| std::io::Error::other(format!("{error:?}")))?;
         let requested_voice_engine = env::var("PLUSHPAL_VOICE_ENGINE").unwrap_or_default();
-        if requested_voice_engine.eq_ignore_ascii_case("luxtts") {
+        if requested_voice_engine.eq_ignore_ascii_case("demo") {
+            state = state.with_voice_engine(Arc::new(DemoVoiceEngine));
+            eprintln!("PlushPal demo voice engine enabled; this validates flow but does not clone voices.");
+        } else if requested_voice_engine.eq_ignore_ascii_case("luxtts") {
             let python_executable = env::var_os("PLUSHPAL_LUXTTS_PYTHON")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from("python3"));

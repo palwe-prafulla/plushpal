@@ -2646,10 +2646,10 @@ pub mod native_runtime {
                     .map_err(|_| HostError::PersistenceUnavailable)?;
                 Self::character_id_for_alias(&database, alias)?
             };
-                let mut status = self.voice_status_for_id(&character_id)?;
-                status.profile_id = Some(profile_id_for_alias(alias));
-                Ok(status)
-            }
+            let mut status = self.voice_status_for_id(&character_id)?;
+            status.profile_id = Some(profile_id_for_alias(alias));
+            Ok(status)
+        }
 
         fn store_voice_sample(&self, wav: &[u8], facts: VoiceSampleFacts) -> Result<(), HostError> {
             self.store_voice_sample_for_id(
@@ -2726,6 +2726,53 @@ pub mod native_runtime {
                 Self::character_id_for_alias(&database, alias)?
             };
             self.delete_voice_for_id(&character_id)
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct DemoVoiceEngine;
+
+    impl VoiceEngine for DemoVoiceEngine {
+        fn is_ready(&self) -> bool {
+            true
+        }
+
+        fn synthesize(&self, reference_wav: &[u8], text: &str) -> Result<Vec<u8>, HostError> {
+            if reference_wav.is_empty() || text.trim().is_empty() {
+                return Err(HostError::VoiceUnavailable);
+            }
+            let digest = Sha256::digest(reference_wav);
+            let sample_rate = 16_000_u32;
+            let seconds = (text.chars().count() as f32 / 18.0).clamp(0.8, 3.0);
+            let samples = (seconds * sample_rate as f32) as usize;
+            let frequency = 360.0 + f32::from(digest[0]) * 1.5;
+            let mut cursor = Cursor::new(Vec::new());
+            let specification = hound::WavSpec {
+                channels: 1,
+                sample_rate,
+                bits_per_sample: 16,
+                sample_format: hound::SampleFormat::Int,
+            };
+            {
+                let mut writer = hound::WavWriter::new(&mut cursor, specification)
+                    .map_err(|_| HostError::VoiceUnavailable)?;
+                for index in 0..samples {
+                    let t = index as f32 / sample_rate as f32;
+                    let fade_in = (index as f32 / (sample_rate as f32 * 0.04)).clamp(0.0, 1.0);
+                    let fade_out =
+                        ((samples - index) as f32 / (sample_rate as f32 * 0.08)).clamp(0.0, 1.0);
+                    let envelope = fade_in.min(fade_out) * 0.28;
+                    let wobble = (t * 2.4 * std::f32::consts::PI).sin() * 18.0;
+                    let sample = ((t * (frequency + wobble) * 2.0 * std::f32::consts::PI).sin()
+                        * envelope
+                        * f32::from(i16::MAX)) as i16;
+                    writer
+                        .write_sample(sample)
+                        .map_err(|_| HostError::VoiceUnavailable)?;
+                }
+                writer.finalize().map_err(|_| HostError::VoiceUnavailable)?;
+            }
+            Ok(cursor.into_inner())
         }
     }
 
@@ -3380,6 +3427,17 @@ pub mod native_runtime {
             let parsed = GeminiConversationEngine::parse_response(response).unwrap();
             assert_eq!(parsed.speech, "Woof woof, let's play gently!");
             assert!(!parsed.suggest_trusted_adult);
+        }
+
+        #[test]
+        fn demo_voice_engine_generates_valid_wav() {
+            let generated = DemoVoiceEngine
+                .synthesize(&fixture_wav(), "Hello from demo mode.")
+                .expect("demo voice synthesis");
+            let reader =
+                hound::WavReader::new(Cursor::new(generated)).expect("generated wav is readable");
+            assert_eq!(reader.spec().channels, 1);
+            assert_eq!(reader.spec().sample_rate, 16_000);
         }
 
         #[test]

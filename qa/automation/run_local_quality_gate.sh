@@ -52,6 +52,8 @@ run_step() {
 }
 
 run_step cargo-test cargo test --workspace
+run_step public-repo-check make public-repo-check
+run_step doctor make doctor
 run_step flutter-analyze bash -lc "cd apps/android/flutter_app && flutter analyze"
 run_step flutter-test bash -lc "cd apps/android/flutter_app && flutter test"
 run_step web-node-tests bash -lc "cd apps/android/flutter_app && node --test test/audio_normalization_test.js test/plushpal_backend_web_test.mjs"

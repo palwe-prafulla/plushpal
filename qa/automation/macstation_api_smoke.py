@@ -7,7 +7,8 @@ configures the parent PIN, creates characters, and optionally enrolls voice
 samples for each character.
 
 By default this is a fast API smoke and does not load LuxTTS. Pass
-`--voice-engine luxtts --synthesize` to exercise the local voice runtime too.
+`--voice-engine luxtts --synthesize` to exercise the local voice runtime too,
+or `--voice-engine demo --synthesize` for a lightweight synthetic voice smoke.
 """
 
 from __future__ import annotations
@@ -100,7 +101,7 @@ def read_line_until(process: subprocess.Popen[str], pattern: str, timeout: float
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--pin", default="1234")
-    parser.add_argument("--voice-engine", choices=["none", "luxtts"], default="none")
+    parser.add_argument("--voice-engine", choices=["none", "demo", "luxtts"], default="none")
     parser.add_argument("--synthesize", action="store_true")
     parser.add_argument(
         "--sample",
@@ -132,7 +133,9 @@ def main() -> int:
             "PLUSHPAL_ENABLE_MAC_KEYCHAIN_GEMINI": "0",
         }
     )
-    if args.voice_engine == "luxtts":
+    if args.voice_engine == "demo":
+        env["PLUSHPAL_VOICE_ENGINE"] = "demo"
+    elif args.voice_engine == "luxtts":
         env.update(
             {
                 "PLUSHPAL_VOICE_ENGINE": "luxtts",

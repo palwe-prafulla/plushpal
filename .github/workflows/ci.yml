@@ -10,6 +10,15 @@ permissions:
   contents: read
 
 jobs:
+  public-repo:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - run: make public-repo-check
+      - run: make doctor
+
   rust-native:
     runs-on: macos-14
     steps:

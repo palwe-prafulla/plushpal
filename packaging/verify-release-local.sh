@@ -16,6 +16,8 @@ command -v flutter >/dev/null
 command -v node >/dev/null
 command -v zip >/dev/null
 
+make public-repo-check
+make doctor
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace

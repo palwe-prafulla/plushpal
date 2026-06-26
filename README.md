@@ -91,6 +91,7 @@ flowchart LR
 From a fresh clone on macOS:
 
 ```sh
+make doctor
 make public-artifacts
 ```
 
@@ -109,6 +110,15 @@ Open:
 Then use Station to open the Mac app, open the browser client, or scan the QR
 code from Android/iPhone.
 
+For a lightweight developer demo without LuxTTS voice cloning, run:
+
+```sh
+make run-mac-demo
+```
+
+This starts MacStation with a synthetic demo voice engine. It validates the app
+flow, but it does not represent the real cloned toy-voice quality.
+
 ## Documentation map
 
 Start here:
@@ -118,6 +128,8 @@ Start here:
 - [Codebase directory guide](docs/architecture/CODEBASE_DIRECTORY_GUIDE.md)
 - [Android + MacStation MVP architecture notes](docs/architecture/ANDROID_MACSTATION_MVP_ARCHITECTURE.md)
 - [QA test plan and latest execution report](docs/release/QA_TEST_PLAN_AND_EXECUTION_2026-06-25.md)
+- [Privacy and security model](docs/product/PRIVACY_AND_SECURITY.md)
+- [Known limitations](docs/product/KNOWN_LIMITATIONS.md)
 - [Requirements traceability](docs/release/REQUIREMENTS_TRACEABILITY.md)
 - [Release checklist](docs/release/RELEASE_CHECKLIST.md)
 - [GitHub repository settings](docs/release/GITHUB_REPOSITORY_SETTINGS.md)
@@ -607,6 +619,14 @@ qa/automation/macstation_api_smoke.py
 # MacStation M4A enrollment and profile-isolation smoke.
 # Use your own private local samples outside the repo.
 qa/automation/macstation_api_smoke.py \
+  --sample Sheru="$HOME/Downloads/PlushPal/private/audio-samples/Sheru.m4a" \
+  --sample Jenna="$HOME/Downloads/PlushPal/private/audio-samples/Jenna.m4a" \
+  --sample Buddy="$HOME/Downloads/PlushPal/private/audio-samples/Buddy.m4a"
+
+# Lightweight synthetic voice E2E, no LuxTTS download required.
+qa/automation/macstation_api_smoke.py \
+  --voice-engine demo \
+  --synthesize \
   --sample Sheru="$HOME/Downloads/PlushPal/private/audio-samples/Sheru.m4a" \
   --sample Jenna="$HOME/Downloads/PlushPal/private/audio-samples/Jenna.m4a" \
   --sample Buddy="$HOME/Downloads/PlushPal/private/audio-samples/Buddy.m4a"

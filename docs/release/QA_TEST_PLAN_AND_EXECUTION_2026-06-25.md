@@ -56,8 +56,9 @@ Private local samples were moved outside the repository:
 | Area | Command / check | Result | Evidence |
 |---|---|---:|---|
 | Public artifact build | `make public-artifacts` | PASS | `~/Downloads/PlushPal/artifacts` |
-| Local quality gate | `qa/automation/run_local_quality_gate.sh` | PASS | `local-quality-20260625-181750` |
+| Local quality gate | `qa/automation/run_local_quality_gate.sh` | PASS | `local-quality-20260625-212532` |
 | MacStation API smoke | `qa/automation/macstation_api_smoke.py` | PASS | `macstation-api-20260625-181750` |
+| MacStation demo voice E2E | `qa/automation/macstation_api_smoke.py --voice-engine demo --synthesize --sample ...` | PASS | `macstation-api-20260625-212730`; synthetic fast-path validates enrollment/approval/synthesis plumbing without LuxTTS. |
 | MacStation LuxTTS E2E | `qa/automation/macstation_api_smoke.py --voice-engine luxtts --synthesize --sample ...` | PASS | `macstation-api-20260625-182107` |
 | Packaged MacStation launch/readiness | Packaged app launch/log readiness smoke | PASS | `macstation-packaged-20260625-182639` |
 | Browser client through packaged Station | Station-served Flutter UI render smoke | PASS | `packaged-station-clients-20260625-182741/browser-report.json` |
