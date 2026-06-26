@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://plushpal.local/schemas/search-evidence/v1.json",
+  "title": "PlushPal bounded search evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "records"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "records": {
+      "type": "array",
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source_id", "source_url", "title", "excerpt"],
+        "properties": {
+          "source_id": { "type": "string", "maxLength": 64 },
+          "source_url": { "type": "string", "format": "uri", "pattern": "^https://" },
+          "title": { "type": "string", "maxLength": 160 },
+          "excerpt": { "type": "string", "maxLength": 1200 }
+        }
+      }
+    }
+  }
+}
+

@@ -1,0 +1,32 @@
+name: close external pull requests
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  pull-requests: write
+  issues: write
+
+jobs:
+  close:
+    if: github.event.pull_request.user.login != github.repository_owner
+    runs-on: ubuntu-latest
+    steps:
+      - name: Explain contribution policy
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const pull_number = context.payload.pull_request.number;
+            const body = [
+              "Thanks for your interest in PlushBuddy.",
+              "",
+              "This repository is public for learning, portfolio, and reference purposes,",
+              "but it is not accepting external pull requests or direct contributions right now.",
+              "",
+              "You are welcome to fork the project under the license terms."
+            ].join("\n");
+            await github.rest.issues.createComment({ owner, repo, issue_number: pull_number, body });
+            await github.rest.pulls.update({ owner, repo, pull_number, state: "closed" });

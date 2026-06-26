@@ -1,0 +1,18 @@
+[package]
+name = "plushpal-cloud-provider"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+plushpal-core-domain = { path = "../core_domain" }
+plushpal-encrypted-storage = { path = "../encrypted_storage" }
+plushpal-provider-api = { path = "../provider_api" }
+serde.workspace = true
+serde_json.workspace = true
+reqwest.workspace = true
+ring.workspace = true
+
+[lints]
+workspace = true

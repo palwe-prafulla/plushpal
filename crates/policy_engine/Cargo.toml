@@ -1,0 +1,13 @@
+[package]
+name = "plushpal-policy-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+plushpal-core-domain = { path = "../core_domain" }
+
+[lints]
+workspace = true
+

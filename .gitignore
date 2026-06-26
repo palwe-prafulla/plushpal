@@ -1,0 +1,86 @@
+# macOS / editors
+.DS_Store
+.idea/
+.vscode/
+*.iml
+
+# Logs, credentials, and local-only environment files
+*.log
+.env
+.env.*
+!.env.example
+gemiapi
+*api_key*
+*apikey*
+*secret*
+*token*
+*.key
+*.pem
+*.p12
+*.mobileprovision
+*.keystore
+*.jks
+
+# Rust / native build outputs
+/target/
+/build/
+/desktop_host/
+
+# Product artifacts are written to ~/Downloads/PlushPal by public build scripts.
+/dist/
+*.apk
+*.ipa
+*.dmg
+*.pkg
+*.xcarchive
+
+# Flutter/Dart generated files
+/.dart_tool/
+apps/android/flutter_app/.dart_tool/
+apps/android/flutter_app/.flutter-plugins
+apps/android/flutter_app/.flutter-plugins-dependencies
+apps/android/flutter_app/.metadata
+apps/android/flutter_app/build/
+apps/android/flutter_app/coverage/
+apps/android/flutter_app/android/local.properties
+apps/android/flutter_app/android/.gradle/
+apps/android/flutter_app/android/app/debug/
+apps/android/flutter_app/android/app/profile/
+apps/android/flutter_app/android/app/release/
+apps/android/flutter_app/ios/Flutter/ephemeral/
+apps/android/flutter_app/ios/Flutter/Generated.xcconfig
+apps/android/flutter_app/ios/Flutter/flutter_export_environment.sh
+apps/android/flutter_app/ios/Pods/
+apps/android/flutter_app/ios/.symlinks/
+apps/android/flutter_app/ios/Runner.xcworkspace/xcuserdata/
+apps/android/flutter_app/ios/Runner.xcodeproj/xcuserdata/
+
+# Python runtimes / caches
+/.venv*/
+**/__pycache__/
+*.pyc
+
+# Local model/runtime downloads
+*.gguf
+*.partial
+/models/runtime/
+/models/downloads/
+/models/cache/
+/models/**/*.bin
+/models/**/*.safetensors
+/models/**/*.onnx
+
+# Personal or generated audio/model bakeoff data
+/audio-samples/
+/test-artifacts/
+/test-results/
+/qa/results/
+
+# Heavy third-party research checkouts are downloaded by setup/build scripts.
+/third_party/GPT-SoVITS/
+/third_party/LuxTTS/
+/third_party/OpenVoice/
+/third_party/tada/
+
+# Keep the configured llama.cpp submodule.
+!/third_party/llama.cpp/

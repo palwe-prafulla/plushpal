@@ -1,0 +1,11 @@
+[package]
+name = "plushpal-llama-native-ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+build = "build.rs"
+
+[dependencies]
+plushpal-local-llm-llamacpp = { path = "../local_llm_llamacpp" }
+

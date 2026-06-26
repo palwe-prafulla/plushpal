@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://plushpal.local/schemas/provider-response/v1.json",
+  "title": "PlushPal structured character response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "speech", "suggest_trusted_adult"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "speech": { "type": "string", "minLength": 1, "maxLength": 450 },
+    "suggest_trusted_adult": { "type": "boolean" }
+  }
+}
+

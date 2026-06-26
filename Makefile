@@ -1,0 +1,84 @@
+PUBLIC_ROOT ?= $(HOME)/Downloads/PlushPal
+ARTIFACTS_DIR ?= $(PUBLIC_ROOT)/artifacts
+BUILD_DIR ?= $(PUBLIC_ROOT)/build
+
+.PHONY: format lint test native flutter desktop android-rust android-apk ios-simulator ios-device package-macos build-all build-product public-artifacts public-clean test-product-layout verify-release-local check setup-chatterbox-voice setup-luxtts-voice run-mac-luxtts
+
+format:
+	cargo fmt --all -- --check
+
+lint:
+	cargo clippy --workspace --all-targets -- -D warnings
+
+test:
+	cargo test --workspace
+	cargo check -p plushpal-desktop-host --example model_smoke --features native-runtime
+	cargo check -p plushpal-desktop-host --example voice_smoke --features native-runtime
+	cargo check -p plushpal-desktop-host --example chatterbox_voice_smoke --features native-runtime
+
+native:
+	cmake -S native/llama_abi -B build/native-llama -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+	cmake --build build/native-llama --config Release -j 4
+	ctest --test-dir build/native-llama --output-on-failure
+	cmake -S native/key_vault_abi -B build/native-key-vault -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+	cmake --build build/native-key-vault --config Release -j 4
+	ctest --test-dir build/native-key-vault --output-on-failure
+
+flutter:
+	cd apps/android/flutter_app && flutter analyze && flutter test && flutter build web --release --pwa-strategy=none --no-web-resources-cdn
+
+desktop: flutter
+	rsync -a --delete apps/android/flutter_app/build/web/ apps/station/macstation_host/assets/flutter_web/
+	cargo build --release -p plushpal-desktop-host --features native-runtime
+
+package-macos:
+	PLUSHPAL_ARTIFACTS_DIR="$(ARTIFACTS_DIR)" \
+	PLUSHPAL_BUILD_DIR="$(BUILD_DIR)" \
+	CARGO_TARGET_DIR="$(BUILD_DIR)/cargo-target" \
+	sh packaging/macos/package.sh
+
+android-apk: android-rust
+	cd apps/android/flutter_app && flutter build apk --debug
+
+ios-simulator:
+	cd apps/android/flutter_app && flutter build ios --simulator --debug
+
+ios-device:
+	cd apps/android/flutter_app && flutter build ios --release --no-codesign
+
+build-all: package-macos android-apk ios-simulator ios-device
+
+build-product: build-all
+
+public-artifacts:
+	sh packaging/build-public-artifacts.sh
+
+public-clean:
+	rm -rf "$(PUBLIC_ROOT)"
+
+test-product-layout:
+	sh packaging/macos/tests/check_product_layout.sh
+
+setup-chatterbox-voice:
+	sh tools/voice/setup_chatterbox_macos.sh
+
+setup-luxtts-voice:
+	sh tools/voice/setup_luxtts_macos.sh
+
+run-mac-luxtts:
+	PLUSHPAL_VOICE_ENGINE=luxtts \
+	PLUSHPAL_LUXTTS_PYTHON="$$(pwd)/.venv-luxtts/bin/python" \
+	PLUSHPAL_LUXTTS_SCRIPT="$$(pwd)/tools/voice/luxtts_tts.py" \
+	PLUSHPAL_LUXTTS_NUM_STEPS=8 \
+	PLUSHPAL_LUXTTS_SPEED=0.88 \
+	PLUSHPAL_LUXTTS_SEED=11 \
+	PLUSHPAL_LUXTTS_REF_DURATION=180 \
+	cargo run --release -p plushpal-desktop-host --features native-runtime
+
+verify-release-local:
+	sh packaging/verify-release-local.sh
+
+android-rust:
+	sh packaging/android/build-rust.sh
+
+check: format lint test native flutter test-product-layout

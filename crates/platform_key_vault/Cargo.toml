@@ -1,0 +1,17 @@
+[package]
+name = "plushpal-platform-key-vault"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+build = "build.rs"
+
+[dependencies]
+plushpal-encrypted-storage = { path = "../encrypted_storage" }
+
+[lints.rust]
+unsafe_code = "allow"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+all = "warn"

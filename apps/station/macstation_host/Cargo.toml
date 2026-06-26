@@ -1,0 +1,50 @@
+[package]
+name = "plushpal-desktop-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+axum.workspace = true
+aes-gcm.workspace = true
+base64.workspace = true
+getrandom.workspace = true
+fs2.workspace = true
+hex.workspace = true
+hound.workspace = true
+plushpal-desktop-gateway = { path = "../../../crates/desktop_gateway" }
+plushpal-core-domain = { path = "../../../crates/core_domain" }
+plushpal-parent-controls = { path = "../../../crates/parent_controls" }
+plushpal-character-voice = { path = "../../../crates/character_voice" }
+plushpal-application = { path = "../../../crates/application", optional = true }
+plushpal-llama-native-ffi = { path = "../../../crates/llama_native_ffi", optional = true }
+plushpal-local-llm-llamacpp = { path = "../../../crates/local_llm_llamacpp", optional = true }
+plushpal-model-lifecycle = { path = "../../../crates/model_lifecycle", optional = true }
+plushpal-encrypted-storage = { path = "../../../crates/encrypted_storage", optional = true }
+plushpal-platform-key-vault = { path = "../../../crates/platform_key_vault", optional = true }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+reqwest.workspace = true
+sherpa-onnx = { workspace = true, optional = true }
+tokio.workspace = true
+
+[features]
+default = []
+native-runtime = [
+    "dep:plushpal-application",
+    "dep:plushpal-llama-native-ffi",
+    "dep:plushpal-local-llm-llamacpp",
+    "dep:plushpal-model-lifecycle",
+    "dep:plushpal-encrypted-storage",
+    "dep:plushpal-platform-key-vault",
+    "dep:sherpa-onnx",
+]
+
+[dev-dependencies]
+http-body-util.workspace = true
+tower.workspace = true
+
+[lints]
+workspace = true

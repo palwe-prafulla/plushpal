@@ -1,0 +1,13 @@
+[package]
+name = "plushpal-parent-controls"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+ring.workspace = true
+subtle.workspace = true
+
+[lints]
+workspace = true

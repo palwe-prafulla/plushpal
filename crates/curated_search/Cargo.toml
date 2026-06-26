@@ -1,0 +1,17 @@
+[package]
+name = "plushpal-curated-search"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+plushpal-search-api = { path = "../search_api" }
+plushpal-encrypted-storage = { path = "../encrypted_storage" }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+url.workspace = true
+
+[lints]
+workspace = true

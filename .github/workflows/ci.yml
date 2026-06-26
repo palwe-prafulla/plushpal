@@ -1,0 +1,68 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rust-native:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@1.86.0
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - run: make native
+
+  flutter:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+        working-directory: apps/android/flutter_app
+      - run: flutter analyze
+        working-directory: apps/android/flutter_app
+      - run: flutter test
+        working-directory: apps/android/flutter_app
+      - run: flutter build web --release --pwa-strategy=none --no-web-resources-cdn
+        working-directory: apps/android/flutter_app
+
+  macos-package:
+    runs-on: macos-14
+    needs: [rust-native, flutter]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@1.86.0
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: git clone --depth 1 https://github.com/ysharma3501/LuxTTS.git "$RUNNER_TEMP/LuxTTS"
+      - run: sh packaging/macos/package.sh
+        env:
+          PLUSHPAL_ARTIFACTS_DIR: ${{ runner.temp }}/PlushBuddyArtifacts
+          PLUSHPAL_BUILD_DIR: ${{ runner.temp }}/PlushBuddyBuild
+          CARGO_TARGET_DIR: ${{ runner.temp }}/PlushBuddyBuild/cargo-target
+          PLUSHPAL_LUXTTS_SOURCE_DIR: ${{ runner.temp }}/LuxTTS
+      - run: codesign --verify --deep --strict --verbose=2 "$RUNNER_TEMP/PlushBuddyArtifacts/macos/PlushBuddy Station.app"
+      - run: otool -L "$RUNNER_TEMP/PlushBuddyArtifacts/macos/PlushBuddy Station.app/Contents/MacOS/plushpal-desktop-host" | grep -F '@rpath/libplushpal_llama.dylib'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PlushBuddy-macOS-ad-hoc-signed
+          path: ${{ runner.temp }}/PlushBuddyArtifacts/macos/PlushBuddy-0.1.0-macos.zip
