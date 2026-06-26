@@ -4,7 +4,14 @@ Last updated: 2026-06-25
 
 This document describes the current implementation of the PlushBuddy MVP: Android and iPhone pair with a MacStation voice appliance by QR; browser and Mac clients are launched by Station and auto-attach locally without QR scanning. It is intended to be readable both as engineering documentation and as a project showcase.
 
-For the full professional system design with component diagrams, data ownership, runtime flows, security boundaries, model stack, and tradeoffs, see [`SYSTEM_DESIGN.md`](SYSTEM_DESIGN.md). For a system-design-interview version with the 5-minute pitch, likely follow-up questions, tradeoff framing, and whiteboard-friendly diagrams, see [`SYSTEM_DESIGN_INTERVIEW_PREP.md`](SYSTEM_DESIGN_INTERVIEW_PREP.md). For a code-location guide organized by Android app, MacStation, Mac client, browser app, shared Rust crates, voice tools, packaging, and generated folders, see [`CODEBASE_DIRECTORY_GUIDE.md`](CODEBASE_DIRECTORY_GUIDE.md).
+For the full professional system design with component diagrams, data ownership,
+runtime flows, security boundaries, model stack, and tradeoffs, see
+[`SYSTEM_DESIGN.md`](SYSTEM_DESIGN.md). For a code-location guide organized by
+Android app, MacStation, Mac client, browser app, shared Rust crates, voice
+tools, packaging, and generated folders, see
+[`CODEBASE_DIRECTORY_GUIDE.md`](CODEBASE_DIRECTORY_GUIDE.md). Personal
+interview-prep notes are intentionally kept outside the public repository; see
+[`../PUBLICATION_POLICY.md`](../PUBLICATION_POLICY.md).
 
 ## 1. Product summary
 

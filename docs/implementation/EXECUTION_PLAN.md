@@ -1,8 +1,21 @@
-# PlushPal Repository Execution Plan
+# PlushPal Repository Execution History
 
-Status: Active  
-Baseline: Product Requirements and Architecture v5.0  
-Delivery target: Supervised cross-platform private beta
+Status: Historical implementation log  
+Original baseline: Product Requirements and Architecture v5.0  
+Current source of truth: [`../architecture/SYSTEM_DESIGN.md`](../architecture/SYSTEM_DESIGN.md)
+
+This document records the build-out plan and implementation history from the
+earlier local-first architecture phase. It is kept for engineering context, but
+it is not the current product architecture. The current MVP is the
+PlushBuddy-client + MacStation design:
+
+- Android, iPhone, browser, and Mac client own app UX, kids, characters,
+  conversation history, and parent-provided Gemini/OpenAI keys.
+- MacStation owns local voice profile creation and LuxTTS synthesis only.
+- Local browser and Mac client attach directly when launched from Station.
+- Android and iPhone pair to Station by QR because they are external devices.
+- Generated artifacts, private samples, test evidence, model caches, and
+  personal notes stay outside the public source checkout.
 
 ## Working agreement
 
