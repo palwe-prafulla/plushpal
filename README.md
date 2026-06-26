@@ -16,22 +16,29 @@ state stay local.
 
 ## Screenshots
 
+**Android app** — parent setup and child-mode entry on a real Android device.
+
 <p>
   <img src="docs/assets/screenshots/android-welcome.png" alt="PlushBuddy Android welcome screen" width="210" />
-  <img src="docs/assets/screenshots/iphone-simulator-welcome.png" alt="PlushBuddy iPhone simulator welcome screen" width="210" />
-  <img src="docs/assets/screenshots/browser-welcome.png" alt="PlushBuddy browser client welcome screen" width="420" />
 </p>
 
-| Android app | iPhone simulator | Browser client |
-|---|---|---|
-| Parent setup and child-mode entry on a real Android device. | Same shared Flutter client running in the iOS simulator. | Local browser client opened from PlushBuddy Station. |
+**iPhone simulator** — same shared Flutter client running on iOS.
+
+<p>
+  <img src="docs/assets/screenshots/iphone-simulator-welcome.png" alt="PlushBuddy iPhone simulator welcome screen" width="210" />
+</p>
+
+**Browser client** — local web client opened from PlushBuddy Station.
+
+<p>
+  <img src="docs/assets/screenshots/browser-welcome.png" alt="PlushBuddy browser client welcome screen" width="650" />
+</p>
+
+**Mac app** — native macOS shell around the same desktop client experience.
 
 <p>
   <img src="docs/assets/screenshots/mac-client-welcome.png" alt="PlushBuddy Mac client welcome screen" width="650" />
 </p>
-
-The Mac app uses the same client experience as the browser version, wrapped in a
-native macOS shell and opened from PlushBuddy Station.
 
 ## What it does
 
