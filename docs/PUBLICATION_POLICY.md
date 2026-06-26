@@ -23,10 +23,6 @@ These documents are intended to be published:
   repository settings.
 - `docs/adr/*` — public architecture decision records.
 - `docs/implementation/PRODUCTION_HARDENING_PLAN.md` — public hardening plan.
-- `docs/implementation/EXECUTION_PLAN.md` — historical implementation log,
-  retained only with a clear non-canonical banner.
-- `docs/specifications/*` and `docs/archive/*` — historical specs/archives, only
-  when clearly labeled as not the current source of truth.
 
 ## Private/local docs that should not be published
 
@@ -34,6 +30,7 @@ Keep these outside the git checkout, preferably under
 `~/Downloads/PlushPal/private`:
 
 - personal system-design interview prep notes;
+- stale product specs, archived design notes, and historical execution plans;
 - private family context or child-specific notes;
 - private voice samples and listening bakeoff outputs;
 - provider API keys, tokens, `.env` files, provisioning profiles, and signing
@@ -75,5 +72,5 @@ Ask:
    unpublished family data?
 3. Is it canonical, historical, or archived? Label it clearly.
 4. Does it duplicate another doc in a way that could become stale?
-5. Should it live in public docs, `docs/archive`, or
-   `~/Downloads/PlushPal/private`?
+5. Should it live in public docs or `~/Downloads/PlushPal/private`? If it is
+   stale or historical, keep it private/local rather than publishing it.

@@ -46,8 +46,7 @@ for ignored in audio-samples test-artifacts test-results "qa/results" dist build
 done
 
 if grep -RIn 'qa/results/' README.md docs/architecture docs/release docs/product 2>/dev/null \
-  | grep -v 'old `qa/results/`' \
-  | grep -v 'QA_TEST_PLAN_AND_EXECUTION_2026-06-24.md'; then
+  | grep -v 'old `qa/results/`'; then
   echo "Docs still reference old in-repo qa/results path." >&2
   exit 1
 fi

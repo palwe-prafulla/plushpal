@@ -175,8 +175,6 @@ Start here:
 - [Security policy](SECURITY.md)
 - [Third-party components](THIRD_PARTY.md)
 
-Historical product specs are under [docs/specifications](docs/specifications).
-
 ## License
 
 PlushBuddy is released under the [MIT License](LICENSE).

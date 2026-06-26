@@ -208,10 +208,12 @@ packaging/
     Builds Rust/native assets for Android.
 
 docs/
-  specifications/
-    Earlier product requirements and implementation plan.
   architecture/
     Current implementation architecture docs.
+  implementation/
+    Current hardening plan.
+  release/
+    Current release verification, checklist, and traceability docs.
 ```
 
 ## 6. Android app design

@@ -65,7 +65,7 @@ The most important split:
 | `third_party/` | small pinned source dependencies, not downloaded models | rarely |
 | `native/` | C/C++ ABI bridges | rarely |
 | `packaging/` | macOS/Android/Windows packaging scripts | sometimes |
-| `docs/` | specifications and architecture docs | yes |
+| `docs/` | current public architecture, product, release, and ADR docs | yes |
 | `models/` | model manifests/runtime cache area | rarely |
 | `schemas/` | JSON schemas | sometimes |
 | `.github/` | CI and PR-governance workflows | sometimes |
@@ -566,7 +566,6 @@ docs/
 ├── architecture/
 │   ├── ANDROID_MACSTATION_MVP_ARCHITECTURE.md
 │   └── CODEBASE_DIRECTORY_GUIDE.md
-├── specifications/
 ├── implementation/
 ├── release/
 └── adr/
@@ -576,9 +575,8 @@ docs/
 |---|---|
 | `docs/architecture/ANDROID_MACSTATION_MVP_ARCHITECTURE.md` | current MVP architecture |
 | `docs/architecture/CODEBASE_DIRECTORY_GUIDE.md` | this directory guide |
-| `docs/specifications/` | earlier product/design specs |
-| `docs/implementation/` | execution plan |
-| `docs/release/` | release verification/checklists |
+| `docs/implementation/PRODUCTION_HARDENING_PLAN.md` | current hardening plan |
+| `docs/release/` | current release verification/checklists |
 | `docs/adr/` | architecture decision records |
 
 ## 12. Test artifacts and samples
