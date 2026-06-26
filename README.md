@@ -127,6 +127,7 @@ Start here:
 - [System design interview prep](docs/architecture/SYSTEM_DESIGN_INTERVIEW_PREP.md)
 - [Codebase directory guide](docs/architecture/CODEBASE_DIRECTORY_GUIDE.md)
 - [Android + MacStation MVP architecture notes](docs/architecture/ANDROID_MACSTATION_MVP_ARCHITECTURE.md)
+- [Production hardening plan](docs/implementation/PRODUCTION_HARDENING_PLAN.md)
 - [QA test plan and latest execution report](docs/release/QA_TEST_PLAN_AND_EXECUTION_2026-06-25.md)
 - [Privacy and security model](docs/product/PRIVACY_AND_SECURITY.md)
 - [Known limitations](docs/product/KNOWN_LIMITATIONS.md)

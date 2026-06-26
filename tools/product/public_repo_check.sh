@@ -31,7 +31,9 @@ for path in "${required[@]}"; do
 done
 
 secret_pattern='(ghp_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{20,}|BEGIN (RSA |OPENSSH |EC |PRIVATE )?PRIVATE KEY|GEMINI_API_KEY=|OPENAI_API_KEY=|ELEVENLABS_API_KEY=)'
-if git ls-files -z | xargs -0 grep -InE "$secret_pattern" -- 2>/dev/null; then
+if git ls-files -z \
+  | xargs -0 grep -InE "$secret_pattern" -- 2>/dev/null \
+  | grep -v 'tools/product/public_repo_check.sh:.*secret_pattern='; then
   echo "Potential secret material found in tracked files." >&2
   exit 1
 fi
