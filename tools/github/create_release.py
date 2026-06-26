@@ -27,6 +27,7 @@ from pathlib import Path
 
 API_ROOT = os.environ.get("GITHUB_API_ROOT", "https://api.github.com")
 MAX_RELEASE_ASSET_BYTES = 2_000_000_000
+UPLOAD_TIMEOUT_SECONDS = int(os.environ.get("GITHUB_UPLOAD_TIMEOUT_SECONDS", "1800"))
 
 
 def keychain_token(service: str) -> str | None:
@@ -57,7 +58,14 @@ def github_token() -> str:
     )
 
 
-def api_request(method: str, path_or_url: str, token: str, body: bytes | None = None, content_type: str = "application/json") -> dict:
+def api_request(
+    method: str,
+    path_or_url: str,
+    token: str,
+    body: bytes | None = None,
+    content_type: str = "application/json",
+    timeout: int | None = None,
+) -> dict:
     url = path_or_url if path_or_url.startswith("http") else f"{API_ROOT}{path_or_url}"
     headers = {
         "Accept": "application/vnd.github+json",
@@ -68,7 +76,7 @@ def api_request(method: str, path_or_url: str, token: str, body: bytes | None = 
         headers["Content-Type"] = content_type
     request = urllib.request.Request(url, data=body, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(request, timeout=120) as response:
+        with urllib.request.urlopen(request, timeout=timeout or 120) as response:
             data = response.read()
     except urllib.error.HTTPError as error:
         detail = error.read().decode("utf-8", errors="replace")
@@ -155,6 +163,7 @@ def main() -> int:
             token,
             asset.read_bytes(),
             content_type,
+            timeout=UPLOAD_TIMEOUT_SECONDS,
         )
         print(f"Uploaded {asset.name}")
 
