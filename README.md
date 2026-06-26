@@ -86,6 +86,29 @@ flowchart LR
     Voice --> Desktop
 ```
 
+## Download the current prerelease
+
+Large app binaries are not committed into the git repository. The source repo
+stays lightweight, while downloadable dev artifacts are published on GitHub
+Releases:
+
+**[Download PlushBuddy v0.1.0-dev.1 artifacts](https://github.com/palwe-prafulla/plushpal/releases/tag/v0.1.0-dev.1)**
+
+That release includes:
+
+- macOS Station + Mac client DMG, split into `.part-aa`, `.part-ab`, ... files
+  because the DMG is large;
+- Android debug APK;
+- iPhone simulator app archive;
+- unsigned iPhone device app archive;
+- release notes and SHA-256 checksums.
+
+To reassemble the macOS DMG after downloading all DMG parts:
+
+```sh
+cat PlushBuddy-*.dmg.part-* > PlushBuddy-0.1.0-macos.dmg
+```
+
 ## Quick start
 
 From a fresh clone on macOS:
