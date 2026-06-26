@@ -17,6 +17,8 @@ fi
 
 safe_version=$(printf '%s' "$VERSION" | tr -c 'A-Za-z0-9._-' '-')
 DEST="$RELEASE_ROOT/$safe_version"
+MAX_ASSET_BYTES=${PLUSHPAL_RELEASE_MAX_ASSET_BYTES:-1900000000}
+SPLIT_SIZE=${PLUSHPAL_RELEASE_SPLIT_SIZE:-1900m}
 
 if [ ! -d "$ARTIFACTS_ROOT" ]; then
   echo "Artifacts directory not found: $ARTIFACTS_ROOT" >&2
@@ -45,10 +47,39 @@ zip_app_if_present() {
   fi
 }
 
-copy_if_present "$ARTIFACTS_ROOT"/macos/*.zip "$ARTIFACTS_ROOT"/macos/*.dmg
+file_size_bytes() {
+  if size=$(stat -f%z "$1" 2>/dev/null); then
+    printf '%s\n' "$size"
+  else
+    stat -c%s "$1"
+  fi
+}
+
+split_oversized_assets() {
+  for file in "$DEST"/*; do
+    [ -f "$file" ] || continue
+    size=$(file_size_bytes "$file")
+    if [ "$size" -gt "$MAX_ASSET_BYTES" ]; then
+      echo "Splitting oversized release asset $(basename "$file") (${size} bytes)"
+      split -b "$SPLIT_SIZE" -a 2 "$file" "$file.part-"
+      rm -f "$file"
+    fi
+  done
+}
+
+if ls "$ARTIFACTS_ROOT"/macos/*.dmg >/dev/null 2>&1; then
+  copy_if_present "$ARTIFACTS_ROOT"/macos/*.dmg
+  if [ "${PLUSHPAL_RELEASE_INCLUDE_MACOS_ZIP:-0}" = "1" ]; then
+    copy_if_present "$ARTIFACTS_ROOT"/macos/*.zip
+  fi
+else
+  copy_if_present "$ARTIFACTS_ROOT"/macos/*.zip
+fi
 copy_if_present "$ARTIFACTS_ROOT"/android/*.apk
 zip_app_if_present "$ARTIFACTS_ROOT/ios/PlushBuddy-iPhoneSimulator.app" "PlushBuddy-iPhoneSimulator-$safe_version.zip"
 zip_app_if_present "$ARTIFACTS_ROOT/ios/PlushBuddy-iPhoneOS-unsigned.app" "PlushBuddy-iPhoneOS-unsigned-$safe_version.zip"
+
+split_oversized_assets
 
 cat > "$DEST/RELEASE_NOTES.md" <<EOF
 # PlushBuddy $VERSION
@@ -67,6 +98,12 @@ Local release bundle generated from this checkout.
 - Unsigned/development artifacts are for local testing and learning.
 - LuxTTS model caches are not bundled; Station prepares local runtime/cache on first use.
 - Do not upload private voice samples, API keys, or local databases to releases.
+- Very large artifacts may be split into .part-aa, .part-ab, ... files to stay
+  under GitHub release upload limits. Reassemble on macOS/Linux with:
+
+  \`\`\`sh
+  cat PlushBuddy-*.dmg.part-* > PlushBuddy-0.1.0-macos.dmg
+  \`\`\`
 EOF
 
 (

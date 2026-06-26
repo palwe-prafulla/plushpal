@@ -26,6 +26,7 @@ from pathlib import Path
 
 
 API_ROOT = os.environ.get("GITHUB_API_ROOT", "https://api.github.com")
+MAX_RELEASE_ASSET_BYTES = 2_000_000_000
 
 
 def keychain_token(service: str) -> str | None:
@@ -104,6 +105,15 @@ def main() -> int:
     assets = release_assets(release_dir)
     if not assets:
         raise SystemExit(f"Release directory contains no files: {release_dir}")
+    oversized = [
+        asset for asset in assets if asset.stat().st_size > MAX_RELEASE_ASSET_BYTES
+    ]
+    if oversized:
+        names = ", ".join(f"{asset.name} ({asset.stat().st_size} bytes)" for asset in oversized)
+        raise SystemExit(
+            "Release bundle contains assets too large for GitHub release upload: "
+            f"{names}. Remove them from the release bundle or set a smaller artifact format."
+        )
     checksum = release_dir / "SHA256SUMS"
     notes = release_dir / "RELEASE_NOTES.md"
     if checksum not in assets:
