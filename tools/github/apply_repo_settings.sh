@@ -16,7 +16,7 @@ set -euo pipefail
 #   tools/github/apply_repo_settings.sh palwe-prafulla plushpal main
 #
 # Or store the token in macOS Keychain once:
-#   security add-generic-password -a "$USER" -s plushpal.github.token -w '...'
+#   security add-generic-password -a "$USER" -s codex.github.token -w '...'
 #   tools/github/apply_repo_settings.sh palwe-prafulla plushpal main
 #
 # Optional:
@@ -28,11 +28,15 @@ BRANCH="${3:-main}"
 API_ROOT="${GITHUB_API_ROOT:-https://api.github.com}"
 
 if [[ -z "${GITHUB_TOKEN:-}" ]] && command -v security >/dev/null 2>&1; then
+  GITHUB_TOKEN="$(security find-generic-password -a "$USER" -s codex.github.token -w 2>/dev/null || true)"
+fi
+
+if [[ -z "${GITHUB_TOKEN:-}" ]] && command -v security >/dev/null 2>&1; then
   GITHUB_TOKEN="$(security find-generic-password -a "$USER" -s plushpal.github.token -w 2>/dev/null || true)"
 fi
 
 if [[ -z "${GITHUB_TOKEN:-}" ]]; then
-  echo "GITHUB_TOKEN is required. Export it in your shell or store it in macOS Keychain service plushpal.github.token, then rerun." >&2
+  echo "GITHUB_TOKEN is required. Export it in your shell or store it in macOS Keychain service codex.github.token, then rerun." >&2
   exit 2
 fi
 

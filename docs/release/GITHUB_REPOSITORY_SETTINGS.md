@@ -15,7 +15,7 @@ Or store the token in macOS Keychain so future terminal sessions can use it
 without a plaintext project `.env` file:
 
 ```sh
-security add-generic-password -a "$USER" -s plushpal.github.token -w '...'
+security add-generic-password -a "$USER" -s codex.github.token -w '...'
 tools/github/apply_repo_settings.sh palwe-prafulla plushpal main
 ```
 
