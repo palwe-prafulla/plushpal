@@ -4,6 +4,25 @@ Use these settings after creating the public GitHub repository.
 
 The goal is: public read access, but no external contribution workflow.
 
+Most settings can be applied by API:
+
+```sh
+export GITHUB_TOKEN='...'
+tools/github/apply_repo_settings.sh palwe-prafulla plushpal main
+```
+
+Or store the token in macOS Keychain so future terminal sessions can use it
+without a plaintext project `.env` file:
+
+```sh
+security add-generic-password -a "$USER" -s plushpal.github.token -w '...'
+tools/github/apply_repo_settings.sh palwe-prafulla plushpal main
+```
+
+Use a fine-grained token scoped to this repository with Administration
+read/write, Contents read/write, and Actions read/write. Do not commit or paste
+the token into docs, issues, or chat transcripts.
+
 ## General repository features
 
 In **Settings -> General -> Features**:
@@ -30,7 +49,10 @@ In **Settings -> Branches -> Branch protection rules**, protect `main`:
 
 - Require a pull request before merging: optional if only the owner commits
   directly.
-- Restrict who can push to matching branches: enable and select only the owner.
+- Restrict who can push to matching branches: enable and select only the owner
+  for organization repositories. Personal-account repositories do not support
+  this restriction; instead, do not add collaborators unless they should be able
+  to push.
 - Do not allow force pushes.
 - Do not allow deletions.
 - Require status checks before merging if you later allow owner PRs.
