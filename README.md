@@ -4,12 +4,14 @@
 
 PlushBuddy lets a parent create kid profiles, create toy buddies, upload a short
 sample of how each toy should sound, approve the cloned voice, and then let a
-child talk to that toy through an Android app, iPhone app, browser, or Mac app.
+child talk to that toy through an Android app, iPhone app, Mac app, or local
+browser UI.
 
-The project combines a cross-platform Flutter client with a local macOS “Magic
-Voice Box” that runs the heavier voice model. Cloud LLM reasoning is optional
-and uses the parent’s own Gemini/OpenAI API key; the voice profile and family
-state stay local.
+The vNext architecture centers on **PlushBuddy Hub**: a local private backend
+that runs first on macOS. The Hub owns encrypted storage, child-safety
+guardrails, reasoning orchestration, local STT fallback, and LuxTTS voice
+synthesis. Native clients are thin UI clients for mic capture, local STT when
+available, and playback.
 
 > This is a prototype/product-engineering project, not a hosted service. It is
 > designed to be cloned, built locally, studied, and extended.
@@ -28,7 +30,7 @@ state stay local.
   <img src="docs/assets/screenshots/iphone-simulator-welcome.png" alt="PlushBuddy iPhone simulator welcome screen" width="210" />
 </p>
 
-**Browser client** — local web client opened from PlushBuddy Station.
+**Browser client** — local web client opened from PlushBuddy Hub/Station.
 
 <p>
   <img src="docs/assets/screenshots/browser-welcome.png" alt="PlushBuddy browser client welcome screen" width="650" />
@@ -48,43 +50,47 @@ state stay local.
 - Uploads M4A/WAV/MP3/AAC/OGG/WebM voice samples and creates a local voice
   profile through LuxTTS.
 - Requires parent approval before a voice can be used in conversation.
-- Supports speech or typed child input on mobile, typed input on desktop/web.
-- Calls Gemini or OpenAI with parent-provided API keys.
-- Redacts/pseudonymizes kid information before cloud reasoning.
-- Synthesizes the response locally on the Mac in the selected toy voice.
+- Supports voice-first child input on native clients, with typing as fallback.
+- Offers two Hub modes: privacy local-first or cloud LLM.
+- Redacts/pseudonymizes kid information before cloud reasoning in cloud mode.
+- Synthesizes the response locally through LuxTTS in the selected toy voice.
 - Keeps conversation history scoped by kid and character.
 
 ## Architecture at a glance
 
-PlushBuddy has four user-facing clients and one local voice appliance:
+PlushBuddy is moving toward a local-Hub architecture:
 
-- **Android app**: primary MVP client for parent setup and child conversation.
-- **iPhone app**: same Flutter UI as Android, with iOS-native Keychain, Speech,
-  file picker, cloud reasoning, pairing, and playback.
-- **Browser client**: local web client served by MacStation; it auto-attaches
-  when opened from Station.
-- **Mac client app**: native macOS wrapper around the same browser client UI; it
-  auto-attaches when opened from Station.
-- **PlushBuddy Station / MacStation**: double-clickable macOS setup and voice
-  server. It installs/verifies local voice dependencies, starts the Rust host,
-  shows service health, opens local browser/Mac clients, and displays pairing QR
-  only for Android/iPhone.
+- **PlushBuddy Hub**: the local backend. It owns SQLCipher encrypted storage,
+  runtime mode, provider keys, kid/character data, conversation history,
+  guardrails, local/cloud reasoning, local STT fallback, and LuxTTS.
+- **Android app**: external voice-first native client paired to the Hub.
+- **iPhone app**: external voice-first native client paired to the Hub.
+- **Mac app**: native client that can run on the Hub Mac or another Mac.
+- **Local browser**: same-machine browser UI for the computer running the Hub.
+  Remote browser clients are not supported for now.
 
-MacStation is intentionally not the main app. It is the local **Magic Voice
-Box** that runs the heavy voice model.
+The current prerelease still contains legacy MacStation/client-owned-state
+paths. The documented target is to make the Hub the single backend and make all
+clients thin UI clients.
 
 ```mermaid
-flowchart LR
-    Mobile["Android / iPhone"] --> Station["PlushBuddy Station<br/>local Mac voice appliance"]
-    Desktop["Browser / Mac app"] --> Station
-    Mobile --> LLM["Gemini / OpenAI<br/>parent API key"]
-    Desktop --> LLM
-    Station --> Voice["LuxTTS voice synthesis<br/>approved toy voice profiles"]
-    LLM --> Mobile
-    LLM --> Desktop
-    Voice --> Mobile
-    Voice --> Desktop
+flowchart TB
+    Clients["Android / iPhone / Mac app / local browser"] --> Hub["PlushBuddy Hub<br/>local private backend"]
+    Hub --> DB["SQLCipher encrypted DB"]
+    Hub --> STT["Local STT fallback<br/>Whisper/whisper.cpp"]
+    Hub --> LLM["Local LLM or Gemini/OpenAI"]
+    Hub --> TTS["LuxTTS toy voice"]
+    TTS --> Clients
 ```
+
+### Hub setup modes
+
+| Mode | What runs locally | What may leave the home network | Best for |
+|---|---|---|---|
+| Privacy local-first | STT fallback, LLM, LuxTTS, SQLCipher storage | Nothing after model setup/update checks | Maximum privacy |
+| Cloud LLM | STT fallback, redaction, guardrails, LuxTTS, SQLCipher storage | Redacted text prompt to Gemini/OpenAI | Better answer quality / lower local compute |
+
+In both modes, raw voice samples and generated toy voice audio stay local.
 
 ## Download the current prerelease
 
@@ -142,8 +148,8 @@ Open:
 ~/Downloads/PlushPal/artifacts/macos/PlushBuddy Station.app
 ```
 
-Then use Station to open the Mac app, open the browser client, or scan the QR
-code from Android/iPhone.
+Then use Hub/Station to open the Mac app, open the local browser client, or
+scan the QR code from Android/iPhone.
 
 For a lightweight developer demo without LuxTTS voice cloning or a cloud API
 key, run:
@@ -152,7 +158,7 @@ key, run:
 make run-demo
 ```
 
-This starts MacStation in `PLUSHPAL_RUNTIME_MODE=demo`, with deterministic demo
+This starts the current Hub runtime in `PLUSHPAL_RUNTIME_MODE=demo`, with deterministic demo
 reasoning and a synthetic voice engine. It validates the app flow, but it does
 not represent the real cloned toy-voice quality.
 
@@ -162,7 +168,7 @@ Start here:
 
 - [Detailed system design and architecture](docs/architecture/SYSTEM_DESIGN.md)
 - [Codebase directory guide](docs/architecture/CODEBASE_DIRECTORY_GUIDE.md)
-- [Android + MacStation MVP architecture notes](docs/architecture/ANDROID_MACSTATION_MVP_ARCHITECTURE.md)
+- [PlushBuddy Hub MVP architecture transition](docs/architecture/ANDROID_MACSTATION_MVP_ARCHITECTURE.md)
 - [Documentation publication policy](docs/PUBLICATION_POLICY.md)
 - [Production hardening plan](docs/implementation/PRODUCTION_HARDENING_PLAN.md)
 - [QA test plan and latest execution report](docs/release/QA_TEST_PLAN_AND_EXECUTION_2026-06-25.md)
@@ -179,114 +185,73 @@ Start here:
 
 PlushBuddy is released under the [MIT License](LICENSE).
 
-## What is implemented today
+## Current prerelease versus vNext Hub target
 
-### Product flows
+The current `v0.1.0-dev.1` prerelease is buildable and demonstrates the product
+flow with Android, iPhone simulator, Mac client, local browser, and the macOS
+Station/Hub voice runtime.
 
-- Parent onboarding with parent PIN.
-- Multi-kid support.
-- Kid profile name, birthdate, and photo.
-- Character creation per kid.
-- Character photo upload.
-- Character persona traits, parent guidance, and persona age.
-- Voice sample upload for each character.
-- Voice preview and explicit parent approval.
-- Child mode with selected kid and selected character.
-- Android/iPhone speech input.
-- Typed input for Android/iPhone/browser/Mac.
-- Gemini or OpenAI reasoning using parent-provided API key.
-- Redaction/pseudonymization before cloud reasoning.
-- Station-backed cloned voice playback using LuxTTS.
-- Conversation history scoped by kid and character.
-- Delete history and delete all local data controls.
+The vNext architecture moves the product to this stricter backend model:
 
-### Platform support
+- Hub owns durable data, encrypted storage, provider keys, guardrails,
+  redaction, local/cloud reasoning, voice profiles, and conversation history.
+- Android/iPhone/Mac/future Windows clients are thin voice-first UI clients.
+- Clients store only pairing/session identity.
+- Local browser is supported only on the same machine running the Hub.
+- Remote browser clients are intentionally out of scope.
 
-| Surface | Status | Notes |
-|---|---|---|
-| Android | Implemented and buildable | Primary MVP surface. Uses Kotlin native bridge. |
-| iPhone | Implemented and buildable | Simulator launches; physical device needs Apple signing/provisioning. |
-| Browser | Implemented | Served by MacStation; typed chat and audio playback. |
-| Mac client app | Implemented | Native WKWebView shell around the web client. |
-| MacStation | Implemented | Native macOS setup shell + Rust host + LuxTTS worker. |
-| Windows | Not current MVP | Packaging skeleton exists, but not validated as a product surface. |
+## Target runtime flow
 
-## High-level architecture
+### Hub startup
 
-```mermaid
-flowchart LR
-    Parent["Parent"] --> Clients["PlushBuddy clients<br/>Android, iPhone, browser, Mac app"]
-    Child["Child"] --> Clients
-
-    Clients --> LocalStore["Client-owned local storage<br/>kids, characters, history, API keys"]
-    Clients --> Cloud["Gemini / OpenAI<br/>parent-provided API key"]
-    Clients --> Station["PlushBuddy Station<br/>local Mac voice appliance"]
-
-    Station --> Host["Rust Axum host<br/>/api/v1/*"]
-    Host --> VoiceStore["Encrypted voice references<br/>profile_id -> processed reference"]
-    Host --> Worker["Persistent LuxTTS worker<br/>Python + Apple Silicon MPS"]
-    Worker --> Models["LuxTTS model stack<br/>YatharthS/LuxTTS + dependencies"]
-
-    Cloud --> Clients
-    Station --> Clients
-```
-
-Key design decision: **reasoning happens in the active client; voice synthesis happens in MacStation**. This keeps child/character state local to the client while keeping the heavyweight voice model on the Mac.
-
-## Runtime flow
-
-### Station startup
-
-1. Parent opens `PlushBuddy Station.app`.
-2. Station verifies user storage under `~/Library/Application Support/PlushPal`.
-3. Station checks or installs local LuxTTS runtime assets.
-4. Station starts the Rust host.
-5. Rust host starts a persistent LuxTTS worker.
-6. Station shows health status.
-7. Parent chooses one of:
-   - open PlushBuddy Mac app;
-   - open browser client;
-   - show QR code for Android/iPhone pairing.
+1. Parent opens `PlushBuddy Hub`.
+2. Hub prevents system sleep while active.
+3. Hub opens/creates the SQLCipher database.
+4. Hub shows exactly two setup modes:
+   - privacy local-first;
+   - cloud LLM.
+5. Hub verifies required runtimes for the selected mode.
+6. Parent opens local browser/Mac client or displays QR pairing for native
+   external clients.
 
 ### Character voice creation
 
-1. Parent creates a kid profile.
-2. Parent creates a toy character for that kid.
+1. Parent creates kid and character through any paired client.
+2. Hub stores profiles in SQLCipher.
 3. Parent uploads a voice sample.
-4. Client sends the sample to MacStation over the Station session:
-   - browser/Mac clients attach automatically when opened from Station;
-   - Android/iPhone use QR pairing because they are external devices.
-5. MacStation validates, converts, denoises enough for model input, encrypts the processed reference, and returns a voice `profile_id`.
-6. Parent previews the voice.
-7. Parent approves only if the preview sounds right.
+4. Hub validates, converts, preprocesses, and stores the processed reference
+   encrypted.
+5. Parent previews and approves the LuxTTS voice before child use.
 
 ### Child conversation
 
-1. Child speaks or types.
-2. Android/iPhone speech recognition converts speech to text if needed.
-3. Client redacts personal info and replaces the kid’s real name with a pseudonym.
-4. Client calls Gemini/OpenAI with age/persona/safety prompt.
-5. Client receives `{ speech, suggest_trusted_adult }`.
-6. Client restores local display personalization.
-7. Client sends only `{ profile_id or character alias, response text }` to MacStation.
-8. MacStation generates WAV using LuxTTS and the approved voice reference.
-9. Client displays text and plays the generated voice.
+1. Child speaks to a native client.
+2. Client uses verified on-device STT if available.
+3. If local STT is unavailable, client sends bounded audio to Hub local STT.
+4. Client sends transcript to Hub.
+5. Hub loads kid/character/history/settings from SQLCipher.
+6. Hub applies guardrails and redaction.
+7. Hub uses either local LLM or Gemini/OpenAI depending on mode.
+8. Hub stores the turn.
+9. Hub synthesizes the response with LuxTTS.
+10. Client plays the generated toy voice.
 
 ## Technology stack
 
 | Layer | Technology |
 |---|---|
 | Shared UI | Flutter / Dart |
-| Android native | Kotlin, Android Keystore, SpeechRecognizer, MediaPlayer/AudioTrack style WAV playback, Android file picker |
-| iOS native | Swift, Keychain, SFSpeechRecognizer, AVAudioEngine, AVAudioPlayer, UIDocumentPicker |
-| Browser client | Flutter web, JavaScript bridge, localStorage, Web Audio playback |
-| Mac client | Swift AppKit + WKWebView |
-| MacStation shell | Swift AppKit |
-| MacStation host | Rust, Axum, Tokio |
+| Android native client | Kotlin, verified on-device STT target, WAV playback, file picker, QR pairing |
+| iOS native client | Swift, on-device Speech target, AVAudio playback, file picker, QR pairing |
+| Mac client | Swift AppKit client shell |
+| Local browser | Flutter web served only on the Hub machine |
+| Hub launcher | Swift AppKit first; Windows/Linux launchers later |
+| Hub backend | Rust, Axum, Tokio |
+| Hub database | SQLCipher via Rust `rusqlite` |
+| Hub STT fallback | Target: `whisper.cpp` + Whisper model |
+| Local LLM | Target: `llama.cpp` + GGUF model tier by memory |
 | Voice model | LuxTTS through `tools/voice/luxtts_worker.py` |
-| Voice fallback/research | Chatterbox, OpenVoice, GPT-SoVITS, F5/TADA experiments |
-| Cloud reasoning | Gemini and OpenAI APIs |
-| Rust core | domain, policy, provider, session, storage, model lifecycle, mobile bridge crates |
+| Cloud LLM mode | Gemini/OpenAI called from Hub after redaction |
 | Packaging | Makefile, Cargo, Flutter, Gradle, Xcode, shell scripts |
 
 ## Repository structure
@@ -299,18 +264,18 @@ PlushPal/
       lib/src/backend/            Backend abstraction and platform clients
       android/.../MainActivity.kt Android native bridge
       ios/Runner/...swift         iOS native bridge
-      web/plushpal_backend.js     Browser backend bridge
+      web/plushpal_backend.js     Local browser bridge
     macos/
-      station_app/AppShell.swift  Native PlushBuddy Station setup UI
+      station_app/AppShell.swift  Native PlushBuddy Hub setup UI
       client_app/AppShell.swift   Native PlushBuddy Mac client shell
-    station/macstation_host/      Rust MacStation host
+    station/macstation_host/      Rust Hub backend; still uses legacy path name
     web/                          Web ownership notes
   crates/                         Reusable Rust crates
   native/                         C/C++/C ABI headers and adapters
   tools/voice/                    LuxTTS and voice experiment scripts
   third_party/                    Small pinned source deps only; model runtimes download outside repo
   packaging/                      macOS, Android, Windows packaging helpers
-  docs/                           Architecture, specs, release notes
+  docs/                           Current architecture, release, product docs
 ```
 
 See [CODEBASE_DIRECTORY_GUIDE.md](docs/architecture/CODEBASE_DIRECTORY_GUIDE.md) for the detailed code map.
@@ -370,7 +335,7 @@ git submodule update --init --recursive
 flutter doctor -v
 ```
 
-Install voice runtime for the MacStation path:
+Install voice runtime for the Hub path:
 
 ```sh
 make setup-luxtts-voice
@@ -461,7 +426,7 @@ Expected artifacts, depending on installed platform toolchains:
 ~/Downloads/PlushPal/artifacts/ios/PlushBuddy-iPhoneOS-unsigned.app
 ```
 
-### Build MacStation and Mac client only
+### Build Hub/MacStation and Mac client only
 
 ```sh
 make package-macos
@@ -484,7 +449,7 @@ make build-all
 
 This builds:
 
-- MacStation app;
+- Hub/MacStation app;
 - Mac client app;
 - Android debug APK;
 - iPhone simulator app;
@@ -492,32 +457,34 @@ This builds:
 
 ## How to run the app
 
-### Start MacStation
+### Start PlushBuddy Hub
 
 ```sh
 open "$HOME/Downloads/PlushPal/artifacts/macos/PlushBuddy Station.app"
 ```
 
-Wait until health checks are green. Station should show:
+Wait until health checks are green. Hub should show:
 
 - app storage ready;
 - voice engine ready;
 - local service healthy;
 - browser/Mac client local attach ready;
-- Android/iPhone pairing QR ready.
+- Android/iPhone/Mac external pairing QR ready.
 
-Local clients on the same Mac do not need QR scanning. Click **Open PlushBuddy in browser** or **Open PlushBuddy Mac app** from Station and the client attaches to Station in the background. QR pairing is only for external clients such as Android and iPhone.
+Local clients on the same Mac do not need QR scanning. Click **Open PlushBuddy
+in browser** or **Open PlushBuddy Mac app** from Hub and the client attaches in
+the background. QR pairing is for external native clients.
 
 ### Use Android
 
 1. Install the APK.
 2. Open PlushBuddy on Android.
-3. In Station, choose the pairing QR option.
+3. In Hub, choose the pairing QR option.
 4. Scan the QR in the Android app.
 5. In Android settings:
    - create parent PIN;
-   - pair MacStation;
-   - save Gemini or OpenAI API key;
+   - pair Hub;
+   - choose runtime mode;
    - create kid profile;
    - create character;
    - upload character photo and voice sample;
@@ -545,17 +512,16 @@ For physical iPhone:
 
 ### Use browser
 
-1. Start Station.
+1. Start Hub.
 2. Click **Open PlushBuddy in browser**.
-3. The browser attaches to the local Station session automatically; no QR scan is needed.
-4. Configure parent settings, provider key, kid, character, and voice.
-5. Use typed chat and audio playback.
+3. The browser attaches to the local Hub session automatically; no QR scan is needed.
+4. Use it only on the same machine running Hub.
 
 ### Use Mac client
 
-1. Start Station.
+1. Start Hub.
 2. Click **Open PlushBuddy Mac app**.
-3. The Mac client opens the same Station-served client UI inside a native WKWebView app and attaches automatically; no QR scan is needed.
+3. The Mac client opens the Hub-backed client UI and attaches automatically when local.
 
 ## Voice model notes
 
@@ -568,37 +534,30 @@ seed      = 11
 reference = full uploaded reference, up to 180 seconds
 ```
 
-Station starts a persistent LuxTTS worker so the model stays loaded between requests. It also caches encoded voice prompt/reference state by audio hash where supported, reducing repeated work without changing quality settings.
+Hub starts a persistent LuxTTS worker so the model stays loaded between requests. It also caches encoded voice prompt/reference state by audio hash where supported, reducing repeated work without changing quality settings.
 
-Raw uploaded samples are transient. Station persists only the encrypted processed reference artifact needed for future synthesis.
+Raw uploaded samples are transient. Hub persists only the encrypted processed reference artifact needed for future synthesis.
 
 Chatterbox remains wired as a fallback/smoke-test path. OpenVoice, GPT-SoVITS, F5/TADA, and related scripts remain research/bakeoff paths, not the current product voice runtime.
 
-## Cloud reasoning notes
+## Runtime mode notes
 
-Current MVP supports parent-provided:
+Hub setup should offer only two parent-facing modes:
 
-- Gemini API key;
-- OpenAI API key.
-
-Reasoning happens in the active client, not MacStation. That means:
-
-- API key stays with the active client;
-- MacStation does not receive the provider key;
-- only text needed for voice synthesis is sent to MacStation;
-- personal info is redacted/pseudonymized before cloud calls where implemented.
+- **Privacy local-first**: verified client STT or Hub STT fallback, local LLM,
+  LuxTTS, and SQLCipher storage.
+- **Cloud LLM**: verified client STT or Hub STT fallback, Hub redaction and
+  guardrails, Gemini/OpenAI text reasoning, LuxTTS, and SQLCipher storage.
 
 ## Security and privacy model
 
 - Parent PIN gates parent settings.
-- Android uses Android Keystore-backed encrypted storage.
-- iPhone uses Keychain protected storage.
-- MacStation stores voice references encrypted on the Mac.
-- Browser uses local browser storage for MVP; future hardening should add PIN-derived encryption.
-- Local browser/Mac attach and Android/iPhone QR pairing both use a bootstrap token exchanged for a Station session cookie.
-- Station validates Host/Origin and bounds request sizes.
+- Hub stores durable app state in SQLCipher.
+- Clients store only Hub pairing/session identity in the vNext target.
+- Local browser/Mac attach and Android/iPhone/Mac QR pairing both use a bootstrap token exchanged for a Hub session.
+- Hub validates Host/Origin and bounds request sizes.
 - Voice samples are not sent to cloud LLMs.
-- Cloud LLM receives redacted text plus age/persona/safety context.
+- Cloud LLM mode receives redacted text plus age/persona/safety context.
 
 ## Test commands
 
@@ -612,17 +571,17 @@ and writes logs under `~/Downloads/PlushPal/test-results`.
 
 Latest local verification, June 25, 2026:
 
-- public artifact build passed with MacStation, Mac client, Android APK,
+- public artifact build passed with Hub/MacStation, Mac client, Android APK,
   iPhone simulator app, and unsigned iPhone device app under
   `~/Downloads/PlushPal/artifacts`;
 - local quality gate passed: Rust workspace tests, Flutter analysis/tests, web
   Node tests, and product layout check;
-- MacStation API smoke passed;
+- Hub/MacStation API smoke passed;
 - full LuxTTS E2E passed with Sheru/Jenna/Buddy M4A samples: enroll, approve,
   verify unique profile IDs, and synthesize WAV;
-- packaged MacStation launched and reached readiness;
-- browser client rendered through packaged MacStation;
-- packaged Mac client attached to packaged MacStation;
+- packaged Hub/MacStation launched and reached readiness;
+- browser client rendered through packaged Hub/MacStation;
+- packaged Mac client attached to packaged Hub/MacStation;
 - Android real-device install/launch and Station pairing passed on a connected
   Pixel 10 Pro;
 - iPhone simulator install/launch passed.
@@ -649,10 +608,10 @@ qa/automation/android_station_pairing_smoke.sh
 # iPhone simulator install/launch smoke
 qa/automation/ios_simulator_smoke.sh
 
-# MacStation API smoke
+# Hub/MacStation API smoke
 qa/automation/macstation_api_smoke.py
 
-# MacStation M4A enrollment and profile-isolation smoke.
+# Hub/MacStation M4A enrollment and profile-isolation smoke.
 # Use your own private local samples outside the repo.
 qa/automation/macstation_api_smoke.py \
   --sample Sheru="$HOME/Downloads/PlushPal/private/audio-samples/Sheru.m4a" \
@@ -675,7 +634,7 @@ qa/automation/macstation_api_smoke.py \
   --sample Jenna="$HOME/Downloads/PlushPal/private/audio-samples/Jenna.m4a" \
   --sample Buddy="$HOME/Downloads/PlushPal/private/audio-samples/Buddy.m4a"
 
-# Live Gemini reasoning through MacStation command/WebSocket flow.
+# Live Gemini reasoning through current Hub/MacStation command/WebSocket flow.
 # Pass PLUSHPAL_GEMINI_API_KEY in the environment. Do not commit keys.
 qa/automation/macstation_live_reasoning_smoke.mjs
 ```
@@ -687,8 +646,8 @@ Generated evidence is written under `~/Downloads/PlushPal/test-results` by defau
 - Physical iPhone testing still needs Apple signing/provisioning.
 - Browser/Mac client microphone support is not complete; typed chat is the current web/Mac path.
 - LuxTTS quality is good for the current samples, but latency remains a product concern.
-- MacStation must remain awake for local browser/Mac voice synthesis and awake/reachable on the same local network for Android/iPhone voice synthesis.
-- Browser local storage should be hardened before production use.
+- Hub host machine must remain awake/reachable while clients use it.
+- Hub migration must remove durable browser/client-owned family state.
 - No production account sync or cloud backup yet.
 - Windows is not currently verified.
 - App Store / Play Store privacy labels, notarization, and managed distribution are not done.
@@ -696,22 +655,20 @@ Generated evidence is written under `~/Downloads/PlushPal/test-results` by defau
 ## Remaining production milestones
 
 The current prerelease can be built locally and publishes downloadable dev
-artifacts for MacStation/Mac, Android, and iPhone simulator/unsigned device
+artifacts for Hub/Mac, Android, and iPhone simulator/unsigned device
 testing. The items below are still valid because they are product-release
 hardening work beyond the current `v0.1.0-dev.1` release:
 
 1. Run physical iPhone E2E with QR pairing, microphone, local-network
    permission, M4A upload, preview, approval, and child conversation.
-2. Add browser/Mac microphone and speech-to-text support. Browser and Mac
-   currently support typed chat plus cloned-voice playback.
-3. Add visible latency metrics for STT, LLM, Station queue, LuxTTS synthesis,
+2. Migrate durable kids/characters/history/provider settings into Hub SQLCipher.
+3. Add verified local-only STT on Android/iPhone/Mac plus Hub STT fallback.
+4. Add local LLM runtime and the two-mode setup screen.
+5. Add visible latency metrics for STT, LLM, Hub queue, LuxTTS synthesis,
    WAV transfer, and playback.
-4. Add export/import or backup/restore for kid and character profiles.
-5. Harden browser profile/history storage with PIN-derived encryption. Provider
-   API keys are already session-only in browser, but the rest of browser state
-   still uses local browser storage for the MVP.
-6. Add production signing/notarization for MacStation and the Mac client.
-7. Add managed CI/CD release pipelines for Android, iPhone, and Mac. The repo
+6. Add export/import or backup/restore for Hub SQLCipher data.
+7. Add production signing/notarization for Hub and the Mac client.
+8. Add managed CI/CD release pipelines for Android, iPhone, and Mac. The repo
    already has local build/release scripts and the current GitHub prerelease
    artifacts; this milestone is about repeatable hosted release automation,
    signing, and store-ready outputs.

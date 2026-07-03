@@ -1,8 +1,14 @@
 # Production hardening completion plan
 
-Last updated: 2026-06-26  
+Last updated: 2026-07-02
 Scope: finish the 10 public-production-readiness items identified after the
 initial GitHub publication.
+
+Architecture note: PlushBuddy is moving toward the **PlushBuddy Hub** model,
+where the local backend owns storage, business logic, reasoning orchestration,
+STT fallback, and LuxTTS. Some hardening items below still say MacStation
+because the current macOS Hub implementation path is named `macstation_host`.
+In product language, read those as Hub reliability/setup items.
 
 This plan is intentionally practical. The goal is not to make PlushBuddy a
 hosted commercial product overnight; the goal is to make the public repo stable,

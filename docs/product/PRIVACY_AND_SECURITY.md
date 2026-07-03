@@ -1,90 +1,100 @@
 # Privacy and security model
 
-Last updated: 2026-06-26
+Last updated: 2026-07-02
 
-PlushBuddy is designed as a local-first prototype for child pretend play. It is
-not a hosted service. The parent runs the app stack locally and provides any
-cloud LLM keys they choose to use.
+PlushBuddy is designed as a local-first pretend-play system. The vNext
+architecture uses **PlushBuddy Hub** as the local private backend. The Hub runs
+on the parent’s computer, stores durable app data in an encrypted SQLCipher
+database, runs voice generation locally, and exposes paired APIs to native
+clients on the same local network.
 
 ## Core privacy boundary
 
-The product intentionally separates **reasoning** from **voice**:
+Target architecture:
 
-- Android, iPhone, browser, and Mac clients own kid profiles, character
-  profiles, conversation history, provider API keys, and prompt construction.
-- PlushBuddy Station owns local voice-profile creation and local text-to-speech.
-- Cloud LLM providers receive only the minimized/redacted conversation prompt
-  from the active client.
-- Raw voice samples are sent only to the local Station for voice-profile
-  creation. They are not sent to Gemini/OpenAI by PlushBuddy.
+- Hub owns kid profiles, character profiles, provider settings, conversation
+  history, prompt construction, runtime mode, and voice profiles.
+- Android/iPhone/Mac/future Windows clients are thin UI clients.
+- Local browser is supported only on the same machine as the Hub.
+- Remote browser clients are not supported for now.
+- Raw voice samples are sent only to the Hub over the paired local session for
+  voice-profile creation.
+- Cloud LLM providers never receive raw audio or voice samples.
+
+## Runtime modes
+
+| Mode | Cloud use | Local processing |
+|---|---|---|
+| Privacy local-first | No cloud LLM calls after model setup/update checks | Hub local STT fallback, local LLM, LuxTTS, SQLCipher |
+| Cloud LLM | Redacted/minimized text prompt goes to Gemini/OpenAI | Hub STT fallback, redaction, guardrails, LuxTTS, SQLCipher |
+
+Provider cloud STT is not used silently. If cloud STT is ever added, it must be
+an explicit parent opt-in.
+
+## Speech privacy
+
+Native clients must prefer verified on-device STT:
+
+- Android: on-device `SpeechRecognizer` only when available.
+- iPhone/Mac: Apple speech recognition with `requiresOnDeviceRecognition`.
+- Windows future: verified device/in-process recognizer only.
+
+If verified on-device STT is unavailable, the client sends bounded audio to Hub
+local STT over the local paired session. Hub STT should use a local model such
+as Whisper through `whisper.cpp` or an equivalent local ASR runtime.
 
 ## Data flow summary
 
-| Data | Stored where | Sent to MacStation | Sent to LLM provider |
+| Data | Stored where | Sent to Hub | Sent to cloud LLM |
 |---|---|---:|---:|
-| Kid name/birthdate/photo | Client local storage | No | No; prompt uses pseudonym/age |
-| Character name/persona/photo | Client local storage | Character alias/profile reference only | Persona/prompt fields as needed |
-| Parent API key | Client secure storage where available | No | Used directly by active client |
-| Raw voice sample | Client during upload; Station during processing | Yes, local network/session only | No |
-| Processed voice profile/reference | Station local storage | N/A | No |
-| Child utterance | Client conversation state/history | No, except generated response text for TTS | Yes, after redaction/minimization |
-| LLM response text | Client history/display | Yes, for voice synthesis | Returned by provider |
-| Generated WAV | Station transient output and client playback | N/A | No |
+| Kid name/birthdate/photo | Hub SQLCipher | Native clients read/write via authenticated API | No; prompt uses age/pseudonym |
+| Character/persona/photo | Hub SQLCipher | Native clients read/write via authenticated API | Redacted/persona fields only when needed |
+| Parent provider API key | Hub secure storage / SQLCipher secret reference | Entered through Hub/client setup API | Used by Hub in cloud LLM mode |
+| Raw voice sample | Hub transient processing input | Yes, local paired session only | No |
+| Processed voice reference | Hub encrypted voice store | N/A | No |
+| Child utterance audio | Client temporary or Hub STT fallback | Only if Hub STT fallback is needed | No |
+| Transcript text | Hub conversation pipeline | Yes | Local mode: no; cloud mode: redacted/minimized prompt |
+| LLM response text | Hub SQLCipher/history | Returned to client for display/playback | Returned by provider in cloud mode |
+| Generated WAV | Hub transient output and client playback | N/A | No |
 
 ## Secrets and storage
 
-Platform-specific secure storage is used where implemented:
+Hub target storage:
 
-- Android: Android Keystore-backed storage for sensitive client state.
-- iPhone: iOS Keychain-backed storage for sensitive client state.
-- macOS: Keychain/encrypted local storage paths for Station-managed secrets.
-- Browser: parent/kid/character/history data uses browser local storage; provider
-  API keys are session-only and are not persisted to local storage. Production
-  browser encrypted-state storage remains a future hardening item.
+- SQLCipher database for durable app records.
+- Platform secure storage for DB key wrapping and high-value secrets where
+  practical.
+- Encrypted voice reference files referenced by SQLCipher.
+- Paired-client credentials stored in Hub DB/secure storage.
 
-The public repository must not contain:
+Client target storage:
 
-- provider API keys;
-- GitHub tokens;
-- private voice samples;
-- generated voice profiles;
-- local test artifacts;
-- model weights or large runtime caches.
+- stable client ID;
+- client key pair or high-entropy device secret;
+- Hub URL / last-known Hub address;
+- short-lived session token/cookie;
+- no durable kids, characters, API keys, or conversation history.
 
-Public build/test scripts write generated outputs under:
+## Paired-client identity
 
-```text
-~/Downloads/PlushPal
-```
+IP address is never identity. Clients generate a stable identity and credential
+at first pairing. The Hub records `client_id`, platform, friendly label, public
+key/secret reference, creation time, last seen time, and last seen IP for
+diagnostics only.
 
-## Child-safety guardrails
-
-The client prompt construction includes:
-
-- current child age derived from birthdate;
-- toy-character persona and persona age;
-- parent guidance;
-- instruction to avoid asking for personal identifying information;
-- instruction to redirect unsafe, secretive, medical, violent, self-harm, or
-  adult topics to a trusted grown-up;
-- structured response shape where the provider can indicate that a trusted adult
-  should be involved.
-
-Guardrails are not treated as a perfect safety boundary. A production release
-would need a larger adversarial safety test corpus, provider qualification, and
-parent-visible safety controls.
+If a phone’s IP changes, it remains the same paired client.
 
 ## Threat model
 
-| Threat | Mitigation today | Future hardening |
-|---|---|---|
-| API key accidentally committed | `.gitignore`, public-repo check, CI hygiene check | pre-commit hook, GitHub secret scanning alerts |
-| Raw voice sample leaked to repo | sample folders ignored; docs point to private external folder | automated file-size/media scans |
-| External device talks to Station without pairing | bootstrap/session token, host/origin checks, QR pairing for mobile | mDNS pairing, pair-code confirmation, device revocation UI |
-| Cloud prompt contains kid PII | pseudonymization/redaction path in client | stronger PII detector and tests |
-| Browser state exposed on shared computer | provider API key is session-only; other browser profile/history state is localStorage | browser-side encryption and explicit lock timeout |
-| Voice model runtime crashes | Station health/status and retry path | supervisor restart policy and structured diagnostics |
-| Unwanted public contributions | PR template + auto-close workflow + disabled repo features | archive repo if fully read-only is desired |
+| Threat | Mitigation target |
+|---|---|
+| Raw voice sample leaks to cloud | Hub sends only text to cloud LLM; raw audio stays local |
+| Cloud prompt contains child PII | Hub redaction/pseudonymization before provider call |
+| Client IP changes causing duplicated state | Stable client identity independent of IP |
+| Unpaired device talks to Hub | QR bootstrap, authenticated sessions, device revocation |
+| API key appears in logs/UI | Key never returned to clients; diagnostics redact secrets |
+| Browser storage exposes data | Browser is local-only and durable state lives in Hub |
+| Host sleeps during play | Hub launcher should hold a no-system-sleep assertion while active |
 
 ## Logging policy
 
@@ -92,23 +102,24 @@ Product and QA logs should not contain:
 
 - raw provider API keys;
 - raw GitHub tokens;
-- full prompt payloads containing child text;
+- full prompts containing child text;
 - raw audio bytes;
-- private local sample paths beyond developer-owned QA traces.
+- private local sample paths beyond developer-owned QA traces;
+- SQLCipher keys or session secrets.
 
-When adding diagnostics, prefer structured status/error codes over content logs.
+Prefer structured status/error codes over content logs.
 
 ## Production-readiness checklist
 
 Before a consumer release, PlushBuddy should add:
 
-- signed and notarized macOS apps;
-- signed mobile release builds;
-- browser local-state encryption;
-- stronger child-safety regression suite;
-- physical-device iPhone QA;
-- Station device revocation UI;
-- clearer parent consent UX;
+- signed and notarized Hub launcher;
+- signed Android/iPhone/Mac clients;
+- Hub device revocation UI;
+- SQLCipher backup/export/import;
+- enforced local-only STT checks on native clients;
+- Hub STT fallback;
+- local LLM bakeoff and safety regression suite;
+- clear parent consent for cloud LLM mode;
 - telemetry/diagnostics that do not collect child content;
-- dependency/model checksum verification;
-- model-runtime retry/resume logic.
+- dependency/model checksum verification and runtime recovery.

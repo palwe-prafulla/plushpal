@@ -14,7 +14,7 @@ For a distribution-signed macOS build, set both `PLUSHPAL_CODESIGN_IDENTITY` and
 - [x] `.gitignore` excludes common secrets, private samples, generated voice/model artifacts, venvs, build outputs, and QA results.
 - [x] `make public-artifacts` builds from an external workspace and writes artifacts under `~/Downloads/PlushPal/artifacts`.
 - [x] Local QA writes evidence under `~/Downloads/PlushPal/test-results`.
-- [x] June 25, 2026 QA pass covers public artifact build, unit/local quality gate, MacStation, LuxTTS voice E2E, packaged MacStation, browser, Mac client, Android real device, Android pairing, and iPhone simulator launch.
+- [x] June 25, 2026 QA pass covers public artifact build, unit/local quality gate, Hub/MacStation, LuxTTS voice E2E, packaged Hub/MacStation, browser, Mac client, Android real device, Android pairing, and iPhone simulator launch.
 - [ ] Live Gemini/OpenAI UI conversation should be rerun before tagging a hosted release artifact, using a fresh local provider key that is not committed.
 
 ## Build and provenance
@@ -27,8 +27,8 @@ For a distribution-signed macOS build, set both `PLUSHPAL_CODESIGN_IDENTITY` and
 
 ## Privacy and security
 
-- [ ] Client-owned Gemini/OpenAI reasoning succeeds with parent-provided API key; legacy/local model paths are clearly marked non-default if shipped.
-- [ ] Network capture contains only approved cloud-provider traffic plus local MacStation traffic; voice samples never leave the LAN/client trust boundary.
+- [ ] Hub-owned Gemini/OpenAI reasoning succeeds with parent-provided API key in cloud LLM mode; local-first mode performs no cloud LLM calls.
+- [ ] Network capture contains only approved cloud-provider traffic plus local Hub traffic; voice samples never leave the LAN/client trust boundary.
 - [ ] API keys never appear in logs, URLs, databases, crash reports, UI state snapshots, or WebSocket events.
 - [ ] SQLCipher wrong-key, deletion, retention, and uninstall tests pass.
 - [ ] Loopback Host/Origin/authentication, redirect/DNS rebinding, malformed model, and prompt-injection suites pass.
@@ -46,4 +46,4 @@ For a distribution-signed macOS build, set both `PLUSHPAL_CODESIGN_IDENTITY` and
 
 - [ ] macOS arm64 and supported Intel/Windows hardware complete install, upgrade, rollback, and uninstall.
 - [ ] Supported iPhone/iPad and Android devices complete QR pairing, microphone/file-picker, playback, interruption, and background/foreground tests.
-- [ ] Browser and Mac client launch from Station, auto-attach without QR scanning, and complete typed settings/character/voice/conversation flows.
+- [ ] Local browser and Mac client launch from Hub, auto-attach without QR scanning on the Hub machine, and complete settings/character/voice/conversation flows.

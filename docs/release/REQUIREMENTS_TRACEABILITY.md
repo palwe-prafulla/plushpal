@@ -1,15 +1,19 @@
-# Requirements-to-Evidence Traceability
+# Requirements-to-evidence traceability
 
-| Requirement | Primary implementation | Automated evidence | Remaining release evidence |
+Last updated: 2026-07-02
+
+This table tracks current public evidence plus the vNext PlushBuddy Hub target.
+
+| Requirement | Target implementation | Current evidence | Remaining work |
 |---|---|---|---|
-| Local-first reusable core | Rust domain/provider/application/session crates | Workspace unit and strict-Clippy gates | Device E2E |
-| Cloud reasoning with reusable local core | Gemini/OpenAI provider path behind shared client/backend contracts; legacy llama.cpp/Qwen local path retained as non-default research | Flutter provider tests, web backend tests, live Gemini smoke, legacy ABI/lifecycle/parser tests | Provider terms/retention qualification; physical-device live UI runs |
-| Character voice enrollment and production-grade cloning | Flutter parent audio picker + browser-local M4A/WAV/MP3/OGG/WebM normalization + host quality/consent gate + encrypted MacStation voice store + persistent LuxTTS worker + preview-required parent approval | Character/WAV unit tests; browser normalization tests; MacStation API smoke; LuxTTS Sheru/Jenna/Buddy enrollment/approval/synthesis E2E; browser backend voice-status tests | Objective speaker-similarity gate; in-app recording UX; additional release-candidate listening evidence |
-| Everything uploaded stays local | SQLCipher repositories, per-enrollment AES-GCM voice files, Keystore AES-GCM/Keychain mobile profile and history, platform vaults, minimized DTOs, PIN-authorized deletion | Wrong-key/plaintext scans, encrypted profile/history/voice metadata/delete-all, encrypted WAV plaintext-marker check, packaged-host restart/restore/delete, projection and secret-redaction tests | Voice-runtime network capture on release candidate, mobile voice persistence, and uninstall matrix |
-| Age-based immutable guardrails | policy engine + pre/post orchestrator | Age/mode, multilingual/adversarial, parent-override tests | Reviewed safety corpus |
-| Optional web search | Brave adapter + secure fetch + grounding | PII, SafeSearch, SSRF/rebinding/redirect/content/contradiction tests | Live API qualification |
-| Optional cloud LLM | signed registry + vault reference + OpenAI transport | Consent/expiry/retention, stateless DTO, structured response tests | Provider terms/retention qualification |
-| macOS/Windows local web app | Axum loopback host + embedded Flutter + native-runtime engine | Real-router Host/Origin/auth/WebSocket/command tests | Signed installers and OS matrix |
-| iPhone/Android app | Flutter UI + Swift/Kotlin platform bridges + mobile ABI v2 guidance | Dart bridge/reducer/widget tests; Rust audio/mobile tests; Swift syntax parse; Android validator tests staged; iPhone simulator and unsigned device builds pass with Xcode 26.5 | Physical iPhone signing/provisioning, QR pairing, and microphone/file-picker E2E |
-| Local browser/Mac client attach | Station-served Flutter web app + bootstrap token script + JS backend status/voice API | Web backend bootstrap regression test; Station-served web smoke; Mac client load smoke | Full browser/Mac UI E2E for settings, upload, approval, typed conversation, history |
-| Model download/update/rollback | signed manifest + resumable downloader + lifecycle; host-backed readiness gate | signature/path/private URL/hash/size/revalidation/rollback, cancellation, storage preflight, installer UI | Interrupted live download and device disk-pressure matrix |
+| Local private backend | PlushBuddy Hub owns APIs, SQLCipher storage, reasoning orchestration, STT fallback, LuxTTS, and pairing | Current Rust Axum host, SQLCipher voice store, Mac launcher, packaged smoke tests | Migrate client-owned profile/history/provider state into Hub |
+| Two runtime modes | Privacy local-first and cloud LLM modes only | Runtime-mode plumbing and demo banner exist | Add setup UX, local LLM runtime, Hub provider orchestration |
+| Local-first voice input | Verified on-device STT first; Hub local STT fallback; no silent cloud STT | Android/iOS platform STT code exists | Enforce local-only APIs, add Hub STT fallback, add failure UX |
+| Local LLM option | `llama.cpp` + recommended GGUF model by Hub memory | Legacy llama.cpp/Qwen paths and model lifecycle crates exist | Productize local LLM mode, model recommendation, safety tests |
+| Cloud LLM option | Hub calls Gemini/OpenAI with redacted/minimized prompt | Gemini/OpenAI paths exist in current clients and smoke tests | Move provider calls into Hub, store provider keys in Hub secure storage |
+| Toy voice cloning/TTS | LuxTTS worker, approved voice profiles, encrypted processed references | LuxTTS Sheru/Jenna/Buddy enrollment/approval/synthesis E2E passed | Objective speaker-similarity checks and more release-candidate listening evidence |
+| Encrypted durable storage | Hub SQLCipher database plus encrypted voice files; clients store only pairing identity | SQLCipher tests, wrong-key/plaintext scans, voice metadata/delete-all tests | Consolidate app state into Hub DB; add backup/export/import |
+| Stable client identity | Pair by QR, bind stable `client_id` and device credential, do not rely on IP | Bootstrap/session pairing exists | Add paired-client table, device revocation UI, client key-pair flow |
+| Local-only browser | Browser is same-machine Hub UI only | Station-served browser render smoke passed | Remove durable browser state and route browser through Hub APIs |
+| Android/iPhone/Mac clients | Thin UI clients for mic, local STT, playback, Hub APIs | Android device launch/pairing passed; iPhone simulator launch passed; Mac client packaged smoke passed | Thin-client migration and physical iPhone QA |
+| Public release hygiene | No secrets/private samples/artifacts in repo; artifacts outside checkout | `make public-repo-check`, release bundle checks, GitHub prerelease | Signed/notarized/store-ready artifacts |

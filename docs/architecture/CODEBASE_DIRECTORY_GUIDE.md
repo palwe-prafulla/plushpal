@@ -1,8 +1,16 @@
 # PlushBuddy Codebase Directory Guide
 
-Last updated: 2026-06-25
+Last updated: 2026-07-02
 
-This guide explains where the current Android, browser, Mac client, and MacStation MVP code lives and how the directories relate to each product surface.
+This guide explains where the current Android, iPhone, browser, Mac client, and
+Hub/MacStation MVP code lives and how the directories relate to each product
+surface.
+
+Architecture note: **PlushBuddy Hub** is the target/user-facing name for the
+local private backend. Several current paths and commands still use
+`macstation` because that was the original implementation name. Treat
+`MacStation` below as the current code-path name for the Hub until the code is
+renamed.
 
 ## 1. Mental model
 
@@ -13,7 +21,7 @@ PlushPal/
   apps/android/flutter_app/        Android app + iPhone app + browser client + shared Flutter UI source
   apps/macos/client_app/           PlushBuddy native Mac client shell
   apps/macos/station_app/          PlushBuddy Station native setup shell
-  apps/station/macstation_host/    MacStation / local web host in Rust
+  apps/station/macstation_host/    Hub backend / local web host in Rust
   apps/web/                        Web/Mac-browser surface notes and build ownership
   tools/voice/                     Python voice-model setup and generation scripts
   crates/                          Shared Rust domain/storage/model crates
@@ -25,9 +33,9 @@ The most important split:
 - iPhone app = `apps/android/flutter_app` plus iOS native code under `apps/android/flutter_app/ios`.
 - Browser client = the same Flutter UI plus `apps/android/flutter_app/web/plushpal_backend.js` and `backend_client_web.dart`.
 - Mac client app = `apps/macos/client_app`, a native WKWebView shell that opens the Station-served client UI.
-- MacStation setup app = `apps/macos/station_app`, a native setup/health shell that launches services and can open the Mac client.
-- MacStation host = `apps/station/macstation_host` plus voice scripts under `tools/voice`.
-- Browser UI = Flutter web build from `apps/android/flutter_app`, embedded into `apps/station/macstation_host/assets/flutter_web`, served by MacStation.
+- Hub setup app = `apps/macos/station_app`, a native setup/health shell that launches services and can open the Mac client.
+- Hub host = `apps/station/macstation_host` plus voice scripts under `tools/voice`.
+- Browser UI = Flutter web build from `apps/android/flutter_app`, embedded into `apps/station/macstation_host/assets/flutter_web`, served locally by the Hub.
 - Web build ownership notes = `apps/web`.
 - Shared Rust libraries = `crates`.
 
@@ -122,8 +130,8 @@ apps/android/flutter_app/
 |---|---|
 | `apps/android/flutter_app/lib/src/app.dart` | Main UI, app state, onboarding, settings, child mode, kid/character flows |
 | `apps/android/flutter_app/lib/src/backend/backend_client.dart` | Abstract app/backend interface |
-| `apps/android/flutter_app/lib/src/backend/backend_client_stub.dart` | Android MethodChannel client and MacStation HTTP client |
-| `apps/android/flutter_app/lib/src/backend/backend_client_web.dart` | Browser backend wrapper for JS-local storage, cloud reasoning, and Station voice |
+| `apps/android/flutter_app/lib/src/backend/backend_client_stub.dart` | Android MethodChannel client and Hub/MacStation HTTP client |
+| `apps/android/flutter_app/lib/src/backend/backend_client_web.dart` | Browser backend wrapper; vNext should talk to local Hub APIs instead of owning durable state |
 | `apps/android/flutter_app/lib/src/domain/app_state.dart` | App state machine and reducer |
 | `apps/android/flutter_app/lib/src/platform/platform_bridge.dart` | Device/platform contract for speech, secrets, profile |
 | `apps/android/flutter_app/android/app/src/main/kotlin/.../MainActivity.kt` | Android native implementation |
@@ -193,7 +201,7 @@ adb install -r build/app/outputs/flutter-apk/app-debug.apk
 
 ### 3.6 iPhone build/test commands
 
-The iPhone app uses the same Flutter UI and backend contract, with native iOS implementations for Keychain storage, speech recognition, audio playback, QR/local-network permissions, file picking, cloud reasoning, and MacStation pairing.
+The iPhone app uses the same Flutter UI and backend contract, with native iOS implementations for Keychain storage, speech recognition, audio playback, QR/local-network permissions, file picking, cloud reasoning, and Hub pairing.
 
 ```sh
 make ios-simulator
@@ -206,7 +214,7 @@ These require full Xcode selected with `xcode-select`; Command Line Tools alone 
 rustup target add aarch64-apple-ios-sim x86_64-apple-ios aarch64-apple-ios
 ```
 
-## 4. MacStation
+## 4. Hub/MacStation backend
 
 Main directory:
 
@@ -214,7 +222,7 @@ Main directory:
 apps/station/macstation_host/
 ```
 
-### 4.1 MacStation structure
+### 4.1 Hub/MacStation structure
 
 ```text
 apps/station/macstation_host/
@@ -227,9 +235,9 @@ apps/station/macstation_host/
 └── build.rs
 ```
 
-### 4.2 What MacStation does
+### 4.2 What Hub/MacStation does
 
-MacStation is the local voice appliance and local web host. It:
+Hub/MacStation is the local voice appliance and local web host. It:
 
 - starts/verifies local services;
 - exposes the local HTTP API;
@@ -240,11 +248,11 @@ MacStation is the local voice appliance and local web host. It:
 - generates preview/conversation WAV files;
 - can serve the browser/Mac web UI.
 
-### 4.3 Important MacStation code
+### 4.3 Important Hub/MacStation code
 
 | File/area | Purpose |
 |---|---|
-| `apps/station/macstation_host/src/lib.rs` | Most MacStation runtime code |
+| `apps/station/macstation_host/src/lib.rs` | Most Hub/MacStation runtime code |
 | Axum route setup in `src/lib.rs` | `/api/v1/*` API map |
 | `voice_status`, `enroll_voice`, `preview_voice`, `approve_voice`, `speak_with_voice` | voice profile and TTS APIs |
 | `PersistentLuxTtsEngine` / LuxTTS engine area | starts and talks to Python worker |
@@ -252,7 +260,7 @@ MacStation is the local voice appliance and local web host. It:
 | bootstrap/session handlers | local browser/Mac attach, Android/iPhone QR pairing, and session auth |
 | tests in `src/lib.rs` | Rust host API tests |
 
-### 4.4 MacStation API endpoints
+### 4.4 Hub/MacStation API endpoints
 
 Implemented in:
 
@@ -294,7 +302,7 @@ For Android MVP, the most important endpoints are:
 /api/v1/voice/speak
 ```
 
-### 4.5 MacStation commands
+### 4.5 Hub/MacStation commands
 
 ```sh
 make setup-luxtts-voice
@@ -379,14 +387,19 @@ apps/station/macstation_host/assets/flutter_web/
 
 That embedded web bundle is then served by the Rust desktop host.
 
-Runtime ownership:
+Target runtime ownership:
 
-- browser stores parent/kid/character/history/provider selection locally;
-- browser keeps provider API keys session-only rather than persisting them to
-  localStorage;
-- browser calls Gemini/OpenAI directly for reasoning;
-- browser calls MacStation only for bootstrap/status and `/api/v1/voice/*`;
-- MacStation CSP allows only same-origin plus Gemini/OpenAI provider connections.
+- Hub owns parent/kid/character/history/provider settings in SQLCipher;
+- local browser stores only session/bootstrap identity;
+- local browser does not call Gemini/OpenAI directly in the Hub target;
+- local browser calls Hub APIs for bootstrap, setup, profiles, conversation,
+  and `/api/v1/voice/*`;
+- Hub CSP should allow same-origin client calls and block unrelated network
+  surfaces.
+
+Current prerelease note: parts of the web backend still reflect the older
+client-owned-state implementation. Those paths should be migrated behind Hub
+APIs before treating the browser client as production-ready.
 
 ### What to edit for browser UI
 
@@ -413,7 +426,7 @@ tools/voice/
 | Path | Purpose |
 |---|---|
 | `tools/voice/setup_luxtts_macos.sh` | Creates LuxTTS virtualenv and installs requirements |
-| `tools/voice/luxtts_worker.py` | Persistent worker used by MacStation |
+| `tools/voice/luxtts_worker.py` | Persistent worker used by Hub/MacStation |
 | `tools/voice/luxtts_tts.py` | One-shot LuxTTS wrapper / healthcheck |
 | `tools/voice/denoise_reference.py` | Denoise experiment helper |
 | `tools/voice/chatterbox_tts.py` | Chatterbox experiment wrapper |
@@ -484,7 +497,7 @@ These are reusable Rust components from the larger local-first architecture. Som
 | `search_api` | search API contracts |
 | `session_engine` | session state concepts |
 
-For the current Android + MacStation MVP, the most practically relevant crates are:
+For the current Android + Hub/MacStation MVP, the most practically relevant crates are:
 
 ```text
 core_domain
@@ -651,7 +664,7 @@ If something gets weird, these can often be deleted/rebuilt, but do not treat th
 | Add Rust host tests | `apps/station/macstation_host/src/lib.rs` test module |
 | Document architecture decisions | `docs/adr/` |
 
-## 15. Current product-surface split
+## 15. Product-surface ownership target
 
 ### Android app
 
@@ -662,19 +675,17 @@ apps/android/flutter_app/lib/
 apps/android/flutter_app/android/
 ```
 
-Owns:
+Owns in the Hub target:
 
-- parent setup;
-- kid profiles;
-- character profiles;
-- reasoning provider API keys;
+- UI for parent setup;
+- UI for kid profiles;
+- UI for character profiles;
 - child conversation UX;
-- STT;
-- conversation history;
-- pairing config;
+- verified on-device STT when available;
+- minimal pairing/session identity;
 - audio playback.
 
-### MacStation
+### Hub/MacStation
 
 Source:
 
@@ -685,13 +696,17 @@ tools/voice/
 packaging/macos/
 ```
 
-Owns:
+Owns in the Hub target:
 
 - setup health;
 - local browser/Mac attach and Android/iPhone QR pairing;
+- encrypted SQLCipher storage for kids, characters, provider keys, history,
+  settings, and voice profiles;
+- guardrails, redaction, and reasoning orchestration;
+- local LLM or cloud LLM provider calls depending on selected mode;
+- Hub local STT fallback;
 - LuxTTS runtime;
 - voice sample processing;
-- encrypted voice profile storage;
 - voice preview;
 - voice synthesis.
 

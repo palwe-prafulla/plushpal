@@ -1,6 +1,6 @@
 # PlushBuddy documentation publication policy
 
-Last updated: 2026-06-26
+Last updated: 2026-07-02
 
 This repository is public. Documentation in the repo should help someone clone,
 build, run, evaluate, or understand PlushBuddy without exposing private family
@@ -48,18 +48,19 @@ The current private copy of the removed interview-prep document is stored at:
 
 The public docs should describe this architecture consistently:
 
-1. Android, iPhone, browser, and Mac client are the user-facing app surfaces.
-2. The Flutter client owns parent settings, kids, characters, conversation
-   history, provider selection, API keys, cloud reasoning, and playback.
-3. MacStation is a local Mac voice appliance, not the main app backend.
-4. MacStation owns LuxTTS setup, voice profile creation, encrypted processed
-   voice references, voice preview/approval support, and TTS synthesis.
-5. Browser and Mac client opened from Station auto-attach locally without QR.
-6. Android and iPhone pair with Station through QR because they are external
-   devices on the local network.
-7. Voice samples do not go to Gemini/OpenAI; cloud LLMs receive only minimized,
-   pseudonymized text context.
-8. Build artifacts and release bundles are generated outside the repo under
+1. PlushBuddy Hub is the local private backend and durable encrypted store.
+2. Android, iPhone, Mac app, and future Windows/Linux apps are thin native UI
+   clients that pair with Hub.
+3. Local browser is supported only on the same machine running Hub; remote
+   browser clients are out of scope.
+4. Hub owns parent settings, kids, characters, conversations, runtime mode,
+   provider keys, guardrails, local/cloud reasoning, LuxTTS, local STT fallback,
+   and SQLCipher storage.
+5. Clients own UI, mic capture, verified local STT when available, playback, and
+   minimum pairing/session identity.
+6. Voice samples do not go to Gemini/OpenAI; cloud LLM mode receives only
+   minimized, pseudonymized text context.
+7. Build artifacts and release bundles are generated outside the repo under
    `~/Downloads/PlushPal`, and downloadable binaries are published through
    GitHub Releases rather than committed to git.
 

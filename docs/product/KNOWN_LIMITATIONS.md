@@ -1,18 +1,30 @@
 # Known limitations
 
-Last updated: 2026-06-26
+Last updated: 2026-07-02
 
-PlushBuddy is public and buildable, but it is still an MVP/prototype. These are
-the current important limitations.
+PlushBuddy is public and buildable, but it is still an MVP/prototype. The Hub
+architecture described in the current system design is the vNext target and is
+not fully implemented in the prerelease yet.
+
+## Architecture limitations
+
+- The current prerelease still contains legacy client-owned state/reasoning
+  paths.
+- The target design moves durable state, provider calls, guardrails, and
+  business logic into PlushBuddy Hub.
+- Remote browser clients are intentionally out of scope. Browser support is
+  local-only on the same machine running the Hub.
+- Windows/Linux Hub launchers are future work.
 
 ## Platform limitations
 
 - The full local voice path is currently validated on Apple Silicon macOS.
-- The Android app is the primary MVP mobile surface.
+- Android is the primary tested external native client.
 - The iPhone app builds and launches in simulator, but physical-device install
   requires Apple signing/provisioning.
+- Mac native client support exists, but the Hub migration must make it a thin
+  voice-first client.
 - Windows packaging is not the current validated product path.
-- Browser local storage is not yet encrypted.
 
 ## Voice/model limitations
 
@@ -20,18 +32,20 @@ the current important limitations.
   SDK.
 - First setup can be large and slow because model/runtime dependencies need to
   be downloaded or packaged.
-- Voice quality depends heavily on the sample quality, recording noise, and toy
+- Voice quality depends heavily on sample quality, recording noise, and toy
   voice style.
 - Voice synthesis latency can still be noticeable, especially for longer text.
-- The current production path expects the MacStation voice appliance to be
-  available for voice profile creation and TTS playback.
+- Hub must keep the host machine awake while active. The display may sleep, but
+  the system should not suspend.
 
-## Reasoning limitations
+## STT/reasoning limitations
 
-- Cloud reasoning requires a parent-provided Gemini/OpenAI API key.
+- Platform default STT APIs are not automatically local-only. The target design
+  requires verified on-device STT or Hub local STT fallback.
+- Hub local STT fallback is not yet fully productized.
+- Fully local mode requires a local LLM runtime and model recommendation flow.
+- Cloud LLM mode still requires a parent-provided Gemini/OpenAI key.
 - Prompt guardrails reduce risk but are not a complete safety system.
-- Provider behavior can change over time.
-- Fully local mobile reasoning is not part of the current MVP.
 
 ## Developer/clone limitations
 
