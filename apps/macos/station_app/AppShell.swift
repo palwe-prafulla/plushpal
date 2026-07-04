@@ -1629,17 +1629,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func setChecklistButton(_ button: NSButton?, title: String, complete: Bool) {
         guard let button else { return }
         button.title = title
+        button.attributedTitle = NSAttributedString(
+            string: title,
+            attributes: [.foregroundColor: NSColor.labelColor]
+        )
         button.alignment = .left
         button.imagePosition = .imageLeading
         if complete {
-            button.image = NSImage(systemSymbolName: "checkmark.seal.fill", accessibilityDescription: nil)
-            button.contentTintColor = .labelColor
+            button.image = tintedSymbolImage(
+                "checkmark.seal.fill",
+                color: NSColor(calibratedRed: 0.08, green: 0.62, blue: 0.30, alpha: 1.0)
+            )
+            button.contentTintColor = nil
             button.bezelColor = nil
         } else {
             button.image = nil
             button.contentTintColor = NSColor(calibratedRed: 0.55, green: 0.36, blue: 0.96, alpha: 1.0)
             button.bezelColor = nil
         }
+    }
+
+    private func tintedSymbolImage(_ symbolName: String, color: NSColor) -> NSImage? {
+        let configuration = NSImage.SymbolConfiguration(pointSize: 14, weight: .semibold)
+        guard let base = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
+            .withSymbolConfiguration(configuration) else {
+            return nil
+        }
+        let image = NSImage(size: base.size)
+        image.lockFocus()
+        let rect = NSRect(origin: .zero, size: base.size)
+        color.setFill()
+        rect.fill()
+        base.draw(in: rect, from: .zero, operation: .destinationIn, fraction: 1.0)
+        image.unlockFocus()
+        image.isTemplate = false
+        return image
     }
 
     private func saveParentPinToHub(pin: String) throws {
