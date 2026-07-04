@@ -914,11 +914,6 @@ class _PlushPalRootState extends State<PlushPalRoot>
   }
 
   Future<void> completeOnboarding({bool addVoiceAfterSave = false}) async {
-    final pin = parentPin.text;
-    if (!RegExp(r'^\d{4,8}$').hasMatch(pin) || pin != confirmParentPin.text) {
-      setState(() => message = 'Choose matching 4-8 digit parent PINs.');
-      return;
-    }
     final kidBirthdateIso = birthdateToIso(kidBirthdate.text);
     final childAge = childAgeFromBirthdate(kidBirthdateIso);
     if (childAge != null && state.ageBand != childAge.ageBand) {
@@ -944,6 +939,17 @@ class _PlushPalRootState extends State<PlushPalRoot>
     final named = AppReducer.reduce(state, CharacterNamed(characterName.text));
     if (named.error != null) {
       setState(() => message = named.error);
+      return;
+    }
+    final pin = await requestParentPin('Save family setup');
+    if (pin == null) return;
+    final authorized = await widget.backend.authorizeParentPin(pin);
+    if (!mounted) return;
+    if (!authorized) {
+      setState(
+        () => message =
+            'That parent PIN did not match PlushBuddy Hub. Set or verify the PIN in Hub, then try again.',
+      );
       return;
     }
     try {
@@ -991,14 +997,12 @@ class _PlushPalRootState extends State<PlushPalRoot>
           unlockedParentPin = null;
         }
       }
-      parentPin.clear();
-      confirmParentPin.clear();
     } catch (error) {
       if (mounted) {
         setState(
           () => message = userFacingError(
             error,
-            fallback: 'Could not secure the parent PIN.',
+            fallback: 'Could not save the family setup.',
           ),
         );
       }
@@ -2291,8 +2295,6 @@ class _PlushPalRootState extends State<PlushPalRoot>
         }),
         retentionDays: retentionDays,
         retentionChanged: (value) => setState(() => retentionDays = value),
-        parentPin: parentPin,
-        confirmParentPin: confirmParentPin,
         completeOnboarding: completeOnboarding,
         stationPaired: stationPaired,
         stationBaseUrl: stationBaseUrl,
@@ -2385,8 +2387,6 @@ class OnboardingScreen extends StatelessWidget {
     required this.toggleTrait,
     required this.retentionDays,
     required this.retentionChanged,
-    required this.parentPin,
-    required this.confirmParentPin,
     required this.completeOnboarding,
     required this.stationPaired,
     required this.stationBaseUrl,
@@ -2415,8 +2415,6 @@ class OnboardingScreen extends StatelessWidget {
   final ValueChanged<String> toggleTrait;
   final int? retentionDays;
   final ValueChanged<int?> retentionChanged;
-  final TextEditingController parentPin;
-  final TextEditingController confirmParentPin;
   final Future<void> Function({bool addVoiceAfterSave}) completeOnboarding;
   final bool stationPaired;
   final String? stationBaseUrl;
@@ -2552,19 +2550,16 @@ class OnboardingScreen extends StatelessWidget {
               ],
               const SizedBox(height: 24),
               _SettingsCard(
-                icon: Icons.lock,
-                title: 'Parent lock',
+                icon: Icons.child_care,
+                title: 'Kid profile',
                 status:
                     kidName.text.trim().isNotEmpty &&
-                        childAgeFromBirthdate(kidBirthdate.text.trim()) !=
-                            null &&
-                        parentPin.text.isNotEmpty
+                        childAgeFromBirthdate(kidBirthdate.text.trim()) != null
                     ? 'Ready'
                     : 'Required',
                 complete:
                     kidName.text.trim().isNotEmpty &&
-                    childAgeFromBirthdate(kidBirthdate.text.trim()) != null &&
-                    parentPin.text.isNotEmpty,
+                    childAgeFromBirthdate(kidBirthdate.text.trim()) != null,
                 children: [
                   TextField(
                     controller: kidName,
@@ -2583,28 +2578,6 @@ class OnboardingScreen extends StatelessWidget {
                       labelText: 'Birthdate',
                       helperText:
                           'Use MM/DD/YYYY. PlushBuddy derives age guardrails from this.',
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: parentPin,
-                    obscureText: true,
-                    keyboardType: TextInputType.number,
-                    maxLength: 8,
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      labelText: 'Create parent PIN (4-8 digits)',
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: confirmParentPin,
-                    obscureText: true,
-                    keyboardType: TextInputType.number,
-                    maxLength: 8,
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      labelText: 'Confirm parent PIN',
                     ),
                   ),
                 ],
@@ -2738,6 +2711,16 @@ class OnboardingScreen extends StatelessWidget {
                           'Example: Enjoys simple science and animal stories.',
                     ),
                   ),
+                  const SizedBox(height: 12),
+                  FilledButton.tonalIcon(
+                    onPressed: () =>
+                        completeOnboarding(addVoiceAfterSave: true),
+                    style: _leftAlignedButtonStyle(context),
+                    icon: const Icon(Icons.graphic_eq),
+                    label: const Text(
+                      'Save first character and add voice sample',
+                    ),
+                  ),
                 ],
               ),
               if (message != null) ...[
@@ -2752,13 +2735,6 @@ class OnboardingScreen extends StatelessWidget {
                 onPressed: completeOnboarding,
                 style: _leftAlignedButtonStyle(context),
                 child: const Text('Continue to parent home'),
-              ),
-              const SizedBox(height: 8),
-              FilledButton.tonalIcon(
-                onPressed: () => completeOnboarding(addVoiceAfterSave: true),
-                style: _leftAlignedButtonStyle(context),
-                icon: const Icon(Icons.graphic_eq),
-                label: const Text('Continue and add voice sample'),
               ),
             ],
           ),
@@ -3408,8 +3384,9 @@ class SettingsMenuScreen extends StatelessWidget {
             children: [
               _SettingsTile(
                 icon: Icons.lock,
-                title: 'Parent lock',
-                subtitle: 'PIN saved • protects settings and cleanup',
+                title: 'Hub parent PIN',
+                subtitle:
+                    'Managed in PlushBuddy Hub • protects settings and cleanup',
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () => _push(
                   context,
@@ -3563,18 +3540,18 @@ class _ParentSetupSettingsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Parent lock')),
+    appBar: AppBar(title: const Text('Hub parent PIN')),
     body: ListView(
       padding: const EdgeInsets.all(16),
       children: [
         _SettingsGroup(
-          title: 'Parent lock',
+          title: 'Hub parent PIN',
           children: const [
             _SettingsTile(
               icon: Icons.lock,
-              title: 'Parent PIN',
+              title: 'Parent PIN is managed in Hub',
               subtitle:
-                  'Needed only for Parent Settings and important cleanup.',
+                  'This app asks for the Hub PIN only when saving protected changes.',
               trailing: Icon(Icons.check_circle, color: Colors.green),
             ),
           ],

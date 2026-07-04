@@ -58,7 +58,7 @@ const _fixtureWav = <int>[
 class FakeBackend implements BackendClient {
   FakeBackend({
     this.modelReady = true,
-    this.parentConfigured = false,
+    this.parentConfigured = true,
     this.restoredAgeBand,
     this.restoredCharacterAlias,
     this.restoredTraits = const [],
@@ -500,24 +500,15 @@ class FakeBackend implements BackendClient {
 }
 
 Future<void> enterParentPin(WidgetTester tester) async {
-  if (find.byType(ListView).evaluate().isNotEmpty) {
-    await tester.drag(find.byType(ListView).first, const Offset(0, 1000));
-    await tester.pumpAndSettle();
-  }
-  final createPin = find.byWidgetPredicate(
+  await tester.pumpAndSettle();
+  final parentPin = find.byWidgetPredicate(
     (widget) =>
-        widget is TextField &&
-        widget.decoration?.labelText == 'Create parent PIN (4-8 digits)',
+        widget is TextField && widget.decoration?.labelText == 'Parent PIN',
   );
-  final confirmPin = find.byWidgetPredicate(
-    (widget) =>
-        widget is TextField &&
-        widget.decoration?.labelText == 'Confirm parent PIN',
-  );
-  await tester.ensureVisible(createPin);
-  await tester.enterText(createPin, '4826');
-  await tester.ensureVisible(confirmPin);
-  await tester.enterText(confirmPin, '4826');
+  await tester.ensureVisible(parentPin);
+  await tester.enterText(parentPin, '4826');
+  await tester.tap(find.widgetWithText(FilledButton, 'Confirm').last);
+  await tester.pumpAndSettle();
 }
 
 Future<void> tapVisible(WidgetTester tester, String text) async {
@@ -615,8 +606,8 @@ Future<void> completeBasicOnboarding(
   await tester.ensureVisible(birthdateField);
   await tester.enterText(birthdateField, birthdate);
   await assessIfNeeded(tester);
-  await enterParentPin(tester);
   await tapVisible(tester, 'Continue to parent home');
+  await enterParentPin(tester);
   await tester.pumpAndSettle();
 }
 
@@ -873,7 +864,6 @@ void main() {
     await tester.enterText(birthdateField, '01/01/2021');
     await assessIfNeeded(tester);
 
-    await enterParentPin(tester);
     await tapVisible(tester, 'Continue to parent home');
     await tester.pumpAndSettle();
     expect(
