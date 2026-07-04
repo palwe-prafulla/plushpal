@@ -178,6 +178,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var themeModeButton: NSButton!
     private var parentSetupButton: NSButton!
     private var configureCloudLlmButton: NSButton!
+    private var pairedDevicesButton: NSButton!
     private var copyDiagnosticsButton: NSButton!
     private var openLogsButton: NSButton!
     private var resetVoiceRuntimeButton: NSButton!
@@ -414,10 +415,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         parentSetupButton.isHidden = true
         parentSetupButton.translatesAutoresizingMaskIntoConstraints = false
 
-        configureCloudLlmButton = NSButton(title: "Configure Cloud LLM key", target: self, action: #selector(configureCloudLlmKey))
+        configureCloudLlmButton = NSButton(title: "Configure Cloud AI model", target: self, action: #selector(configureCloudLlmKey))
         configureCloudLlmButton.bezelStyle = .rounded
         configureCloudLlmButton.isHidden = true
         configureCloudLlmButton.translatesAutoresizingMaskIntoConstraints = false
+
+        pairedDevicesButton = NSButton(title: "Manage paired devices", target: self, action: #selector(managePairedDevices))
+        pairedDevicesButton.bezelStyle = .rounded
+        pairedDevicesButton.isHidden = true
+        pairedDevicesButton.translatesAutoresizingMaskIntoConstraints = false
 
         copyDiagnosticsButton = NSButton(title: "Copy diagnostics", target: self, action: #selector(copyDiagnostics))
         copyDiagnosticsButton.bezelStyle = .rounded
@@ -444,6 +450,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             themeModeButton,
             parentSetupButton,
             configureCloudLlmButton,
+            pairedDevicesButton,
             copyDiagnosticsButton,
             openLogsButton,
             resetVoiceRuntimeButton,
@@ -498,12 +505,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
         let setupPanel = verticalPanel([
             sectionTitle("Setup checklist"),
-            helperText("Do these once, in order. The parent PIN protects sensitive settings such as Cloud LLM keys."),
+            helperText("Do these once, in order. The parent PIN protects sensitive settings such as Cloud AI model keys."),
             parentSetupButton,
             configureCloudLlmButton,
             sectionTitle("Connect clients"),
             helperText("Phones pair by QR code. Local Mac and browser clients connect directly to this Hub."),
             pairAndroidButton,
+            pairedDevicesButton,
             openBrowserButton,
             openInAppButton,
             sectionTitle("Look & feel"),
@@ -610,6 +618,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             configureCloudLlmButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 260),
             openBrowserButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 210),
             pairAndroidButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 210),
+            pairedDevicesButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 210),
             openInAppButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 210),
             runtimeModeButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 150),
             copyDiagnosticsButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 150),
@@ -1433,13 +1442,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             panel.layer?.backgroundColor = panelBackgrounds[min(index, panelBackgrounds.count - 1)].cgColor
             panel.layer?.borderColor = panelBorders[min(index, panelBorders.count - 1)].cgColor
         }
-        for button in [parentSetupButton, configureCloudLlmButton, pairAndroidButton, openBrowserButton, openInAppButton, themeModeButton] {
+        for button in [parentSetupButton, configureCloudLlmButton, pairAndroidButton, pairedDevicesButton, openBrowserButton, openInAppButton, themeModeButton] {
             button?.contentTintColor = accent
         }
         refreshChecklistButtons()
     }
 
     @objc private func configureParentPin() {
+        if UserDefaults.standard.bool(forKey: "PlushBuddyHubParentPinConfigured") {
+            let manage = NSAlert()
+            manage.messageText = "Parent PIN is already set"
+            manage.informativeText = "Use the current PIN to update it. If you do not want to change it, you can leave it as is."
+            manage.addButton(withTitle: "Update PIN")
+            manage.addButton(withTitle: "Cancel")
+            guard manage.runModal() == .alertFirstButtonReturn else { return }
+            updateParentPin()
+            return
+        }
+
         let pinInput = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
         pinInput.placeholderString = "Parent PIN"
         let confirmInput = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
@@ -1457,10 +1477,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         stack.setFrameSize(NSSize(width: 360, height: 104))
 
         let alert = NSAlert()
-        alert.messageText = "Set or verify parent PIN"
-        alert.informativeText = "The parent PIN protects Hub settings such as Cloud LLM keys. If a PIN already exists, enter the current PIN to verify access."
+        alert.messageText = "Set parent PIN"
+        alert.informativeText = "The parent PIN protects Hub settings such as Cloud AI model keys."
         alert.accessoryView = stack
-        alert.addButton(withTitle: "Save / Verify")
+        alert.addButton(withTitle: "Save PIN")
         alert.addButton(withTitle: "Cancel")
         DispatchQueue.main.async {
             alert.window.makeFirstResponder(pinInput)
@@ -1477,16 +1497,111 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             UserDefaults.standard.set(true, forKey: "PlushBuddyHubParentPinConfigured")
             refreshChecklistButtons()
             appendLog("app-shell.log", "parent PIN configured or verified")
-            showInfoAlert(title: "Parent PIN ready", message: "Hub parent settings are protected. Next, configure your Cloud LLM key if you want cloud conversation mode.")
+            showInfoAlert(title: "Parent PIN ready", message: "Hub parent settings are protected. Next, configure your Cloud AI model if you want cloud conversation mode.")
         } catch {
             showInfoAlert(title: "Parent PIN setup failed", message: error.localizedDescription)
         }
     }
 
+    private func updateParentPin() {
+        let currentInput = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 340, height: 24))
+        currentInput.placeholderString = "Current parent PIN"
+        let newInput = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 340, height: 24))
+        newInput.placeholderString = "New parent PIN"
+        let confirmInput = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 340, height: 24))
+        confirmInput.placeholderString = "Confirm new PIN"
+
+        let stack = NSStackView(views: [
+            NSTextField(labelWithString: "Current PIN"),
+            currentInput,
+            NSTextField(labelWithString: "New PIN"),
+            newInput,
+            NSTextField(labelWithString: "Confirm new PIN"),
+            confirmInput,
+        ])
+        stack.orientation = .vertical
+        stack.spacing = 8
+        stack.alignment = .leading
+        stack.setFrameSize(NSSize(width: 380, height: 156))
+
+        let alert = NSAlert()
+        alert.messageText = "Update parent PIN"
+        alert.informativeText = "Enter the current PIN, then choose a new PIN."
+        alert.accessoryView = stack
+        alert.addButton(withTitle: "Update PIN")
+        alert.addButton(withTitle: "Cancel")
+        DispatchQueue.main.async {
+            alert.window.makeFirstResponder(currentInput)
+        }
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let current = currentInput.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let newPin = newInput.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let confirmation = confirmInput.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !current.isEmpty, !newPin.isEmpty, newPin == confirmation else {
+            showInfoAlert(title: "Parent PIN was not updated", message: "Enter the current PIN and make sure both new PIN fields match.")
+            return
+        }
+        do {
+            try updateParentPinInHub(currentPin: current, newPin: newPin)
+            UserDefaults.standard.set(true, forKey: "PlushBuddyHubParentPinConfigured")
+            refreshChecklistButtons()
+            appendLog("app-shell.log", "parent PIN updated")
+            showInfoAlert(title: "Parent PIN updated", message: "Use the new PIN for future parent settings.")
+        } catch {
+            showInfoAlert(title: "Parent PIN update failed", message: error.localizedDescription)
+        }
+    }
+
     @objc private func configureCloudLlmKey() {
+        let status = (try? cloudAiModelStatus()) ?? CloudAiModelStatus(
+            provider: selectedCloudLlmProvider(),
+            configured: UserDefaults.standard.bool(forKey: "PlushBuddyHubCloudLlmConfigured"),
+            displayName: cloudLlmProviderDisplayName(selectedCloudLlmProvider()),
+            configuredProviders: UserDefaults.standard.bool(forKey: "PlushBuddyHubCloudLlmConfigured")
+                ? [selectedCloudLlmProvider()]
+                : []
+        )
+        if status.configured || !status.configuredProviders.isEmpty {
+            manageCloudAiModel(status: status)
+            return
+        }
+        addOrUpdateCloudAiModelKey(initialProvider: status.provider)
+    }
+
+    private func manageCloudAiModel(status: CloudAiModelStatus) {
+        let available = status.configuredProviders.isEmpty
+            ? "None yet"
+            : status.configuredProviders.map(cloudLlmProviderDisplayName).joined(separator: ", ")
+        let active = status.configured
+            ? "\(status.displayName) active"
+            : "\(status.displayName) selected but missing a key"
+
+        let alert = NSAlert()
+        alert.messageText = "Manage Cloud AI model"
+        alert.informativeText = """
+        Active model: \(active)
+        Available keys: \(available)
+
+        Add or update a Gemini/OpenAI key, or switch to a provider that already has a saved key.
+        """
+        alert.addButton(withTitle: "Add / update key")
+        let switchProvider = status.configuredProviders.first { $0 != status.provider }
+        if let switchProvider {
+            alert.addButton(withTitle: "Use \(cloudLlmProviderDisplayName(switchProvider))")
+        }
+        alert.addButton(withTitle: "Cancel")
+        let choice = alert.runModal()
+        if choice == .alertFirstButtonReturn {
+            addOrUpdateCloudAiModelKey(initialProvider: status.provider)
+        } else if choice == .alertSecondButtonReturn, let switchProvider {
+            selectCloudAiProvider(switchProvider)
+        }
+    }
+
+    private func addOrUpdateCloudAiModelKey(initialProvider: String) {
         let providerPopup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 520, height: 26), pullsDown: false)
         providerPopup.addItems(withTitles: ["Gemini", "OpenAI"])
-        providerPopup.selectItem(withTitle: cloudLlmProviderDisplayName(selectedCloudLlmProvider()))
+        providerPopup.selectItem(withTitle: cloudLlmProviderDisplayName(initialProvider))
 
         let input = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 520, height: 24))
         input.placeholderString = "Paste provider API key"
@@ -1494,7 +1609,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         pinInput.placeholderString = "Parent PIN"
 
         let stack = NSStackView(views: [
-            NSTextField(labelWithString: "Provider"),
+            NSTextField(labelWithString: "Cloud AI provider"),
             providerPopup,
             NSTextField(labelWithString: "API key"),
             input,
@@ -1507,8 +1622,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         stack.setFrameSize(NSSize(width: 520, height: 150))
 
         let alert = NSAlert()
-        alert.messageText = "Configure Cloud LLM key"
-        alert.informativeText = "Choose Gemini or OpenAI. The key is stored in the Hub encrypted SQLCipher database. Enter the parent PIN to authorize this sensitive setting."
+        alert.messageText = "Add or update Cloud AI model"
+        alert.informativeText = "Choose Gemini or OpenAI. The key is stored in the Hub encrypted SQLCipher database. Saving a key also makes that provider active."
         alert.accessoryView = stack
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
@@ -1528,13 +1643,151 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             refreshChecklistButtons(conversationReady: true)
             removeLegacyGeminiKeyFile()
             appendLog("app-shell.log", "\(cloudLlmProviderDisplayName(provider)) key saved to encrypted Hub database")
-            showInfoAlert(title: "Cloud LLM key saved", message: "\(cloudLlmProviderDisplayName(provider)) is configured for conversation mode.")
+            showInfoAlert(title: "Cloud AI model saved", message: "\(cloudLlmProviderDisplayName(provider)) is now active for conversation mode.")
             if let hostUrl {
                 waitForStationHealth(hostUrl)
             }
         } catch {
-            showInfoAlert(title: "Cloud LLM key was not saved", message: error.localizedDescription)
+            showInfoAlert(title: "Cloud AI model was not saved", message: error.localizedDescription)
         }
+    }
+
+    private func selectCloudAiProvider(_ provider: String) {
+        let pinInput = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        pinInput.placeholderString = "Parent PIN"
+        let alert = NSAlert()
+        alert.messageText = "Use \(cloudLlmProviderDisplayName(provider))?"
+        alert.informativeText = "Enter the parent PIN to make \(cloudLlmProviderDisplayName(provider)) the active Cloud AI model."
+        alert.accessoryView = pinInput
+        alert.addButton(withTitle: "Use \(cloudLlmProviderDisplayName(provider))")
+        alert.addButton(withTitle: "Cancel")
+        DispatchQueue.main.async {
+            alert.window.makeFirstResponder(pinInput)
+        }
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let pin = pinInput.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !pin.isEmpty else { return }
+        do {
+            try selectCloudAiProviderInHub(provider: provider, pin: pin)
+            UserDefaults.standard.set(provider, forKey: "PlushBuddyCloudLlmProvider")
+            UserDefaults.standard.set(true, forKey: "PlushBuddyHubCloudLlmConfigured")
+            refreshChecklistButtons(conversationReady: true)
+            appendLog("app-shell.log", "\(cloudLlmProviderDisplayName(provider)) selected as active Cloud AI model")
+            showInfoAlert(title: "Cloud AI model updated", message: "\(cloudLlmProviderDisplayName(provider)) is now active.")
+            if let hostUrl {
+                waitForStationHealth(hostUrl)
+            }
+        } catch {
+            showInfoAlert(title: "Cloud AI model was not changed", message: error.localizedDescription)
+        }
+    }
+
+    private struct PairedDevice {
+        let clientId: String
+        let platform: String
+        let label: String?
+        let lastSeenAt: Int
+        let lastSeenIp: String?
+        let revokedAt: Int?
+
+        var isActive: Bool { revokedAt == nil }
+
+        var shortId: String {
+            let trimmed = clientId.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.count > 10 else { return trimmed }
+            return "\(trimmed.prefix(6))…\(trimmed.suffix(4))"
+        }
+    }
+
+    @objc private func managePairedDevices() {
+        let pinInput = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        pinInput.placeholderString = "Parent PIN"
+        let pinAlert = NSAlert()
+        pinAlert.messageText = "Review paired devices"
+        pinAlert.informativeText = "Enter the parent PIN to review phones and apps paired with this Hub."
+        pinAlert.accessoryView = pinInput
+        pinAlert.addButton(withTitle: "Review")
+        pinAlert.addButton(withTitle: "Cancel")
+        DispatchQueue.main.async {
+            pinAlert.window.makeFirstResponder(pinInput)
+        }
+        guard pinAlert.runModal() == .alertFirstButtonReturn else { return }
+        let pin = pinInput.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !pin.isEmpty else { return }
+
+        do {
+            let devices = try pairedDevices(pin: pin)
+            guard !devices.isEmpty else {
+                showInfoAlert(title: "No paired devices yet", message: "Pair an Android or iPhone app with the QR code. Local Mac and browser clients connect directly.")
+                return
+            }
+            showPairedDevices(devices, pin: pin)
+        } catch {
+            showInfoAlert(title: "Could not load paired devices", message: error.localizedDescription)
+        }
+    }
+
+    private func showPairedDevices(_ devices: [PairedDevice], pin: String) {
+        let activeDevices = devices.filter(\.isActive)
+        let displayDevices = activeDevices.isEmpty ? devices : activeDevices
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 520, height: 28), pullsDown: false)
+        for device in displayDevices {
+            popup.addItem(withTitle: pairedDeviceTitle(device))
+        }
+        let summary = displayDevices.map(pairedDeviceSummary).joined(separator: "\n")
+        let stack = NSStackView(views: [
+            NSTextField(wrappingLabelWithString: summary),
+            NSTextField(labelWithString: "Selected device"),
+            popup,
+        ])
+        stack.orientation = .vertical
+        stack.spacing = 10
+        stack.alignment = .leading
+        stack.setFrameSize(NSSize(width: 540, height: min(340, 90 + (displayDevices.count * 38))))
+
+        let alert = NSAlert()
+        alert.messageText = "Paired devices"
+        alert.informativeText = "These devices stay paired after the Hub closes and reopens. Forget a device if it should pair again."
+        alert.accessoryView = stack
+        alert.addButton(withTitle: "Forget selected")
+        alert.addButton(withTitle: "Close")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let selectedIndex = popup.indexOfSelectedItem
+        guard selectedIndex >= 0, selectedIndex < displayDevices.count else { return }
+        let selected = displayDevices[selectedIndex]
+
+        let confirm = NSAlert()
+        confirm.messageText = "Forget \(pairedDeviceTitle(selected))?"
+        confirm.informativeText = "This device will need to scan the Hub QR code again before it can use buddy voices."
+        confirm.addButton(withTitle: "Forget device")
+        confirm.addButton(withTitle: "Cancel")
+        guard confirm.runModal() == .alertFirstButtonReturn else { return }
+        do {
+            try revokePairedDevice(pin: pin, clientId: selected.clientId)
+            showInfoAlert(title: "Device forgotten", message: "\(pairedDeviceTitle(selected)) was removed from this Hub.")
+        } catch {
+            showInfoAlert(title: "Could not forget device", message: error.localizedDescription)
+        }
+    }
+
+    private func pairedDeviceTitle(_ device: PairedDevice) -> String {
+        let label = device.label?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = (label?.isEmpty == false ? label : nil) ?? device.platform.capitalized
+        return "\(name) (\(device.shortId))"
+    }
+
+    private func pairedDeviceSummary(_ device: PairedDevice) -> String {
+        let status = device.isActive ? "paired" : "forgotten"
+        let ip = device.lastSeenIp.map { " • \($0)" } ?? ""
+        return "• \(pairedDeviceTitle(device)) — \(status) • last seen \(formatUnixSeconds(device.lastSeenAt))\(ip)"
+    }
+
+    private func formatUnixSeconds(_ seconds: Int) -> String {
+        guard seconds > 0 else { return "unknown" }
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        formatter.timeStyle = .short
+        return formatter.string(from: Date(timeIntervalSince1970: TimeInterval(seconds)))
     }
 
     @objc private func configureRuntimeMode() {
@@ -1619,11 +1872,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         provider == "openai" ? "OpenAI" : "Gemini"
     }
 
+    private struct CloudAiModelStatus {
+        let provider: String
+        let configured: Bool
+        let displayName: String
+        let configuredProviders: [String]
+
+        var availableDescription: String {
+            configuredProviders.isEmpty
+                ? ""
+                : configuredProviders.map { $0 == "openai" ? "OpenAI" : "Gemini" }.joined(separator: " + ")
+        }
+    }
+
     private func refreshChecklistButtons(conversationReady: Bool? = nil) {
         let parentPinReady = UserDefaults.standard.bool(forKey: "PlushBuddyHubParentPinConfigured")
-        let cloudReady = conversationReady == true || UserDefaults.standard.bool(forKey: "PlushBuddyHubCloudLlmConfigured")
+        let status = try? cloudAiModelStatus()
+        if let status {
+            UserDefaults.standard.set(status.provider, forKey: "PlushBuddyCloudLlmProvider")
+            UserDefaults.standard.set(status.configured, forKey: "PlushBuddyHubCloudLlmConfigured")
+        }
+        let cloudReady = conversationReady == true || status?.configured == true || UserDefaults.standard.bool(forKey: "PlushBuddyHubCloudLlmConfigured")
+        let providerName = status?.displayName ?? cloudLlmProviderDisplayName(selectedCloudLlmProvider())
+        let available = status?.availableDescription ?? ""
+        let cloudTitle: String
+        if cloudReady {
+            cloudTitle = available.isEmpty || available == providerName
+                ? "Cloud AI model: \(providerName) active"
+                : "Cloud AI model: \(providerName) active • \(available) available"
+        } else {
+            cloudTitle = "Configure Cloud AI model"
+        }
         setChecklistButton(parentSetupButton, title: parentPinReady ? "Parent PIN done" : "Set parent PIN", complete: parentPinReady)
-        setChecklistButton(configureCloudLlmButton, title: cloudReady ? "Cloud LLM key done" : "Configure Cloud LLM key", complete: cloudReady)
+        setChecklistButton(configureCloudLlmButton, title: cloudTitle, complete: cloudReady)
     }
 
     private func setChecklistButton(_ button: NSButton?, title: String, complete: Bool) {
@@ -1699,6 +1980,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
+    private func updateParentPinInHub(currentPin: String, newPin: String) throws {
+        guard newPin.count >= 4 else {
+            throw NSError(
+                domain: "PlushBuddyHub",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "New parent PIN must be at least 4 characters."]
+            )
+        }
+        let statusCode = try postJsonToHub(path: "/api/v1/parent-pin/update", body: [
+            "current_pin": currentPin,
+            "new_pin": newPin,
+        ])
+        guard (200..<300).contains(statusCode) else {
+            let message: String
+            switch statusCode {
+            case 401:
+                message = "The current parent PIN was incorrect."
+            case 400:
+                message = "The new PIN was rejected. Use at least 4 characters."
+            case 428:
+                message = "No parent PIN is configured yet."
+            default:
+                message = "Hub returned HTTP \(statusCode)."
+            }
+            throw NSError(domain: "PlushBuddyHub", code: statusCode, userInfo: [NSLocalizedDescriptionKey: message])
+        }
+    }
+
     private func saveCloudLlmKeyToHub(provider: String, key: String, pin: String) throws {
         guard key.utf8.count >= 16 else {
             throw NSError(
@@ -1733,6 +2042,77 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
+    private func selectCloudAiProviderInHub(provider: String, pin: String) throws {
+        let statusCode = try postJsonToHub(path: "/api/v1/provider/select", body: [
+            "pin": pin,
+            "provider": provider,
+        ])
+        guard (200..<300).contains(statusCode) else {
+            let message: String
+            switch statusCode {
+            case 401:
+                message = "Parent PIN was incorrect."
+            case 400:
+                message = "The selected provider was rejected."
+            case 428:
+                message = "\(cloudLlmProviderDisplayName(provider)) does not have a saved key yet."
+            default:
+                message = "Hub returned HTTP \(statusCode)."
+            }
+            throw NSError(domain: "PlushBuddyHub", code: statusCode, userInfo: [NSLocalizedDescriptionKey: message])
+        }
+    }
+
+    private func cloudAiModelStatus() throws -> CloudAiModelStatus {
+        let object = try getJsonFromHub(path: "/api/v1/provider/status")
+        let provider = cloudLlmProviderValue(object["provider"] as? String)
+        let configured = object["configured"] as? Bool ?? false
+        let displayName = object["display_name"] as? String ?? cloudLlmProviderDisplayName(provider)
+        let configuredProviders = (object["configured_providers"] as? [Any] ?? [])
+            .compactMap { $0 as? String }
+            .map(cloudLlmProviderValue)
+        return CloudAiModelStatus(
+            provider: provider,
+            configured: configured,
+            displayName: displayName,
+            configuredProviders: configuredProviders
+        )
+    }
+
+    private func pairedDevices(pin: String) throws -> [PairedDevice] {
+        let rows = try postJsonToHubForArray(path: "/api/v1/paired-clients", body: ["pin": pin])
+        return rows.compactMap { row in
+            guard let clientId = row["client_id"] as? String else { return nil }
+            return PairedDevice(
+                clientId: clientId,
+                platform: row["platform"] as? String ?? "device",
+                label: row["label"] as? String,
+                lastSeenAt: row["last_seen_at"] as? Int ?? 0,
+                lastSeenIp: row["last_seen_ip"] as? String,
+                revokedAt: row["revoked_at"] as? Int
+            )
+        }
+    }
+
+    private func revokePairedDevice(pin: String, clientId: String) throws {
+        let statusCode = try postJsonToHub(path: "/api/v1/paired-clients/revoke", body: [
+            "pin": pin,
+            "client_id": clientId,
+        ])
+        guard (200..<300).contains(statusCode) else {
+            let message: String
+            switch statusCode {
+            case 401:
+                message = "Parent PIN was incorrect."
+            case 400:
+                message = "The selected device could not be removed."
+            default:
+                message = "Hub returned HTTP \(statusCode)."
+            }
+            throw NSError(domain: "PlushBuddyHub", code: statusCode, userInfo: [NSLocalizedDescriptionKey: message])
+        }
+    }
+
     private func postJsonToHub(path: String, body: [String: Any]) throws -> Int {
         let cookie = try stationSessionCookie()
         let endpoint = try stationApiUrl(path: path)
@@ -1744,6 +2124,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         request.setValue(try stationOrigin(), forHTTPHeaderField: "Origin")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         return blockingHttpStatus(request).statusCode
+    }
+
+    private func getJsonFromHub(path: String) throws -> [String: Any] {
+        let cookie = try stationSessionCookie()
+        let endpoint = try stationApiUrl(path: path)
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 20
+        request.setValue(cookie, forHTTPHeaderField: "Cookie")
+        request.setValue(try stationOrigin(), forHTTPHeaderField: "Origin")
+        let result = blockingHttpData(request)
+        guard (200..<300).contains(result.statusCode) else {
+            throw NSError(
+                domain: "PlushBuddyHub",
+                code: result.statusCode,
+                userInfo: [NSLocalizedDescriptionKey: "Hub returned HTTP \(result.statusCode)."]
+            )
+        }
+        guard let object = try JSONSerialization.jsonObject(with: result.data) as? [String: Any] else {
+            throw NSError(
+                domain: "PlushBuddyHub",
+                code: 0,
+                userInfo: [NSLocalizedDescriptionKey: "Hub returned an invalid JSON response."]
+            )
+        }
+        return object
+    }
+
+    private func postJsonToHubForArray(path: String, body: [String: Any]) throws -> [[String: Any]] {
+        let cookie = try stationSessionCookie()
+        let endpoint = try stationApiUrl(path: path)
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 20
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(cookie, forHTTPHeaderField: "Cookie")
+        request.setValue(try stationOrigin(), forHTTPHeaderField: "Origin")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let result = blockingHttpData(request)
+        guard (200..<300).contains(result.statusCode) else {
+            throw NSError(
+                domain: "PlushBuddyHub",
+                code: result.statusCode,
+                userInfo: [NSLocalizedDescriptionKey: "Hub returned HTTP \(result.statusCode)."]
+            )
+        }
+        return (try JSONSerialization.jsonObject(with: result.data) as? [[String: Any]]) ?? []
     }
 
     private func stationApiUrl(path: String) throws -> URL {
@@ -1839,6 +2266,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }.resume()
         _ = semaphore.wait(timeout: .now() + 30)
         return (statusCode, headers)
+    }
+
+    private func blockingHttpData(_ request: URLRequest) -> (statusCode: Int, headers: [AnyHashable: Any], data: Data) {
+        let semaphore = DispatchSemaphore(value: 0)
+        var statusCode = 0
+        var headers: [AnyHashable: Any] = [:]
+        var responseData = Data()
+        URLSession.shared.dataTask(with: request) { data, response, _ in
+            if let response = response as? HTTPURLResponse {
+                statusCode = response.statusCode
+                headers = response.allHeaderFields
+            }
+            responseData = data ?? Data()
+            semaphore.signal()
+        }.resume()
+        _ = semaphore.wait(timeout: .now() + 30)
+        return (statusCode, headers, responseData)
     }
 
     private func showInfoAlert(title: String, message: String) {
@@ -2218,6 +2662,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.quitButton.isHidden = true
                 self.openBrowserButton.isHidden = true
                 self.pairAndroidButton.isHidden = true
+                self.pairedDevicesButton.isHidden = true
                 self.openInAppButton.isHidden = true
                 self.runtimeModeButton.isHidden = true
                 self.themeModeButton.isHidden = true
@@ -2235,6 +2680,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.quitButton.isHidden = true
                 self.openBrowserButton.isHidden = true
                 self.pairAndroidButton.isHidden = true
+                self.pairedDevicesButton.isHidden = true
                 self.openInAppButton.isHidden = true
                 self.runtimeModeButton.isHidden = true
                 self.themeModeButton.isHidden = true
@@ -2252,6 +2698,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.quitButton.isHidden = true
                 self.openBrowserButton.isHidden = true
                 self.pairAndroidButton.isHidden = true
+                self.pairedDevicesButton.isHidden = true
                 self.openInAppButton.isHidden = true
                 self.runtimeModeButton.isHidden = true
                 self.themeModeButton.isHidden = true
@@ -2267,13 +2714,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.titleLabel.stringValue = "PlushBuddy Hub is ready"
                 self.detailLabel.stringValue = conversationReady
                     ? "All required local services are healthy. Set parent controls, connect a phone, or open a local client."
-                    : "Voice, storage, and pairing are ready. Set or verify the parent PIN, then configure a Cloud LLM key before real conversations."
+                    : "Voice, storage, and pairing are ready. Set or verify the parent PIN, then configure a Cloud AI model before real conversations."
                 self.splashScrollView.isHidden = false
                 self.webView.isHidden = true
                 self.retryButton.isHidden = false
                 self.quitButton.isHidden = false
                 self.openBrowserButton.isHidden = false
                 self.pairAndroidButton.isHidden = false
+                self.pairedDevicesButton.isHidden = false
                 self.openInAppButton.isHidden = false
                 self.runtimeModeButton.isHidden = false
                 self.themeModeButton.isHidden = false
@@ -2293,6 +2741,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.quitButton.isHidden = true
                 self.openBrowserButton.isHidden = true
                 self.pairAndroidButton.isHidden = true
+                self.pairedDevicesButton.isHidden = true
                 self.openInAppButton.isHidden = true
                 self.runtimeModeButton.isHidden = true
                 self.themeModeButton.isHidden = true
@@ -2312,6 +2761,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.quitButton.isHidden = false
                 self.openBrowserButton.isHidden = true
                 self.pairAndroidButton.isHidden = true
+                self.pairedDevicesButton.isHidden = true
                 self.openInAppButton.isHidden = true
                 self.runtimeModeButton.isHidden = false
                 self.themeModeButton.isHidden = false

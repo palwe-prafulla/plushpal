@@ -116,6 +116,7 @@ pub trait ParentProfileStore: fmt::Debug + Send + Sync {
             provider: "hub".to_owned(),
             configured: false,
             display_name: "PlushBuddy Hub".to_owned(),
+            configured_providers: Vec::new(),
         })
     }
     fn save_provider_api_key(&self, _provider: &str, _api_key: &str) -> Result<(), HostError> {
@@ -123,6 +124,12 @@ pub trait ParentProfileStore: fmt::Debug + Send + Sync {
     }
     fn load_provider_api_key(&self, _provider: &str) -> Result<Option<String>, HostError> {
         Ok(None)
+    }
+    fn select_provider(&self, _provider: &str) -> Result<(), HostError> {
+        Err(HostError::PersistenceUnavailable)
+    }
+    fn configured_provider_names(&self) -> Result<Vec<String>, HostError> {
+        Ok(Vec::new())
     }
     fn record_paired_client(&self, _client: &PairedClientConfiguration) -> Result<(), HostError> {
         Ok(())
@@ -237,6 +244,7 @@ pub struct ReasoningProviderConfiguration {
     pub provider: String,
     pub configured: bool,
     pub display_name: String,
+    pub configured_providers: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -552,6 +560,7 @@ pub fn build_router(state: HostState) -> Router {
         .route("/api/v1/status", get(status))
         .route("/api/v1/diagnostics", get(diagnostics))
         .route("/api/v1/parent-pin/configure", post(configure_parent_pin))
+        .route("/api/v1/parent-pin/update", post(update_parent_pin))
         .route("/api/v1/parent-pin/authorize", post(authorize_parent_pin))
         .route("/api/v1/local-data/delete", post(delete_local_data))
         .route("/api/v1/backup/export", post(export_backup))
@@ -564,6 +573,7 @@ pub fn build_router(state: HostState) -> Router {
         .route("/api/v1/kids/delete", post(delete_kid))
         .route("/api/v1/provider/status", get(reasoning_provider_status))
         .route("/api/v1/provider/api-key", post(save_provider_api_key))
+        .route("/api/v1/provider/select", post(select_provider))
         .route("/api/v1/paired-clients", post(list_paired_clients))
         .route("/api/v1/paired-clients/revoke", post(revoke_paired_client))
         .route("/api/v1/history/list", post(list_history))
@@ -647,6 +657,13 @@ struct ParentPinPayload {
     kid_id: Option<String>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ParentPinUpdatePayload {
+    current_pin: String,
+    new_pin: String,
+}
+
 async fn configure_parent_pin(
     State(state): State<HostState>,
     headers: HeaderMap,
@@ -724,6 +741,53 @@ async fn configure_parent_pin(
         }
     }
     update_legacy_pin_state_if_local(&state, &headers, Some(hash));
+    StatusCode::NO_CONTENT.into_response()
+}
+
+async fn update_parent_pin(
+    State(state): State<HostState>,
+    headers: HeaderMap,
+    Json(payload): Json<ParentPinUpdatePayload>,
+) -> Response {
+    if !is_authenticated(&state, &headers) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if payload.new_pin.len() < 4
+        || payload.new_pin.len() > 64
+        || payload.new_pin.chars().any(char::is_control)
+    {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    if let Err(status) = authorize_pin_text_for_headers(&state, &headers, &payload.current_pin) {
+        return status.into_response();
+    }
+    let Ok(random) = state.token_source.generate() else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
+    let Ok(salt) = <[u8; 16]>::try_from(random.get(..16).unwrap_or_default()) else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
+    let Ok(new_hash) = ParentPinHash::derive(&payload.new_pin, salt) else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+
+    let store = match store_for_headers(&state, &headers) {
+        Ok(store) => store,
+        Err(status) => return status.into_response(),
+    };
+    if let Some(store) = &store {
+        let Some(mut profile) = (match store.load() {
+            Ok(profile) => profile,
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        }) else {
+            return StatusCode::PRECONDITION_REQUIRED.into_response();
+        };
+        profile.pin_hash = new_hash.clone();
+        if store.save(&profile).is_err() {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    }
+    update_legacy_pin_state_if_local(&state, &headers, Some(new_hash));
     StatusCode::NO_CONTENT.into_response()
 }
 
@@ -1186,6 +1250,13 @@ struct ProviderApiKeyPayload {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct ProviderSelectPayload {
+    pin: String,
+    provider: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PairedClientListPayload {
     pin: String,
 }
@@ -1319,6 +1390,40 @@ async fn save_provider_api_key(
             StatusCode::NO_CONTENT.into_response()
         }
         Err(HostError::InvalidPersistedProfile) => StatusCode::BAD_REQUEST.into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+async fn select_provider(
+    State(state): State<HostState>,
+    headers: HeaderMap,
+    Json(payload): Json<ProviderSelectPayload>,
+) -> Response {
+    if !is_authenticated(&state, &headers) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if let Err(status) = authorize_pin_text_for_headers(&state, &headers, &payload.pin) {
+        return status.into_response();
+    }
+    let Some(store) = (match store_for_headers(&state, &headers) {
+        Ok(store) => store,
+        Err(status) => return status.into_response(),
+    }) else {
+        return StatusCode::NOT_IMPLEMENTED.into_response();
+    };
+    let provider = payload.provider.trim().to_ascii_lowercase();
+    match store.select_provider(&provider) {
+        Ok(()) => match store.load_provider_api_key(&provider) {
+            Ok(Some(api_key)) => {
+                let _ = activate_provider_engine(&state, &provider, &api_key);
+                StatusCode::NO_CONTENT.into_response()
+            }
+            Ok(None) => StatusCode::PRECONDITION_REQUIRED.into_response(),
+            Err(HostError::InvalidPersistedProfile) => StatusCode::BAD_REQUEST.into_response(),
+            Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        },
+        Err(HostError::InvalidPersistedProfile) => StatusCode::BAD_REQUEST.into_response(),
+        Err(HostError::PersistenceUnavailable) => StatusCode::PRECONDITION_REQUIRED.into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
@@ -3921,10 +4026,22 @@ pub mod native_runtime {
                 _ => "Cloud LLM",
             }
             .to_owned();
+            let configured_providers = ["gemini", "openai"]
+                .into_iter()
+                .filter_map(|candidate| {
+                    database
+                        .get_setting(&provider_api_key_setting(candidate))
+                        .ok()
+                        .flatten()
+                        .filter(|value| !value.trim().is_empty())
+                        .map(|_| candidate.to_owned())
+                })
+                .collect();
             Ok(ReasoningProviderConfiguration {
                 provider,
                 configured,
                 display_name,
+                configured_providers,
             })
         }
 
@@ -3957,6 +4074,45 @@ pub mod native_runtime {
                 .map_err(|_| HostError::PersistenceUnavailable)?
                 .get_setting(&provider_api_key_setting(&provider))
                 .map_err(|_| HostError::PersistenceUnavailable)
+        }
+
+        fn select_provider(&self, provider: &str) -> Result<(), HostError> {
+            let provider = provider.trim().to_ascii_lowercase();
+            if !matches!(provider.as_str(), "gemini" | "openai") {
+                return Err(HostError::InvalidPersistedProfile);
+            }
+            let mut database = self
+                .database
+                .lock()
+                .map_err(|_| HostError::PersistenceUnavailable)?;
+            let has_key = database
+                .get_setting(&provider_api_key_setting(&provider))
+                .map_err(|_| HostError::PersistenceUnavailable)?
+                .is_some_and(|value| !value.trim().is_empty());
+            if !has_key {
+                return Err(HostError::PersistenceUnavailable);
+            }
+            database
+                .put_settings(&[(REASONING_PROVIDER_SETTING, &provider)])
+                .map_err(|_| HostError::PersistenceUnavailable)
+        }
+
+        fn configured_provider_names(&self) -> Result<Vec<String>, HostError> {
+            let database = self
+                .database
+                .lock()
+                .map_err(|_| HostError::PersistenceUnavailable)?;
+            Ok(["gemini", "openai"]
+                .into_iter()
+                .filter_map(|provider| {
+                    database
+                        .get_setting(&provider_api_key_setting(provider))
+                        .ok()
+                        .flatten()
+                        .filter(|value| !value.trim().is_empty())
+                        .map(|_| provider.to_owned())
+                })
+                .collect())
         }
 
         fn record_paired_client(
@@ -5875,6 +6031,8 @@ mod tests {
         character_voices: Mutex<HashMap<String, (Vec<u8>, VoiceSampleFacts)>>,
         character_voice_approvals: Mutex<HashSet<String>>,
         paired_clients: Mutex<HashMap<String, PairedClientConfiguration>>,
+        provider_keys: Mutex<HashMap<String, String>>,
+        active_provider: Mutex<String>,
         scoped_children: Mutex<HashMap<String, Arc<MemoryProfileStore>>>,
         voice_approved: AtomicBool,
         deleted: AtomicBool,
@@ -5989,6 +6147,95 @@ mod tests {
                 .lock()
                 .map_err(|_| HostError::PersistenceUnavailable)?
                 .remove(kid_id);
+            Ok(())
+        }
+
+        fn reasoning_provider_status(&self) -> Result<ReasoningProviderConfiguration, HostError> {
+            let provider = self
+                .active_provider
+                .lock()
+                .map_err(|_| HostError::PersistenceUnavailable)?
+                .clone();
+            let provider = if provider.trim().is_empty() {
+                "gemini".to_owned()
+            } else {
+                provider
+            };
+            let keys = self
+                .provider_keys
+                .lock()
+                .map_err(|_| HostError::PersistenceUnavailable)?;
+            let configured_providers = ["gemini", "openai"]
+                .into_iter()
+                .filter(|provider| {
+                    keys.get(*provider)
+                        .is_some_and(|key| !key.trim().is_empty())
+                })
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            let display_name = match provider.as_str() {
+                "openai" => "OpenAI",
+                "gemini" => "Gemini",
+                _ => "Cloud LLM",
+            }
+            .to_owned();
+            let configured = keys
+                .get(&provider)
+                .is_some_and(|key| !key.trim().is_empty());
+            Ok(ReasoningProviderConfiguration {
+                provider,
+                configured,
+                display_name,
+                configured_providers,
+            })
+        }
+
+        fn save_provider_api_key(&self, provider: &str, api_key: &str) -> Result<(), HostError> {
+            let provider = provider.trim().to_ascii_lowercase();
+            if !matches!(provider.as_str(), "gemini" | "openai")
+                || api_key.trim().is_empty()
+                || api_key.chars().any(char::is_control)
+            {
+                return Err(HostError::InvalidPersistedProfile);
+            }
+            self.provider_keys
+                .lock()
+                .map_err(|_| HostError::PersistenceUnavailable)?
+                .insert(provider.clone(), api_key.to_owned());
+            *self
+                .active_provider
+                .lock()
+                .map_err(|_| HostError::PersistenceUnavailable)? = provider;
+            Ok(())
+        }
+
+        fn load_provider_api_key(&self, provider: &str) -> Result<Option<String>, HostError> {
+            Ok(self
+                .provider_keys
+                .lock()
+                .map_err(|_| HostError::PersistenceUnavailable)?
+                .get(&provider.trim().to_ascii_lowercase())
+                .cloned())
+        }
+
+        fn select_provider(&self, provider: &str) -> Result<(), HostError> {
+            let provider = provider.trim().to_ascii_lowercase();
+            if !matches!(provider.as_str(), "gemini" | "openai") {
+                return Err(HostError::InvalidPersistedProfile);
+            }
+            let has_key = self
+                .provider_keys
+                .lock()
+                .map_err(|_| HostError::PersistenceUnavailable)?
+                .get(&provider)
+                .is_some_and(|key| !key.trim().is_empty());
+            if !has_key {
+                return Err(HostError::PersistenceUnavailable);
+            }
+            *self
+                .active_provider
+                .lock()
+                .map_err(|_| HostError::PersistenceUnavailable)? = provider;
             Ok(())
         }
 
@@ -7082,6 +7329,99 @@ mod tests {
                 .status(),
             StatusCode::NO_CONTENT
         );
+    }
+
+    #[tokio::test]
+    async fn parent_pin_update_requires_current_pin_and_uses_new_pin() {
+        let app = router();
+        let cookie = authenticated_cookie(&app).await;
+        let request = |path: &'static str, body: serde_json::Value| {
+            authenticated_json_request(path, &cookie, body.to_string())
+        };
+        assert_eq!(
+            app.clone()
+                .oneshot(request(
+                    "/api/v1/parent-pin/configure",
+                    serde_json::json!({"pin":"4826"})
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(
+            app.clone()
+                .oneshot(request(
+                    "/api/v1/parent-pin/update",
+                    serde_json::json!({"current_pin":"1111","new_pin":"7777"})
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            app.clone()
+                .oneshot(request(
+                    "/api/v1/parent-pin/update",
+                    serde_json::json!({"current_pin":"4826","new_pin":"7777"})
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(
+            app.clone()
+                .oneshot(request(
+                    "/api/v1/parent-pin/authorize",
+                    serde_json::json!({"pin":"4826"})
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            app.oneshot(request(
+                "/api/v1/parent-pin/authorize",
+                serde_json::json!({"pin":"7777"})
+            ))
+            .await
+            .unwrap()
+            .status(),
+            StatusCode::NO_CONTENT
+        );
+    }
+
+    #[test]
+    fn cloud_ai_provider_store_tracks_saved_keys_and_active_provider() {
+        let store = MemoryProfileStore::default();
+        store
+            .save_provider_api_key("gemini", "super-secret-gemini-key")
+            .expect("gemini key saves");
+        store
+            .save_provider_api_key("openai", "super-secret-openai-key")
+            .expect("openai key saves and becomes active");
+        let status = store.reasoning_provider_status().unwrap();
+        assert_eq!(status.provider, "openai");
+        assert!(status.configured);
+        assert_eq!(
+            status.configured_providers,
+            vec!["gemini".to_owned(), "openai".to_owned()]
+        );
+
+        store
+            .select_provider("gemini")
+            .expect("saved provider can become active");
+        let selected = store.reasoning_provider_status().unwrap();
+        assert_eq!(selected.provider, "gemini");
+        assert!(selected.configured);
+        assert_eq!(
+            selected.configured_providers,
+            vec!["gemini".to_owned(), "openai".to_owned()]
+        );
+        assert!(store.select_provider("missing").is_err());
     }
 
     #[tokio::test]
