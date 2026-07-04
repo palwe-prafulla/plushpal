@@ -1234,7 +1234,7 @@ void main() {
     expect(backend.configuredRetentionDays, 7);
   });
 
-  testWidgets('parent can change app theme from settings', (tester) async {
+  testWidgets('parent can change app theme from home screens', (tester) async {
     final backend = FakeBackend(modelReady: true)
       ..voiceApproved = true
       ..voiceRuntimeReady = true
@@ -1243,10 +1243,19 @@ void main() {
       PlushPalApp(backend: backend, platform: FakePlatform()),
     );
     await tester.pumpAndSettle();
+
+    expect(find.byTooltip('Theme'), findsOneWidget);
+    await tester.tap(find.byTooltip('Theme'));
+    await tester.pumpAndSettle();
+    expect(find.text('System'), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
     await completeBasicOnboarding(tester);
 
-    await openSettings(tester);
-    await tapVisible(tester, 'Theme');
+    expect(find.byTooltip('Theme'), findsOneWidget);
+    await tester.tap(find.byTooltip('Theme'));
+    await tester.pumpAndSettle();
     expect(find.text('System'), findsOneWidget);
     expect(find.text('Light'), findsOneWidget);
     expect(find.text('Dark'), findsOneWidget);
@@ -1256,6 +1265,7 @@ void main() {
     await tester.pageBack();
     await tester.pumpAndSettle();
 
-    expect(find.text('Dark colors'), findsOneWidget);
+    expect(find.byTooltip('Theme'), findsOneWidget);
+    expect(find.byTooltip('Parent Settings'), findsOneWidget);
   });
 }

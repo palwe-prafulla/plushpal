@@ -2301,6 +2301,8 @@ class _PlushPalRootState extends State<PlushPalRoot>
         pairWithStation: pairWithStation,
         clearStationPairing: clearStationPairing,
         configureGeminiKey: configureGeminiKey,
+        themePreference: widget.themePreference,
+        onThemePreferenceChanged: widget.onThemePreferenceChanged,
       ),
       AppStep.parentHome => ParentHomeScreen(
         state: state,
@@ -2393,6 +2395,8 @@ class OnboardingScreen extends StatelessWidget {
     required this.pairWithStation,
     required this.clearStationPairing,
     required this.configureGeminiKey,
+    required this.themePreference,
+    required this.onThemePreferenceChanged,
     super.key,
   });
 
@@ -2421,12 +2425,34 @@ class OnboardingScreen extends StatelessWidget {
   final Future<void> Function() pairWithStation;
   final Future<void> Function() clearStationPairing;
   final Future<void> Function() configureGeminiKey;
+  final AppThemePreference themePreference;
+  final ValueChanged<AppThemePreference> onThemePreferenceChanged;
+
+  void _openThemeSettings(BuildContext context) {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => _ThemeSettingsScreen(
+          themePreference: themePreference,
+          onThemePreferenceChanged: onThemePreferenceChanged,
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     if (!showSettings) {
       return Scaffold(
-        appBar: AppBar(title: const Text(appDisplayName)),
+        appBar: AppBar(
+          title: const Text(appDisplayName),
+          actions: [
+            IconButton(
+              tooltip: 'Theme',
+              onPressed: () => _openThemeSettings(context),
+              icon: Icon(themePreference.icon),
+            ),
+          ],
+        ),
         body: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 620),
@@ -2525,6 +2551,13 @@ class OnboardingScreen extends StatelessWidget {
           onPressed: closeSettings,
           icon: const Icon(Icons.arrow_back),
         ),
+        actions: [
+          IconButton(
+            tooltip: 'Theme',
+            onPressed: () => _openThemeSettings(context),
+            icon: Icon(themePreference.icon),
+          ),
+        ],
       ),
       body: Center(
         child: ConstrainedBox(
@@ -3458,24 +3491,6 @@ class SettingsMenuScreen extends StatelessWidget {
                     removeVoice: removeVoice,
                     deleteCurrentCharacter: deleteCurrentCharacter,
                     reviewSavedHistory: reviewSavedHistory,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          _SettingsGroup(
-            title: 'Look & feel',
-            children: [
-              _SettingsTile(
-                icon: themePreference.icon,
-                title: 'Theme',
-                subtitle: '${themePreference.label} colors',
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => _push(
-                  context,
-                  _ThemeSettingsScreen(
-                    themePreference: themePreference,
-                    onThemePreferenceChanged: onThemePreferenceChanged,
                   ),
                 ),
               ),
