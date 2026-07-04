@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:plushpal_ui/src/app.dart';
 import 'package:plushpal_ui/src/backend/backend_client.dart';
 import 'package:plushpal_ui/src/platform/platform_bridge.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 const _fixtureWav = <int>[
   82,
@@ -675,6 +676,10 @@ class FakePlatform implements PlatformBridge {
 }
 
 void main() {
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+  });
+
   testWidgets('parent completes local onboarding and enters child mode', (
     tester,
   ) async {
@@ -1195,5 +1200,30 @@ void main() {
     expect(backend.configuredTraits, containsAll(['cheerful', 'gentle']));
     expect(backend.configuredGuidance, 'Prefer nature examples.');
     expect(backend.configuredRetentionDays, 7);
+  });
+
+  testWidgets('parent can change app theme from settings', (tester) async {
+    final backend = FakeBackend(modelReady: true)
+      ..voiceApproved = true
+      ..voiceRuntimeReady = true
+      ..stationPaired = true;
+    await tester.pumpWidget(
+      PlushPalApp(backend: backend, platform: FakePlatform()),
+    );
+    await tester.pumpAndSettle();
+    await completeBasicOnboarding(tester);
+
+    await openSettings(tester);
+    await tapVisible(tester, 'Theme');
+    expect(find.text('System'), findsOneWidget);
+    expect(find.text('Light'), findsOneWidget);
+    expect(find.text('Dark'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(ListTile, 'Dark'));
+    await tester.pumpAndSettle();
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Dark colors'), findsOneWidget);
   });
 }

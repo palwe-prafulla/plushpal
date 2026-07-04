@@ -6,6 +6,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:plushpal_ui/src/backend/backend_client.dart';
 import 'package:plushpal_ui/src/domain/app_state.dart';
 import 'package:plushpal_ui/src/platform/platform_bridge.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 const approvedCharacterTraits = <String>[
   'cheerful',
@@ -20,6 +21,31 @@ const approvedCharacterTraits = <String>[
 enum ChildMessageAuthor { child, character, system }
 
 const appDisplayName = 'PlushBuddy';
+const _themePreferenceKey = 'plushbuddy.theme_mode';
+
+enum AppThemePreference {
+  system('system', 'System', Icons.brightness_auto),
+  light('light', 'Light', Icons.light_mode),
+  dark('dark', 'Dark', Icons.dark_mode);
+
+  const AppThemePreference(this.storageValue, this.label, this.icon);
+
+  final String storageValue;
+  final String label;
+  final IconData icon;
+
+  ThemeMode get themeMode => switch (this) {
+    AppThemePreference.system => ThemeMode.system,
+    AppThemePreference.light => ThemeMode.light,
+    AppThemePreference.dark => ThemeMode.dark,
+  };
+
+  static AppThemePreference fromStorage(String? value) =>
+      AppThemePreference.values.firstWhere(
+        (preference) => preference.storageValue == value,
+        orElse: () => AppThemePreference.system,
+      );
+}
 
 typedef CharacterVoiceAction = Future<bool> Function({String? characterAlias});
 
@@ -76,40 +102,90 @@ class ChildChatMessage {
   final String text;
 }
 
-class PlushPalApp extends StatelessWidget {
+class PlushPalApp extends StatefulWidget {
   const PlushPalApp({this.backend, this.platform, super.key});
 
   final BackendClient? backend;
   final PlatformBridge? platform;
 
   @override
+  State<PlushPalApp> createState() => _PlushPalAppState();
+}
+
+class _PlushPalAppState extends State<PlushPalApp> {
+  AppThemePreference themePreference = AppThemePreference.system;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadThemePreference());
+  }
+
+  Future<void> _loadThemePreference() async {
+    final preferences = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      themePreference = AppThemePreference.fromStorage(
+        preferences.getString(_themePreferenceKey),
+      );
+    });
+  }
+
+  Future<void> _setThemePreference(AppThemePreference next) async {
+    setState(() => themePreference = next);
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setString(_themePreferenceKey, next.storageValue);
+  }
+
+  @override
   Widget build(BuildContext context) => MaterialApp(
     title: appDisplayName,
     debugShowCheckedModeBanner: false,
-    theme: ThemeData(
-      fontFamily: 'Roboto',
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: const Color(0xff8b5cf6),
-        brightness: Brightness.light,
-      ),
-      scaffoldBackgroundColor: const Color(0xfffffbf2),
-      appBarTheme: const AppBarTheme(
-        centerTitle: false,
-        backgroundColor: Color(0xfffffbf2),
-      ),
-      cardTheme: CardThemeData(
-        color: Colors.white,
-        elevation: 0,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-      ),
-      useMaterial3: true,
-      textTheme: const TextTheme(
-        headlineMedium: TextStyle(fontWeight: FontWeight.w700),
-      ),
-    ),
+    theme: plushBuddyTheme(Brightness.light),
+    darkTheme: plushBuddyTheme(Brightness.dark),
+    themeMode: themePreference.themeMode,
     home: PlushPalRoot(
-      backend: backend ?? createBackendClient(),
-      platform: platform ?? const MethodChannelPlatformBridge(),
+      backend: widget.backend ?? createBackendClient(),
+      platform: widget.platform ?? const MethodChannelPlatformBridge(),
+      themePreference: themePreference,
+      onThemePreferenceChanged: _setThemePreference,
+    ),
+  );
+}
+
+ThemeData plushBuddyTheme(Brightness brightness) {
+  final isDark = brightness == Brightness.dark;
+  final colorScheme =
+      ColorScheme.fromSeed(
+        seedColor: const Color(0xff8b5cf6),
+        brightness: brightness,
+      ).copyWith(
+        primary: const Color(0xff8b5cf6),
+        secondary: const Color(0xffff8bd1),
+        tertiary: const Color(0xff38bdf8),
+        surface: isDark ? const Color(0xff20182b) : Colors.white,
+      );
+  final scaffoldBackground = isDark
+      ? const Color(0xff17111f)
+      : const Color(0xfffffbf2);
+  return ThemeData(
+    fontFamily: 'Roboto',
+    colorScheme: colorScheme,
+    scaffoldBackgroundColor: scaffoldBackground,
+    appBarTheme: AppBarTheme(
+      centerTitle: false,
+      backgroundColor: scaffoldBackground,
+      foregroundColor: colorScheme.onSurface,
+      elevation: 0,
+    ),
+    cardTheme: CardThemeData(
+      color: isDark ? const Color(0xff241a31) : Colors.white,
+      elevation: 0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+    ),
+    useMaterial3: true,
+    textTheme: const TextTheme(
+      headlineMedium: TextStyle(fontWeight: FontWeight.w700),
     ),
   );
 }
@@ -118,11 +194,15 @@ class PlushPalRoot extends StatefulWidget {
   const PlushPalRoot({
     required this.backend,
     required this.platform,
+    required this.themePreference,
+    required this.onThemePreferenceChanged,
     super.key,
   });
 
   final BackendClient backend;
   final PlatformBridge platform;
+  final AppThemePreference themePreference;
+  final ValueChanged<AppThemePreference> onThemePreferenceChanged;
 
   @override
   State<PlushPalRoot> createState() => _PlushPalRootState();
@@ -1451,6 +1531,8 @@ class _PlushPalRootState extends State<PlushPalRoot>
             exportEncryptedBackup: exportEncryptedBackup,
             importEncryptedBackup: importEncryptedBackup,
             deleteAllLocalData: deleteAllLocalData,
+            themePreference: widget.themePreference,
+            onThemePreferenceChanged: widget.onThemePreferenceChanged,
           ),
         ),
       );
@@ -2912,7 +2994,7 @@ class ParentHomeScreen extends StatelessWidget {
                 const SizedBox(height: 16),
               ],
               Card(
-                color: const Color(0xfffff0f7),
+                color: colorScheme.secondaryContainer.withValues(alpha: 0.45),
                 child: Padding(
                   padding: EdgeInsets.fromLTRB(
                     22,
@@ -3204,6 +3286,8 @@ class SettingsMenuScreen extends StatelessWidget {
     required this.exportEncryptedBackup,
     required this.importEncryptedBackup,
     required this.deleteAllLocalData,
+    required this.themePreference,
+    required this.onThemePreferenceChanged,
     super.key,
   });
 
@@ -3245,6 +3329,8 @@ class SettingsMenuScreen extends StatelessWidget {
   final Future<void> Function() exportEncryptedBackup;
   final Future<void> Function() importEncryptedBackup;
   final Future<void> Function() deleteAllLocalData;
+  final AppThemePreference themePreference;
+  final ValueChanged<AppThemePreference> onThemePreferenceChanged;
 
   void _push(BuildContext context, Widget screen) {
     Navigator.of(context).push<void>(MaterialPageRoute(builder: (_) => screen));
@@ -3348,6 +3434,24 @@ class SettingsMenuScreen extends StatelessWidget {
                     removeVoice: removeVoice,
                     deleteCurrentCharacter: deleteCurrentCharacter,
                     reviewSavedHistory: reviewSavedHistory,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          _SettingsGroup(
+            title: 'Look & feel',
+            children: [
+              _SettingsTile(
+                icon: themePreference.icon,
+                title: 'Theme',
+                subtitle: '${themePreference.label} colors',
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => _push(
+                  context,
+                  _ThemeSettingsScreen(
+                    themePreference: themePreference,
+                    onThemePreferenceChanged: onThemePreferenceChanged,
                   ),
                 ),
               ),
@@ -3522,6 +3626,49 @@ class _MacStationSettingsScreen extends StatelessWidget {
                   : null,
             ),
           ],
+        ),
+      ],
+    ),
+  );
+}
+
+class _ThemeSettingsScreen extends StatelessWidget {
+  const _ThemeSettingsScreen({
+    required this.themePreference,
+    required this.onThemePreferenceChanged,
+  });
+
+  final AppThemePreference themePreference;
+  final ValueChanged<AppThemePreference> onThemePreferenceChanged;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('Theme')),
+    body: ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        _SettingsGroup(
+          title: 'Choose colors',
+          children: AppThemePreference.values
+              .map(
+                (preference) => ListTile(
+                  leading: Icon(preference.icon),
+                  title: Text(preference.label),
+                  subtitle: Text(switch (preference) {
+                    AppThemePreference.system =>
+                      'Follow this device’s light or dark setting.',
+                    AppThemePreference.light =>
+                      'Warm cream background with bright PlushBuddy colors.',
+                    AppThemePreference.dark =>
+                      'Cozy dark background with the same playful colors.',
+                  }),
+                  trailing: preference == themePreference
+                      ? const Icon(Icons.check_circle, color: Colors.green)
+                      : null,
+                  onTap: () => onThemePreferenceChanged(preference),
+                ),
+              )
+              .toList(),
         ),
       ],
     ),
@@ -4718,20 +4865,20 @@ class _RuntimeModeBanner extends StatelessWidget {
             'Demo mode',
             'Synthetic voice and pretend responses only. No Gemini/OpenAI calls, no real voice cloning quality.',
             Icons.science,
-            const Color(0xfffff7cc),
+            colorScheme.tertiaryContainer,
           )
         : isLocalFirst
         ? (
             'Privacy local-first mode',
             'The Hub avoids cloud LLM calls and uses local models when installed. If local reasoning is not ready, configure Cloud LLM mode in Hub.',
             Icons.lock,
-            const Color(0xffe8f5e9),
+            colorScheme.secondaryContainer,
           )
         : (
             'Cloud LLM mode',
             'Gemini/OpenAI answers run through the Hub with redaction and child-safety guardrails. Voice, profiles, audio, and history stay local.',
             Icons.cloud_done,
-            const Color(0xffe3f2fd),
+            colorScheme.primaryContainer,
           );
     return Card(
       color: color,

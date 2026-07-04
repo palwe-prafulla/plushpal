@@ -38,6 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var pairAndroidButton: NSButton!
     private var openInAppButton: NSButton!
     private var runtimeModeButton: NSButton!
+    private var themeModeButton: NSButton!
     private var parentSetupButton: NSButton!
     private var configureCloudLlmButton: NSButton!
     private var copyDiagnosticsButton: NSButton!
@@ -60,6 +61,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var healthWaitGeneration = 0
     private let healthMaxAttempts = 900
     private let logQueue = DispatchQueue(label: "com.plushpal.app-shell.logs")
+    private var themedPanels: [NSView] = []
+    private var sectionTitleLabels: [NSTextField] = []
+    private var helperTextLabels: [NSTextField] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -142,6 +146,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
         splashView = NSView()
         splashView.translatesAutoresizingMaskIntoConstraints = false
+        splashView.wantsLayer = true
 
         titleLabel = NSTextField(labelWithString: "Starting PlushBuddy Hub")
         titleLabel.font = .systemFont(ofSize: 28, weight: .semibold)
@@ -161,12 +166,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         progress.startAnimation(nil)
         progress.translatesAutoresizingMaskIntoConstraints = false
 
-        storageStatusLabel = NSTextField(labelWithString: "○ App storage: preparing")
-        reasoningStatusLabel = NSTextField(labelWithString: "○ Reasoning engine: waiting")
-        voiceStatusLabel = NSTextField(labelWithString: "○ Voice engine: waiting")
-        sttStatusLabel = NSTextField(labelWithString: "○ Speech-to-text fallback: checking")
-        hostStatusLabel = NSTextField(labelWithString: "○ Local service: waiting")
-        browserStatusLabel = NSTextField(labelWithString: "○ Browser UI / Android pairing: waiting")
+        storageStatusLabel = NSTextField(labelWithString: "○ Secure storage: getting ready")
+        reasoningStatusLabel = NSTextField(labelWithString: "○ AI Brain: checking")
+        voiceStatusLabel = NSTextField(labelWithString: "○ Buddy voices: checking")
+        sttStatusLabel = NSTextField(labelWithString: "○ Listening helper: checking")
+        hostStatusLabel = NSTextField(labelWithString: "○ Hub: starting")
+        browserStatusLabel = NSTextField(labelWithString: "○ Apps: waiting")
         for label in [storageStatusLabel, reasoningStatusLabel, voiceStatusLabel, sttStatusLabel, hostStatusLabel, browserStatusLabel] {
             label?.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
             label?.textColor = .secondaryLabelColor
@@ -219,6 +224,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         runtimeModeButton.isHidden = true
         runtimeModeButton.translatesAutoresizingMaskIntoConstraints = false
 
+        themeModeButton = NSButton(title: "Theme: System", target: self, action: #selector(cycleThemeMode))
+        themeModeButton.bezelStyle = .rounded
+        themeModeButton.isHidden = true
+        themeModeButton.translatesAutoresizingMaskIntoConstraints = false
+
         parentSetupButton = NSButton(title: "1. Set or verify parent PIN", target: self, action: #selector(configureParentPin))
         parentSetupButton.bezelStyle = .rounded
         parentSetupButton.isHidden = true
@@ -250,6 +260,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             label.textColor = .labelColor
             label.alignment = .left
             label.translatesAutoresizingMaskIntoConstraints = false
+            self.sectionTitleLabels.append(label)
             return label
         }
 
@@ -262,6 +273,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             label.lineBreakMode = .byWordWrapping
             label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             label.translatesAutoresizingMaskIntoConstraints = false
+            self.helperTextLabels.append(label)
             return label
         }
 
@@ -276,14 +288,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             stack.wantsLayer = true
             stack.layer?.cornerRadius = 14
             stack.layer?.borderWidth = 1
-            stack.layer?.borderColor = NSColor.separatorColor.cgColor
-            stack.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.72).cgColor
+            self.themedPanels.append(stack)
             return stack
         }
 
         let statusPanel = verticalPanel([
-            sectionTitle("Hub status"),
-            helperText("Keep this Mac awake. The Hub stores data in its encrypted database, runs LuxTTS voice generation, and serves paired clients on your Wi‑Fi."),
+            sectionTitle("Today’s status"),
+            helperText("Keep this Mac awake while your phone or Mac client is using buddy voices."),
             serviceStatusStack,
         ])
 
@@ -297,6 +308,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             pairAndroidButton,
             openBrowserButton,
             openInAppButton,
+            sectionTitle("Look & feel"),
+            helperText("Use the same PlushBuddy colors as the phone app."),
+            themeModeButton,
         ])
 
         let mainPanel = NSStackView(views: [statusPanel, setupPanel])
@@ -373,6 +387,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             copyDiagnosticsButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 150),
             openLogsButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 120),
             resetVoiceRuntimeButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 160),
+            themeModeButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 210),
         ])
 
         window = NSWindow(
@@ -385,6 +400,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         window.minSize = NSSize(width: 900, height: 640)
         window.center()
         window.contentView = content
+        applyThemePreference()
         window.makeKeyAndOrderFront(nil)
     }
 
@@ -393,12 +409,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         update(.preparingVoiceRuntime)
         setupOutput.removeAll()
         updateServiceStatuses(
-            storage: "● App storage: ready in \(applicationSupportDirectory().path)",
-            reasoning: "○ Reasoning engine: verifying local model or Cloud LLM key",
-            voice: "○ Voice engine: verifying LuxTTS",
-            stt: "○ Speech-to-text fallback: checking",
-            host: "○ Local service: waiting",
-            browser: "○ Browser UI / Android pairing: waiting"
+            storage: "● Secure storage: ready",
+            reasoning: "○ AI Brain: checking",
+            voice: "○ Buddy voices: checking",
+            stt: "○ Listening helper: checking",
+            host: "○ Hub: starting",
+            browser: "○ Apps: waiting"
         )
         let voiceRuntime: VoiceRuntime?
         switch prepareVoiceRuntime() {
@@ -406,20 +422,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             voiceRuntime = runtime
             updateServiceStatuses(
                 storage: nil,
-                reasoning: "○ Reasoning engine: waiting for host health",
-                voice: runtime == nil ? "△ Voice engine: skipped for development" : "● Voice engine: \(runtime!.engine) ready",
+                reasoning: "○ AI Brain: waiting",
+                voice: runtime == nil ? "△ Buddy voices: demo mode" : "● Buddy voices: ready",
                 stt: nil,
-                host: "○ Local service: waiting",
-                browser: "○ Browser UI / Android pairing: waiting"
+                host: "○ Hub: starting",
+                browser: "○ Apps: waiting"
             )
         case .failure(let failure):
             updateServiceStatuses(
                 storage: nil,
-                reasoning: "○ Reasoning engine: waiting",
-                voice: "✕ Voice engine: setup failed",
+                reasoning: "○ AI Brain: waiting",
+                voice: "✕ Buddy voices: setup failed",
                 stt: nil,
-                host: "○ Local service: waiting",
-                browser: "○ Browser UI / Android pairing: waiting"
+                host: "○ Hub: waiting",
+                browser: "○ Apps: waiting"
             )
             update(.failed(failure.message))
             return
@@ -429,8 +445,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             storage: nil,
             reasoning: nil,
             voice: nil,
-            stt: sttRuntime == nil ? "△ Speech-to-text fallback: not bundled; native on-device STT required" : "● Speech-to-text fallback: local Whisper ready",
-            host: "○ Local service: waiting",
+            stt: sttRuntime == nil ? "△ Listening helper: phone will listen" : "● Listening helper: ready",
+            host: "○ Hub: starting",
             browser: nil
         )
         update(.startingHost)
@@ -830,11 +846,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             update(.startingHost)
             updateServiceStatuses(
                 storage: nil,
-                reasoning: "○ Reasoning engine: checking existing Hub",
-                voice: "○ Voice engine: checking existing Hub",
-                stt: "○ Speech-to-text fallback: checking existing Hub",
-                host: "○ Local service: resuming health checks",
-                browser: "○ Browser UI / Android pairing: waiting"
+                reasoning: "○ AI Brain: checking",
+                voice: "○ Buddy voices: checking",
+                stt: "○ Listening helper: checking",
+                host: "○ Hub: checking",
+                browser: "○ Apps: waiting"
             )
             waitForStationHealth(existingHostUrl)
             return
@@ -1100,6 +1116,90 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         editMenuItem.submenu = editMenu
         mainMenu.addItem(editMenuItem)
         NSApp.mainMenu = mainMenu
+    }
+
+    @objc private func cycleThemeMode() {
+        let next = switch selectedThemeMode() {
+        case "system": "light"
+        case "light": "dark"
+        default: "system"
+        }
+        UserDefaults.standard.set(next, forKey: "PlushBuddyHubThemeMode")
+        applyThemePreference()
+    }
+
+    private func selectedThemeMode() -> String {
+        if let stored = UserDefaults.standard.string(forKey: "PlushBuddyHubThemeMode"),
+           ["system", "light", "dark"].contains(stored) {
+            return stored
+        }
+        return "system"
+    }
+
+    private func themeDisplayName(_ mode: String) -> String {
+        switch mode {
+        case "light":
+            return "Light"
+        case "dark":
+            return "Dark"
+        default:
+            return "System"
+        }
+    }
+
+    private func applyThemePreference() {
+        let mode = selectedThemeMode()
+        switch mode {
+        case "light":
+            NSApp.appearance = NSAppearance(named: .aqua)
+        case "dark":
+            NSApp.appearance = NSAppearance(named: .darkAqua)
+        default:
+            NSApp.appearance = nil
+        }
+        window?.appearance = NSApp.appearance
+        themeModeButton?.title = "Theme: \(themeDisplayName(mode))"
+        applyThemeColors()
+    }
+
+    private func applyThemeColors() {
+        let appearance = window?.effectiveAppearance ?? NSApp.effectiveAppearance
+        let bestMatch = appearance.bestMatch(from: [.darkAqua, .aqua])
+        let isDark = bestMatch == .darkAqua
+        let background = isDark
+            ? NSColor(calibratedRed: 0.09, green: 0.07, blue: 0.12, alpha: 1.0)
+            : NSColor(calibratedRed: 1.00, green: 0.98, blue: 0.95, alpha: 1.0)
+        let panelBackground = isDark
+            ? NSColor(calibratedRed: 0.14, green: 0.10, blue: 0.19, alpha: 0.96)
+            : NSColor.white.withAlphaComponent(0.92)
+        let border = isDark
+            ? NSColor(calibratedRed: 0.55, green: 0.36, blue: 0.96, alpha: 0.32)
+            : NSColor(calibratedRed: 0.55, green: 0.36, blue: 0.96, alpha: 0.22)
+        let titleColor = isDark ? NSColor.white : NSColor(calibratedRed: 0.16, green: 0.12, blue: 0.22, alpha: 1.0)
+        let helperColor = isDark
+            ? NSColor(calibratedRed: 0.79, green: 0.74, blue: 0.86, alpha: 1.0)
+            : NSColor(calibratedRed: 0.39, green: 0.34, blue: 0.47, alpha: 1.0)
+        let accent = NSColor(calibratedRed: 0.55, green: 0.36, blue: 0.96, alpha: 1.0)
+
+        splashView?.layer?.backgroundColor = background.cgColor
+        titleLabel?.textColor = titleColor
+        detailLabel?.textColor = helperColor
+        for label in sectionTitleLabels {
+            label.textColor = titleColor
+        }
+        for label in helperTextLabels {
+            label.textColor = helperColor
+        }
+        for label in [storageStatusLabel, reasoningStatusLabel, voiceStatusLabel, sttStatusLabel, hostStatusLabel, browserStatusLabel] {
+            label?.textColor = helperColor
+        }
+        for panel in themedPanels {
+            panel.layer?.backgroundColor = panelBackground.cgColor
+            panel.layer?.borderColor = border.cgColor
+        }
+        for button in [parentSetupButton, configureCloudLlmButton, pairAndroidButton, openBrowserButton, openInAppButton, themeModeButton] {
+            button?.contentTintColor = accent
+        }
     }
 
     @objc private func configureParentPin() {
@@ -1497,8 +1597,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                             reasoning: nil,
                             voice: nil,
                             stt: nil,
-                            host: "○ Local service: health check pending",
-                            browser: "○ Browser UI / Android pairing: waiting for health"
+                            host: "○ Hub: waking up",
+                            browser: "○ Apps: waiting"
                         )
                     }
                     waitForStationHealth(url)
@@ -1541,7 +1641,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let generation = healthWaitGeneration
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
-            for attempt in 1...self.healthMaxAttempts {
+            for _ in 1...self.healthMaxAttempts {
                 guard generation == self.healthWaitGeneration else { return }
                 if let health = self.stationHealthSnapshot(healthUrl),
                    self.isStationCoreReady(health) {
@@ -1551,10 +1651,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                         self?.updateServiceStatuses(
                             storage: nil,
                             reasoning: self?.reasoningStatusLine(from: health),
-                            voice: "● Voice engine: ready",
+                            voice: "● Buddy voices: ready",
                             stt: self?.sttStatusLine(from: health),
-                            host: "● Local service: healthy",
-                            browser: "● Browser UI / Android pairing: ready"
+                            host: "● Hub: ready",
+                            browser: "● Apps: ready to connect"
                         )
                         self?.update(.stationReady(hostUrl, conversationReady: conversationReady))
                     }
@@ -1563,11 +1663,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 DispatchQueue.main.async { [weak self] in
                     self?.updateServiceStatuses(
                         storage: nil,
-                        reasoning: "○ Reasoning engine: checking key/model",
-                        voice: "○ Voice engine: loading LuxTTS on GPU",
-                        stt: "○ Speech-to-text fallback: loading Whisper",
-                        host: "○ Local service: warming up \(attempt)/\(self?.healthMaxAttempts ?? 900)",
-                        browser: "○ Browser UI / Android pairing: waiting"
+                        reasoning: "○ AI Brain: checking",
+                        voice: "○ Buddy voices: warming up",
+                        stt: "○ Listening helper: warming up",
+                        host: "○ Hub: waking up",
+                        browser: "○ Apps: waiting"
                     )
                 }
                 Thread.sleep(forTimeInterval: 1.0)
@@ -1575,11 +1675,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             DispatchQueue.main.async { [weak self] in
                 self?.updateServiceStatuses(
                     storage: nil,
-                    reasoning: "△ Reasoning engine: not ready yet",
-                    voice: "△ Voice engine: still loading or unavailable",
-                    stt: "△ Speech-to-text fallback: still loading or unavailable",
-                    host: "✕ Local service: health check timed out",
-                    browser: "○ Browser UI / Android pairing: waiting"
+                    reasoning: "△ AI Brain: needs setup",
+                    voice: "△ Buddy voices: still waking up",
+                    stt: "△ Listening helper: unavailable",
+                    host: "✕ Hub: needs attention",
+                    browser: "○ Apps: waiting"
                 )
                 self?.update(.failed("PlushBuddy Hub is still not fully healthy after 15 minutes. If logs show model loading, click Retry setup to resume health checks without restarting. If it is stuck, use Reset voice runtime."))
             }
@@ -1629,16 +1729,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     private func reasoningStatusLine(from health: [String: Any]) -> String {
         if isConversationEngineReady(health) {
-            return "● Reasoning engine: ready"
+            return "● AI Brain: ready"
         }
-        return "△ AI Brain: configure Gemini/OpenAI or install local model before conversation"
+        return "△ AI Brain: add Gemini/OpenAI key or local model"
     }
 
     private func sttStatusLine(from health: [String: Any]) -> String {
         if health["speech_to_text_ready"] as? Bool == true {
-            return "● Speech-to-text fallback: local Whisper ready"
+            return "● Listening helper: ready"
         }
-        return "△ Speech-to-text fallback: unavailable; native on-device STT required"
+        return "△ Listening helper: phone will listen"
     }
 
     private func hostDiagnosticTail() -> String {
@@ -1831,6 +1931,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.pairAndroidButton.isHidden = true
                 self.openInAppButton.isHidden = true
                 self.runtimeModeButton.isHidden = true
+                self.themeModeButton.isHidden = true
                 self.parentSetupButton.isHidden = true
                 self.configureCloudLlmButton.isHidden = true
                 self.copyDiagnosticsButton.isHidden = true
@@ -1846,6 +1947,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.pairAndroidButton.isHidden = true
                 self.openInAppButton.isHidden = true
                 self.runtimeModeButton.isHidden = true
+                self.themeModeButton.isHidden = true
                 self.parentSetupButton.isHidden = true
                 self.configureCloudLlmButton.isHidden = true
                 self.copyDiagnosticsButton.isHidden = true
@@ -1861,6 +1963,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.pairAndroidButton.isHidden = true
                 self.openInAppButton.isHidden = true
                 self.runtimeModeButton.isHidden = true
+                self.themeModeButton.isHidden = true
                 self.parentSetupButton.isHidden = true
                 self.configureCloudLlmButton.isHidden = true
                 self.copyDiagnosticsButton.isHidden = true
@@ -1880,6 +1983,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.pairAndroidButton.isHidden = false
                 self.openInAppButton.isHidden = false
                 self.runtimeModeButton.isHidden = false
+                self.themeModeButton.isHidden = false
                 self.parentSetupButton.isHidden = false
                 self.configureCloudLlmButton.isHidden = false
                 self.copyDiagnosticsButton.isHidden = false
@@ -1897,6 +2001,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.pairAndroidButton.isHidden = true
                 self.openInAppButton.isHidden = true
                 self.runtimeModeButton.isHidden = true
+                self.themeModeButton.isHidden = true
                 self.parentSetupButton.isHidden = true
                 self.configureCloudLlmButton.isHidden = true
                 self.copyDiagnosticsButton.isHidden = true
@@ -1914,6 +2019,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.pairAndroidButton.isHidden = true
                 self.openInAppButton.isHidden = true
                 self.runtimeModeButton.isHidden = false
+                self.themeModeButton.isHidden = false
                 self.parentSetupButton.isHidden = true
                 self.configureCloudLlmButton.isHidden = true
                 self.copyDiagnosticsButton.isHidden = false
