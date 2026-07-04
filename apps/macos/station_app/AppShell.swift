@@ -1436,6 +1436,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         for button in [parentSetupButton, configureCloudLlmButton, pairAndroidButton, openBrowserButton, openInAppButton, themeModeButton] {
             button?.contentTintColor = accent
         }
+        refreshChecklistButtons()
     }
 
     @objc private func configureParentPin() {
@@ -1632,8 +1633,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         button.imagePosition = .imageLeading
         if complete {
             button.image = NSImage(systemSymbolName: "checkmark.seal.fill", accessibilityDescription: nil)
-            button.contentTintColor = NSColor(calibratedRed: 0.08, green: 0.55, blue: 0.24, alpha: 1.0)
-            button.bezelColor = NSColor(calibratedRed: 0.86, green: 0.96, blue: 0.88, alpha: 1.0)
+            button.contentTintColor = .labelColor
+            button.bezelColor = nil
         } else {
             button.image = nil
             button.contentTintColor = NSColor(calibratedRed: 0.55, green: 0.36, blue: 0.96, alpha: 1.0)
