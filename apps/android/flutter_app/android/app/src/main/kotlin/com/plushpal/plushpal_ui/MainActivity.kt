@@ -1369,7 +1369,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, TextToS
         val cookie = call.argument<String>("cookie")?.trim().orEmpty()
         val clientId = call.argument<String>("clientId")?.trim().orEmpty().ifEmpty { stationClientId() }
         if (!saveStationPairingConfig(baseUrl, cookie, clientId)) {
-            result.error("invalid_pairing", "Invalid Mac Station pairing data", null)
+            result.error("invalid_pairing", "Invalid Hub pairing data", null)
             return
         }
         result.success(null)
@@ -1409,9 +1409,9 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, TextToS
             ?.takeIf { it.matches(Regex("^android-[a-f0-9-]{36}$")) }
             ?: stationClientId()
         if (saveStationPairingConfig(baseUrl, cookie, clientId)) {
-            Log.i(logTag, "Debug Mac Station pairing saved for $baseUrl")
+            Log.i(logTag, "Debug Hub pairing saved for $baseUrl")
         } else {
-            Log.w(logTag, "Debug Mac Station pairing rejected")
+            Log.w(logTag, "Debug Hub pairing rejected")
         }
     }
 

@@ -38,7 +38,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var pairAndroidButton: NSButton!
     private var openInAppButton: NSButton!
     private var runtimeModeButton: NSButton!
-    private var configureGeminiButton: NSButton!
+    private var parentSetupButton: NSButton!
+    private var configureCloudLlmButton: NSButton!
     private var copyDiagnosticsButton: NSButton!
     private var openLogsButton: NSButton!
     private var resetVoiceRuntimeButton: NSButton!
@@ -54,6 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var hostUrl: URL?
     private var parsedHostUrlText: String?
     private var lanPairingUrl: URL?
+    private var stationSessionCookieValue: String?
     private var isTerminating = false
     private var healthWaitGeneration = 0
     private let healthMaxAttempts = 900
@@ -141,12 +143,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         splashView = NSView()
         splashView.translatesAutoresizingMaskIntoConstraints = false
 
-        titleLabel = NSTextField(labelWithString: "Starting PlushPal")
+        titleLabel = NSTextField(labelWithString: "Starting PlushBuddy Hub")
         titleLabel.font = .systemFont(ofSize: 28, weight: .semibold)
         titleLabel.alignment = .center
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        detailLabel = NSTextField(labelWithString: "Preparing the local app on this Mac…")
+        detailLabel = NSTextField(labelWithString: "Preparing the local Hub on this Mac…")
         detailLabel.font = .systemFont(ofSize: 15, weight: .regular)
         detailLabel.textColor = .secondaryLabelColor
         detailLabel.alignment = .center
@@ -169,6 +171,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             label?.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
             label?.textColor = .secondaryLabelColor
             label?.alignment = .left
+            label?.lineBreakMode = .byTruncatingMiddle
+            label?.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             label?.translatesAutoresizingMaskIntoConstraints = false
         }
         serviceStatusStack = NSStackView(views: [
@@ -185,40 +189,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         serviceStatusStack.spacing = 8
         serviceStatusStack.translatesAutoresizingMaskIntoConstraints = false
 
-        retryButton = NSButton(title: "Retry setup", target: self, action: #selector(retryStartup))
+        retryButton = NSButton(title: "Retry health checks", target: self, action: #selector(retryStartup))
         retryButton.bezelStyle = .rounded
         retryButton.isHidden = true
         retryButton.translatesAutoresizingMaskIntoConstraints = false
 
-        quitButton = NSButton(title: "Quit", target: self, action: #selector(quitApp))
+        quitButton = NSButton(title: "Quit Hub", target: self, action: #selector(quitApp))
         quitButton.bezelStyle = .rounded
         quitButton.isHidden = true
         quitButton.translatesAutoresizingMaskIntoConstraints = false
 
-        openBrowserButton = NSButton(title: "Open PlushBuddy in browser", target: self, action: #selector(openPlushPalInBrowser))
+        openBrowserButton = NSButton(title: "Open browser client", target: self, action: #selector(openPlushPalInBrowser))
         openBrowserButton.bezelStyle = .rounded
         openBrowserButton.isHidden = true
         openBrowserButton.translatesAutoresizingMaskIntoConstraints = false
 
-        pairAndroidButton = NSButton(title: "Show Android pairing QR", target: self, action: #selector(showAndroidPairingLink))
+        pairAndroidButton = NSButton(title: "Pair phone with QR code", target: self, action: #selector(showAndroidPairingLink))
         pairAndroidButton.bezelStyle = .rounded
         pairAndroidButton.isHidden = true
         pairAndroidButton.translatesAutoresizingMaskIntoConstraints = false
 
-        openInAppButton = NSButton(title: "Open PlushBuddy Mac app", target: self, action: #selector(openPlushPalInApp))
+        openInAppButton = NSButton(title: "Open Mac client", target: self, action: #selector(openPlushPalInApp))
         openInAppButton.bezelStyle = .rounded
         openInAppButton.isHidden = true
         openInAppButton.translatesAutoresizingMaskIntoConstraints = false
 
-        runtimeModeButton = NSButton(title: "Runtime mode", target: self, action: #selector(configureRuntimeMode))
+        runtimeModeButton = NSButton(title: "Change runtime mode", target: self, action: #selector(configureRuntimeMode))
         runtimeModeButton.bezelStyle = .rounded
         runtimeModeButton.isHidden = true
         runtimeModeButton.translatesAutoresizingMaskIntoConstraints = false
 
-        configureGeminiButton = NSButton(title: "Configure Cloud LLM key", target: self, action: #selector(configureCloudLlmKey))
-        configureGeminiButton.bezelStyle = .rounded
-        configureGeminiButton.isHidden = true
-        configureGeminiButton.translatesAutoresizingMaskIntoConstraints = false
+        parentSetupButton = NSButton(title: "1. Set or verify parent PIN", target: self, action: #selector(configureParentPin))
+        parentSetupButton.bezelStyle = .rounded
+        parentSetupButton.isHidden = true
+        parentSetupButton.translatesAutoresizingMaskIntoConstraints = false
+
+        configureCloudLlmButton = NSButton(title: "2. Configure Cloud LLM key", target: self, action: #selector(configureCloudLlmKey))
+        configureCloudLlmButton.bezelStyle = .rounded
+        configureCloudLlmButton.isHidden = true
+        configureCloudLlmButton.translatesAutoresizingMaskIntoConstraints = false
 
         copyDiagnosticsButton = NSButton(title: "Copy diagnostics", target: self, action: #selector(copyDiagnostics))
         copyDiagnosticsButton.bezelStyle = .rounded
@@ -235,38 +244,93 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         resetVoiceRuntimeButton.isHidden = true
         resetVoiceRuntimeButton.translatesAutoresizingMaskIntoConstraints = false
 
-        let buttonStack = NSStackView(views: [
-            openBrowserButton,
-            pairAndroidButton,
-            openInAppButton,
-            runtimeModeButton,
-            configureGeminiButton,
-            retryButton,
-            quitButton,
-        ])
-        buttonStack.orientation = .horizontal
-        buttonStack.alignment = .centerY
-        buttonStack.distribution = .fill
-        buttonStack.spacing = 12
-        buttonStack.translatesAutoresizingMaskIntoConstraints = false
+        func sectionTitle(_ text: String) -> NSTextField {
+            let label = NSTextField(labelWithString: text)
+            label.font = .systemFont(ofSize: 16, weight: .semibold)
+            label.textColor = .labelColor
+            label.alignment = .left
+            label.translatesAutoresizingMaskIntoConstraints = false
+            return label
+        }
 
-        let diagnosticsButtonStack = NSStackView(views: [
+        func helperText(_ text: String) -> NSTextField {
+            let label = NSTextField(wrappingLabelWithString: text)
+            label.font = .systemFont(ofSize: 13, weight: .regular)
+            label.textColor = .secondaryLabelColor
+            label.maximumNumberOfLines = 0
+            label.alignment = .left
+            label.lineBreakMode = .byWordWrapping
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            label.translatesAutoresizingMaskIntoConstraints = false
+            return label
+        }
+
+        func verticalPanel(_ views: [NSView]) -> NSStackView {
+            let stack = NSStackView(views: views)
+            stack.orientation = .vertical
+            stack.alignment = .leading
+            stack.distribution = .fill
+            stack.spacing = 10
+            stack.edgeInsets = NSEdgeInsets(top: 16, left: 18, bottom: 16, right: 18)
+            stack.translatesAutoresizingMaskIntoConstraints = false
+            stack.wantsLayer = true
+            stack.layer?.cornerRadius = 14
+            stack.layer?.borderWidth = 1
+            stack.layer?.borderColor = NSColor.separatorColor.cgColor
+            stack.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.72).cgColor
+            return stack
+        }
+
+        let statusPanel = verticalPanel([
+            sectionTitle("Hub status"),
+            helperText("Keep this Mac awake. The Hub stores data in its encrypted database, runs LuxTTS voice generation, and serves paired clients on your Wi‑Fi."),
+            serviceStatusStack,
+        ])
+
+        let setupPanel = verticalPanel([
+            sectionTitle("Setup checklist"),
+            helperText("Do these once, in order. The parent PIN protects sensitive settings such as Cloud LLM keys."),
+            parentSetupButton,
+            configureCloudLlmButton,
+            sectionTitle("Connect clients"),
+            helperText("Phones pair by QR code. Local Mac and browser clients connect directly to this Hub."),
+            pairAndroidButton,
+            openBrowserButton,
+            openInAppButton,
+        ])
+
+        let mainPanel = NSStackView(views: [statusPanel, setupPanel])
+        mainPanel.orientation = .horizontal
+        mainPanel.alignment = .top
+        mainPanel.distribution = .fillEqually
+        mainPanel.spacing = 24
+        mainPanel.translatesAutoresizingMaskIntoConstraints = false
+
+        let advancedButtonStack = NSStackView(views: [
+            runtimeModeButton,
+            retryButton,
             copyDiagnosticsButton,
             openLogsButton,
             resetVoiceRuntimeButton,
+            quitButton,
         ])
-        diagnosticsButtonStack.orientation = .horizontal
-        diagnosticsButtonStack.alignment = .centerY
-        diagnosticsButtonStack.distribution = .fill
-        diagnosticsButtonStack.spacing = 12
-        diagnosticsButtonStack.translatesAutoresizingMaskIntoConstraints = false
+        advancedButtonStack.orientation = .horizontal
+        advancedButtonStack.alignment = .centerY
+        advancedButtonStack.distribution = .fill
+        advancedButtonStack.spacing = 10
+        advancedButtonStack.translatesAutoresizingMaskIntoConstraints = false
+
+        let advancedPanel = verticalPanel([
+            sectionTitle("Advanced / troubleshooting"),
+            helperText("Use these only when setup is stuck or you are changing local/cloud runtime behavior."),
+            advancedButtonStack,
+        ])
 
         splashView.addSubview(titleLabel)
         splashView.addSubview(detailLabel)
         splashView.addSubview(progress)
-        splashView.addSubview(serviceStatusStack)
-        splashView.addSubview(buttonStack)
-        splashView.addSubview(diagnosticsButtonStack)
+        splashView.addSubview(mainPanel)
+        splashView.addSubview(advancedPanel)
 
         let content = NSView()
         content.addSubview(webView)
@@ -284,26 +348,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             splashView.bottomAnchor.constraint(equalTo: content.bottomAnchor),
 
             progress.centerXAnchor.constraint(equalTo: splashView.centerXAnchor),
-            progress.centerYAnchor.constraint(equalTo: splashView.centerYAnchor, constant: -52),
+            progress.centerYAnchor.constraint(equalTo: splashView.centerYAnchor, constant: -220),
             titleLabel.leadingAnchor.constraint(equalTo: splashView.leadingAnchor, constant: 40),
             titleLabel.trailingAnchor.constraint(equalTo: splashView.trailingAnchor, constant: -40),
             titleLabel.topAnchor.constraint(equalTo: progress.bottomAnchor, constant: 24),
             detailLabel.leadingAnchor.constraint(equalTo: splashView.leadingAnchor, constant: 72),
             detailLabel.trailingAnchor.constraint(equalTo: splashView.trailingAnchor, constant: -72),
             detailLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 12),
-            serviceStatusStack.centerXAnchor.constraint(equalTo: splashView.centerXAnchor),
-            serviceStatusStack.topAnchor.constraint(equalTo: detailLabel.bottomAnchor, constant: 28),
-            buttonStack.centerXAnchor.constraint(equalTo: splashView.centerXAnchor),
-            buttonStack.topAnchor.constraint(equalTo: serviceStatusStack.bottomAnchor, constant: 28),
-            diagnosticsButtonStack.centerXAnchor.constraint(equalTo: splashView.centerXAnchor),
-            diagnosticsButtonStack.topAnchor.constraint(equalTo: buttonStack.bottomAnchor, constant: 12),
+            mainPanel.leadingAnchor.constraint(equalTo: splashView.leadingAnchor, constant: 72),
+            mainPanel.trailingAnchor.constraint(equalTo: splashView.trailingAnchor, constant: -72),
+            mainPanel.topAnchor.constraint(equalTo: detailLabel.bottomAnchor, constant: 24),
+            advancedPanel.leadingAnchor.constraint(equalTo: splashView.leadingAnchor, constant: 72),
+            advancedPanel.trailingAnchor.constraint(equalTo: splashView.trailingAnchor, constant: -72),
+            advancedPanel.topAnchor.constraint(equalTo: mainPanel.bottomAnchor, constant: 18),
+            serviceStatusStack.widthAnchor.constraint(lessThanOrEqualToConstant: 520),
             retryButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 120),
             quitButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 120),
-            openBrowserButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 190),
-            pairAndroidButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 180),
-            openInAppButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 130),
-            runtimeModeButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 130),
-            configureGeminiButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 170),
+            parentSetupButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 260),
+            configureCloudLlmButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 260),
+            openBrowserButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 210),
+            pairAndroidButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 210),
+            openInAppButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 210),
+            runtimeModeButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 150),
             copyDiagnosticsButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 150),
             openLogsButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 120),
             resetVoiceRuntimeButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 160),
@@ -315,7 +381,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             backing: .buffered,
             defer: false
         )
-        window.title = "PlushBuddy Station"
+        window.title = "PlushBuddy Hub"
         window.minSize = NSSize(width: 900, height: 640)
         window.center()
         window.contentView = content
@@ -376,7 +442,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             return lux
         }
         if ProcessInfo.processInfo.environment["PLUSHPAL_ENABLE_CHATTERBOX_FALLBACK"] == nil {
-            return .failure(StartupFailure(message: "The local LuxTTS voice runtime is missing from the PlushBuddy Station app bundle."))
+            return .failure(StartupFailure(message: "The local LuxTTS voice runtime is missing from the PlushBuddy Hub app bundle."))
         }
         return prepareChatterboxRuntime()
     }
@@ -416,7 +482,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
 
         guard let installer, FileManager.default.isExecutableFile(atPath: installer.path) else {
-            return .failure(StartupFailure(message: "The local LuxTTS installer is missing from the PlushBuddy Station app bundle."))
+            return .failure(StartupFailure(message: "The local LuxTTS installer is missing from the PlushBuddy Hub app bundle."))
         }
 
         do {
@@ -460,11 +526,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                isLuxTtsRuntimeReady(python: python, script: script) {
                 return .success(VoiceRuntime(engine: "luxtts", python: python, script: script))
             }
-            return .failure(StartupFailure(message: "PlushPal could not finish installing LuxTTS voice support. \(setupDiagnosticTail())"))
+            return .failure(StartupFailure(message: "PlushBuddy Hub could not finish installing LuxTTS voice support. \(setupDiagnosticTail())"))
         } catch {
             installProcess = nil
             installPipe = nil
-            return .failure(StartupFailure(message: "PlushPal could not install LuxTTS voice support: \(error.localizedDescription)\n\n\(setupDiagnosticTail())"))
+            return .failure(StartupFailure(message: "PlushBuddy Hub could not install LuxTTS voice support: \(error.localizedDescription)\n\n\(setupDiagnosticTail())"))
         }
     }
 
@@ -477,7 +543,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             .appendingPathComponent("install_chatterbox_runtime.sh")
 
         guard let script, FileManager.default.fileExists(atPath: script.path) else {
-            return .failure(StartupFailure(message: "The local voice setup script is missing from the PlushBuddy Station app bundle."))
+            return .failure(StartupFailure(message: "The local voice setup script is missing from the PlushBuddy Hub app bundle."))
         }
 
         let support = applicationSupportDirectory()
@@ -503,7 +569,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
 
         guard let installer, FileManager.default.isExecutableFile(atPath: installer.path) else {
-            return .failure(StartupFailure(message: "The local voice installer is missing from the PlushBuddy Station app bundle."))
+            return .failure(StartupFailure(message: "The local voice installer is missing from the PlushBuddy Hub app bundle."))
         }
 
         do {
@@ -547,11 +613,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                isChatterboxRuntimeImportReady(python: python) {
                 return .success(VoiceRuntime(engine: "chatterbox", python: python, script: script))
             }
-            return .failure(StartupFailure(message: "PlushPal could not finish installing local voice support. \(setupDiagnosticTail())"))
+            return .failure(StartupFailure(message: "PlushBuddy Hub could not finish installing local voice support. \(setupDiagnosticTail())"))
         } catch {
             installProcess = nil
             installPipe = nil
-            return .failure(StartupFailure(message: "PlushPal could not install local voice support: \(error.localizedDescription)\n\n\(setupDiagnosticTail())"))
+            return .failure(StartupFailure(message: "PlushBuddy Hub could not install local voice support: \(error.localizedDescription)\n\n\(setupDiagnosticTail())"))
         }
     }
 
@@ -679,7 +745,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             .appendingPathComponent("MacOS", isDirectory: true)
             .appendingPathComponent("plushpal-desktop-host", isDirectory: false) as URL?,
               FileManager.default.isExecutableFile(atPath: helper.path) else {
-            update(.failed("The PlushPal local service is missing from the app bundle."))
+            update(.failed("The PlushBuddy Hub local service is missing from the app bundle."))
             return
         }
 
@@ -744,9 +810,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 let suffix = diagnostic.isEmpty ? "" : "\n\n\(diagnostic)"
                 self.appendLog("app-shell.log", "host terminated status=\(terminated.terminationStatus) reason=\(terminated.terminationReason.rawValue) didLoadHostUrl=\(self.didLoadHostUrl)")
                 if self.didLoadHostUrl {
-                    self.update(.failed("The local PlushPal service stopped unexpectedly. Exit code \(terminated.terminationStatus).\(suffix)"))
+                    self.update(.failed("The local PlushBuddy Hub service stopped unexpectedly. Exit code \(terminated.terminationStatus).\(suffix)"))
                 } else {
-                    self.update(.failed("The local PlushPal service stopped before the app was ready. Exit code \(terminated.terminationStatus).\(suffix)"))
+                    self.update(.failed("The local PlushBuddy Hub service stopped before the app was ready. Exit code \(terminated.terminationStatus).\(suffix)"))
                 }
             }
         }
@@ -754,7 +820,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         do {
             try process.run()
         } catch {
-            update(.failed("Could not start the local PlushPal service: \(error.localizedDescription)"))
+            update(.failed("Could not start the local PlushBuddy Hub service: \(error.localizedDescription)"))
         }
     }
 
@@ -784,6 +850,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         hostUrl = nil
         parsedHostUrlText = nil
         lanPairingUrl = nil
+        stationSessionCookieValue = nil
         update(.preparingVoiceRuntime)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             self?.prepareAndStart()
@@ -816,7 +883,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = "Reset local voice runtime?"
-        alert.informativeText = "This removes the local LuxTTS Python environment so PlushBuddy Station can rebuild it. It does not delete kids, characters, conversations, API keys, voice profiles, or downloaded model caches."
+        alert.informativeText = "This removes the local LuxTTS Python environment so PlushBuddy Hub can rebuild it. It does not delete kids, characters, conversations, API keys, voice profiles, or downloaded model caches."
         alert.addButton(withTitle: "Reset voice runtime")
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else {
@@ -869,7 +936,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         root.translatesAutoresizingMaskIntoConstraints = false
         panel.contentView = root
 
-        let title = NSTextField(labelWithString: "Pair Android with PlushPal Station")
+        let title = NSTextField(labelWithString: "Pair phone with PlushBuddy Hub")
         title.font = .systemFont(ofSize: 22, weight: .semibold)
         title.alignment = .center
         title.translatesAutoresizingMaskIntoConstraints = false
@@ -877,7 +944,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let instructions = NSTextField(wrappingLabelWithString: """
         \(isLanUrl ? "Keep this Mac awake and on the same Wi‑Fi as the Android phone." : "No LAN address was detected, so this fallback address only works on this Mac.")
 
-        In the Android app, tap Pair Mac Station and scan this QR code.
+        In the Android or iPhone app, tap Pair Hub and scan this QR code.
         """)
         instructions.font = .systemFont(ofSize: 14)
         instructions.textColor = .secondaryLabelColor
@@ -984,7 +1051,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 DispatchQueue.main.async {
                     let alert = NSAlert()
                     alert.messageText = "Could not open PlushBuddy"
-                    alert.informativeText = "Station is healthy, but the Mac client app could not be opened. Opening the browser version instead."
+                    alert.informativeText = "Hub is healthy, but the Mac client app could not be opened. Opening the browser version instead."
                     alert.addButton(withTitle: "OK")
                     alert.runModal()
                     NSWorkspace.shared.open(hostUrl)
@@ -1003,7 +1070,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     private func persistStationClientUrl(_ url: URL) {
         let directory = applicationSupportDirectory()
-            .appendingPathComponent("Station", isDirectory: true)
+            .appendingPathComponent("Hub", isDirectory: true)
         let file = directory.appendingPathComponent("latest-client-url.txt", isDirectory: false)
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -1017,7 +1084,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let mainMenu = NSMenu()
         let appMenuItem = NSMenuItem()
         let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "Quit PlushBuddy Station", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: "Quit PlushBuddy Hub", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appMenuItem.submenu = appMenu
         mainMenu.addItem(appMenuItem)
 
@@ -1033,6 +1100,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         editMenuItem.submenu = editMenu
         mainMenu.addItem(editMenuItem)
         NSApp.mainMenu = mainMenu
+    }
+
+    @objc private func configureParentPin() {
+        let pinInput = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        pinInput.placeholderString = "Parent PIN"
+        let confirmInput = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        confirmInput.placeholderString = "Confirm PIN"
+
+        let stack = NSStackView(views: [
+            NSTextField(labelWithString: "Parent PIN"),
+            pinInput,
+            NSTextField(labelWithString: "Confirm PIN"),
+            confirmInput,
+        ])
+        stack.orientation = .vertical
+        stack.spacing = 8
+        stack.alignment = .leading
+        stack.setFrameSize(NSSize(width: 360, height: 104))
+
+        let alert = NSAlert()
+        alert.messageText = "Set or verify parent PIN"
+        alert.informativeText = "The parent PIN protects Hub settings such as Cloud LLM keys. If a PIN already exists, enter the current PIN to verify access."
+        alert.accessoryView = stack
+        alert.addButton(withTitle: "Save / Verify")
+        alert.addButton(withTitle: "Cancel")
+        DispatchQueue.main.async {
+            alert.window.makeFirstResponder(pinInput)
+        }
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let pin = pinInput.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let confirmation = confirmInput.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !pin.isEmpty, pin == confirmation else {
+            showInfoAlert(title: "Parent PIN was not saved", message: "Both PIN fields must match.")
+            return
+        }
+        do {
+            try saveParentPinToHub(pin: pin)
+            appendLog("app-shell.log", "parent PIN configured or verified")
+            showInfoAlert(title: "Parent PIN ready", message: "Hub parent settings are protected. Next, configure your Cloud LLM key if you want cloud conversation mode.")
+        } catch {
+            showInfoAlert(title: "Parent PIN setup failed", message: error.localizedDescription)
+        }
     }
 
     @objc private func configureCloudLlmKey() {
@@ -1060,7 +1169,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
         let alert = NSAlert()
         alert.messageText = "Configure Cloud LLM key"
-        alert.informativeText = "Choose Gemini or OpenAI. The key is stored in the Hub encrypted SQLCipher database and used only by the local Hub."
+        alert.informativeText = "Choose Gemini or OpenAI. The key is stored in the Hub encrypted SQLCipher database. Enter the parent PIN to authorize this sensitive setting."
         alert.accessoryView = stack
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
@@ -1078,11 +1187,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             UserDefaults.standard.set(provider, forKey: "PlushBuddyCloudLlmProvider")
             removeLegacyGeminiKeyFile()
             appendLog("app-shell.log", "\(cloudLlmProviderDisplayName(provider)) key saved to encrypted Hub database")
+            showInfoAlert(title: "Cloud LLM key saved", message: "\(cloudLlmProviderDisplayName(provider)) is configured for conversation mode.")
             if let hostUrl {
                 waitForStationHealth(hostUrl)
             }
         } catch {
-            update(.failed("Could not save Cloud LLM key: \(error.localizedDescription)"))
+            showInfoAlert(title: "Cloud LLM key was not saved", message: error.localizedDescription)
         }
     }
 
@@ -1168,53 +1278,90 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         provider == "openai" ? "OpenAI" : "Gemini"
     }
 
+    private func saveParentPinToHub(pin: String) throws {
+        guard pin.count >= 4 else {
+            throw NSError(
+                domain: "PlushBuddyHub",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Parent PIN must be at least 4 characters."]
+            )
+        }
+        let statusCode = try postJsonToHub(path: "/api/v1/parent-pin/configure", body: [
+            "pin": pin,
+            "age_band": "4-5",
+            "character_alias": "Buddy",
+            "character_traits": ["gentle", "playful"],
+            "retention_days": 1,
+        ])
+        guard (200..<300).contains(statusCode) else {
+            let message: String
+            switch statusCode {
+            case 401:
+                message = "That PIN did not match the existing parent PIN."
+            case 400:
+                message = "The Hub rejected the PIN settings."
+            default:
+                message = "Hub returned HTTP \(statusCode)."
+            }
+            throw NSError(
+                domain: "PlushBuddyHub",
+                code: statusCode,
+                userInfo: [NSLocalizedDescriptionKey: message]
+            )
+        }
+    }
+
     private func saveCloudLlmKeyToHub(provider: String, key: String, pin: String) throws {
         guard key.utf8.count >= 16 else {
             throw NSError(
-                domain: "PlushBuddyStation",
+                domain: "PlushBuddyHub",
                 code: 1,
                 userInfo: [NSLocalizedDescriptionKey: "\(cloudLlmProviderDisplayName(provider)) API key looks too short."]
             )
         }
+        let statusCode = try postJsonToHub(path: "/api/v1/provider/api-key", body: [
+            "pin": pin,
+            "provider": provider,
+            "api_key": key,
+        ])
+
+        guard (200..<300).contains(statusCode) else {
+            let message: String
+            switch statusCode {
+            case 401:
+                message = "Parent PIN was incorrect, or no parent PIN is configured yet. Use “Set or verify parent PIN” first."
+            case 400:
+                message = "The selected provider or API key was rejected."
+            case 501:
+                message = "Encrypted Hub storage is not available."
+            default:
+                message = "Hub returned HTTP \(statusCode)."
+            }
+            throw NSError(
+                domain: "PlushBuddyHub",
+                code: statusCode,
+                userInfo: [NSLocalizedDescriptionKey: message]
+            )
+        }
+    }
+
+    private func postJsonToHub(path: String, body: [String: Any]) throws -> Int {
         let cookie = try stationSessionCookie()
-        let endpoint = try stationApiUrl(path: "/api/v1/provider/api-key")
+        let endpoint = try stationApiUrl(path: path)
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.timeoutInterval = 20
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(cookie, forHTTPHeaderField: "Cookie")
         request.setValue(try stationOrigin(), forHTTPHeaderField: "Origin")
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "pin": pin,
-            "provider": provider,
-            "api_key": key,
-        ])
-
-        let result = blockingHttpStatus(request)
-        guard (200..<300).contains(result.statusCode) else {
-            let message: String
-            switch result.statusCode {
-            case 401:
-                message = "Parent PIN was incorrect or the Station session expired."
-            case 400:
-                message = "The selected provider or API key was rejected."
-            case 501:
-                message = "Encrypted Hub storage is not available."
-            default:
-                message = "Hub returned HTTP \(result.statusCode)."
-            }
-            throw NSError(
-                domain: "PlushBuddyStation",
-                code: result.statusCode,
-                userInfo: [NSLocalizedDescriptionKey: message]
-            )
-        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        return blockingHttpStatus(request).statusCode
     }
 
     private func stationApiUrl(path: String) throws -> URL {
         guard let hostUrl else {
             throw NSError(
-                domain: "PlushBuddyStation",
+                domain: "PlushBuddyHub",
                 code: 2,
                 userInfo: [NSLocalizedDescriptionKey: "Hub is not running yet."]
             )
@@ -1226,7 +1373,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         components.path = path
         guard let url = components.url else {
             throw NSError(
-                domain: "PlushBuddyStation",
+                domain: "PlushBuddyHub",
                 code: 3,
                 userInfo: [NSLocalizedDescriptionKey: "Hub URL is invalid."]
             )
@@ -1239,7 +1386,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
               let scheme = hostUrl.scheme,
               let host = hostUrl.host else {
             throw NSError(
-                domain: "PlushBuddyStation",
+                domain: "PlushBuddyHub",
                 code: 5,
                 userInfo: [NSLocalizedDescriptionKey: "Hub origin is invalid."]
             )
@@ -1251,6 +1398,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     private func stationSessionCookie() throws -> String {
+        if let cached = stationSessionCookieValue, !cached.isEmpty {
+            return cached
+        }
         guard let hostUrl,
               let fragment = hostUrl.fragment,
               let token = fragment
@@ -1262,9 +1412,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                   .first,
               !token.isEmpty else {
             throw NSError(
-                domain: "PlushBuddyStation",
+                domain: "PlushBuddyHub",
                 code: 4,
-                userInfo: [NSLocalizedDescriptionKey: "Station pairing session is missing. Restart Station and try again."]
+                userInfo: [NSLocalizedDescriptionKey: "Hub pairing session is missing. Restart Hub and try again."]
             )
         }
         let endpoint = try stationApiUrl(path: "/api/v1/bootstrap")
@@ -1279,11 +1429,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
               let cookie = setCookie.split(separator: ";").first.map(String.init),
               cookie.hasPrefix("pp_session=") else {
             throw NSError(
-                domain: "PlushBuddyStation",
+                domain: "PlushBuddyHub",
                 code: result.statusCode,
-                userInfo: [NSLocalizedDescriptionKey: "Could not open an authenticated Hub session. Restart Station and try again."]
+                userInfo: [NSLocalizedDescriptionKey: "Could not open an authenticated Hub session. Restart Hub and try again."]
             )
         }
+        stationSessionCookieValue = cookie
         return cookie
     }
 
@@ -1300,6 +1451,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }.resume()
         _ = semaphore.wait(timeout: .now() + 30)
         return (statusCode, headers)
+    }
+
+    private func showInfoAlert(title: String, message: String) {
+        DispatchQueue.main.async {
+            let alert = NSAlert()
+            alert.messageText = title
+            alert.informativeText = message
+            alert.addButton(withTitle: "OK")
+            if let window = self.window {
+                alert.beginSheetModal(for: window)
+            } else {
+                alert.runModal()
+            }
+        }
     }
 
     private func removeLegacyGeminiKeyFile() {
@@ -1324,6 +1489,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     parsedHostUrlText = urlText
                     didLoadHostUrl = true
                     hostUrl = url
+                    stationSessionCookieValue = nil
                     appendLog("app-shell.log", "station host url \(urlText)")
                     DispatchQueue.main.async { [weak self] in
                         self?.updateServiceStatuses(
@@ -1368,7 +1534,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     private func waitForStationHealth(_ hostUrl: URL) {
         guard let healthUrl = healthEndpoint(for: hostUrl) else {
-            update(.failed("The local PlushPal service returned an invalid health-check URL."))
+            update(.failed("The local PlushBuddy Hub service returned an invalid health-check URL."))
             return
         }
         healthWaitGeneration += 1
@@ -1496,7 +1662,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func diagnosticSnapshot() -> String {
         let timestamp = ISO8601DateFormatter().string(from: Date())
         let lines = [
-            "PlushBuddy Station diagnostics",
+            "PlushBuddy Hub diagnostics",
             "timestamp: \(timestamp)",
             "app_support: \(applicationSupportDirectory().path)",
             "logs: \(logDirectory().path)",
@@ -1568,12 +1734,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         appendLog("app-shell.log", "webView didFail \(error.localizedDescription)")
-        update(.failed("Could not load PlushPal: \(error.localizedDescription)"))
+        update(.failed("Could not load PlushBuddy: \(error.localizedDescription)"))
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         appendLog("app-shell.log", "webView didFailProvisional \(error.localizedDescription)")
-        update(.failed("Could not load PlushPal: \(error.localizedDescription)"))
+        update(.failed("Could not load PlushBuddy: \(error.localizedDescription)"))
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -1656,7 +1822,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             guard let self else { return }
             switch state {
             case .preparingVoiceRuntime:
-                self.titleLabel.stringValue = "Preparing PlushPal"
+                self.titleLabel.stringValue = "Preparing PlushBuddy Hub"
                 self.detailLabel.stringValue = "Checking app storage, local voice support, and cached downloads. First launch can take a few minutes; later launches reuse what is already installed."
                 self.progress.startAnimation(nil)
                 self.retryButton.isHidden = true
@@ -1665,13 +1831,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.pairAndroidButton.isHidden = true
                 self.openInAppButton.isHidden = true
                 self.runtimeModeButton.isHidden = true
-                self.configureGeminiButton.isHidden = true
+                self.parentSetupButton.isHidden = true
+                self.configureCloudLlmButton.isHidden = true
                 self.copyDiagnosticsButton.isHidden = true
                 self.openLogsButton.isHidden = true
                 self.resetVoiceRuntimeButton.isHidden = true
             case .startingHost:
-                self.titleLabel.stringValue = "Starting local service"
-                self.detailLabel.stringValue = "Starting the local PlushPal service. Browser and Android pairing options will appear after health checks pass."
+                self.titleLabel.stringValue = "Starting Hub service"
+                self.detailLabel.stringValue = "Starting the local PlushBuddy Hub service. Client options will appear after health checks pass."
                 self.progress.startAnimation(nil)
                 self.retryButton.isHidden = true
                 self.quitButton.isHidden = true
@@ -1679,12 +1846,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.pairAndroidButton.isHidden = true
                 self.openInAppButton.isHidden = true
                 self.runtimeModeButton.isHidden = true
-                self.configureGeminiButton.isHidden = true
+                self.parentSetupButton.isHidden = true
+                self.configureCloudLlmButton.isHidden = true
                 self.copyDiagnosticsButton.isHidden = true
                 self.openLogsButton.isHidden = true
                 self.resetVoiceRuntimeButton.isHidden = true
             case .loadingApp:
-                self.titleLabel.stringValue = "Loading PlushPal"
+                self.titleLabel.stringValue = "Loading PlushBuddy Hub"
                 self.detailLabel.stringValue = "Almost ready…"
                 self.progress.startAnimation(nil)
                 self.retryButton.isHidden = true
@@ -1693,16 +1861,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.pairAndroidButton.isHidden = true
                 self.openInAppButton.isHidden = true
                 self.runtimeModeButton.isHidden = true
-                self.configureGeminiButton.isHidden = true
+                self.parentSetupButton.isHidden = true
+                self.configureCloudLlmButton.isHidden = true
                 self.copyDiagnosticsButton.isHidden = true
                 self.openLogsButton.isHidden = true
                 self.resetVoiceRuntimeButton.isHidden = true
             case .stationReady(let url, let conversationReady):
                 self.progress.stopAnimation(nil)
-                self.titleLabel.stringValue = "PlushBuddy Station is ready"
+                self.titleLabel.stringValue = "PlushBuddy Hub is ready"
                 self.detailLabel.stringValue = conversationReady
-                    ? "All required local services are healthy. Open PlushBuddy on this Mac, in a browser, or scan the Android pairing QR."
-                    : "Voice, storage, and pairing are ready. Configure a Cloud LLM key or install a local model before starting real conversations."
+                    ? "All required local services are healthy. Set parent controls, connect a phone, or open a local client."
+                    : "Voice, storage, and pairing are ready. Set or verify the parent PIN, then configure a Cloud LLM key before real conversations."
                 self.splashView.isHidden = false
                 self.webView.isHidden = true
                 self.retryButton.isHidden = false
@@ -1711,7 +1880,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.pairAndroidButton.isHidden = false
                 self.openInAppButton.isHidden = false
                 self.runtimeModeButton.isHidden = false
-                self.configureGeminiButton.isHidden = conversationReady
+                self.parentSetupButton.isHidden = false
+                self.configureCloudLlmButton.isHidden = false
                 self.copyDiagnosticsButton.isHidden = false
                 self.openLogsButton.isHidden = false
                 self.resetVoiceRuntimeButton.isHidden = false
@@ -1727,13 +1897,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.pairAndroidButton.isHidden = true
                 self.openInAppButton.isHidden = true
                 self.runtimeModeButton.isHidden = true
-                self.configureGeminiButton.isHidden = true
+                self.parentSetupButton.isHidden = true
+                self.configureCloudLlmButton.isHidden = true
                 self.copyDiagnosticsButton.isHidden = true
                 self.openLogsButton.isHidden = true
                 self.resetVoiceRuntimeButton.isHidden = true
             case .failed(let message):
                 self.progress.stopAnimation(nil)
-                self.titleLabel.stringValue = "PlushPal needs setup"
+                self.titleLabel.stringValue = "PlushBuddy Hub needs setup"
                 self.detailLabel.stringValue = message
                 self.splashView.isHidden = false
                 self.webView.isHidden = true
@@ -1743,7 +1914,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.pairAndroidButton.isHidden = true
                 self.openInAppButton.isHidden = true
                 self.runtimeModeButton.isHidden = false
-                self.configureGeminiButton.isHidden = true
+                self.parentSetupButton.isHidden = true
+                self.configureCloudLlmButton.isHidden = true
                 self.copyDiagnosticsButton.isHidden = false
                 self.openLogsButton.isHidden = false
                 self.resetVoiceRuntimeButton.isHidden = false

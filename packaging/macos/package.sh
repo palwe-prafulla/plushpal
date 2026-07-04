@@ -13,7 +13,7 @@ if [ ! -f "$DEFAULT_LUXTTS_SOURCE_DIR/requirements.txt" ]; then
 fi
 LUXTTS_SOURCE_DIR=${PLUSHPAL_LUXTTS_SOURCE_DIR:-"$DEFAULT_LUXTTS_SOURCE_DIR"}
 OUTPUT="$ARTIFACTS_ROOT/macos"
-STATION_APP="$OUTPUT/PlushBuddy Station.app"
+STATION_APP="$OUTPUT/PlushBuddy Hub.app"
 CLIENT_APP="$OUTPUT/PlushBuddy.app"
 export CARGO_TARGET_DIR
 
@@ -47,7 +47,7 @@ swiftc -O \
   -framework Security \
   -framework WebKit \
   apps/macos/station_app/AppShell.swift \
-  -o "$STATION_APP/Contents/MacOS/PlushBuddy Station"
+  -o "$STATION_APP/Contents/MacOS/PlushBuddy Hub"
 cp "$CARGO_TARGET_DIR/release/plushpal-desktop-host" "$STATION_APP/Contents/MacOS/plushpal-desktop-host"
 LLAMA_DYLIB=$(find "$CARGO_TARGET_DIR/release/build" -path '*/out/native/libplushpal_llama.dylib' -print | head -n 1)
 test -n "$LLAMA_DYLIB"
@@ -166,13 +166,13 @@ else
 fi
 
 rm -f "$OUTPUT/PlushBuddy-$VERSION-macos.zip"
-(cd "$OUTPUT" && COPYFILE_DISABLE=1 zip -X -q -y -r "PlushBuddy-$VERSION-macos.zip" "PlushBuddy Station.app" PlushBuddy.app)
+(cd "$OUTPUT" && COPYFILE_DISABLE=1 zip -X -q -y -r "PlushBuddy-$VERSION-macos.zip" "PlushBuddy Hub.app" PlushBuddy.app)
 
 if command -v hdiutil >/dev/null 2>&1; then
   DMG_ROOT="$OUTPUT/dmg-root"
   rm -rf "$DMG_ROOT"
   mkdir -p "$DMG_ROOT"
-  cp -R "$STATION_APP" "$DMG_ROOT/PlushBuddy Station.app"
+  cp -R "$STATION_APP" "$DMG_ROOT/PlushBuddy Hub.app"
   cp -R "$CLIENT_APP" "$DMG_ROOT/PlushBuddy.app"
   rm -f "$OUTPUT/PlushBuddy-$VERSION-macos.dmg"
   hdiutil create -quiet -volname "PlushBuddy" -srcfolder "$DMG_ROOT" \

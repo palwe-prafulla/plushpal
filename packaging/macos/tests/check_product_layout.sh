@@ -22,7 +22,7 @@ for path in $required_paths; do
   fi
 done
 
-grep -q 'PlushBuddy Station.app' packaging/macos/package.sh
+grep -q 'PlushBuddy Hub.app' packaging/macos/package.sh
 grep -q 'PlushBuddy.app' packaging/macos/package.sh
 grep -q 'apps/macos/station_app/AppShell.swift' packaging/macos/package.sh
 grep -q 'apps/macos/client_app/AppShell.swift' packaging/macos/package.sh

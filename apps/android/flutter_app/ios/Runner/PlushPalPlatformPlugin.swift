@@ -152,7 +152,7 @@ final class PlushPalPlatformPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
     case "enrollVoice", "previewVoice", "approveVoice", "deleteVoice", "speakWithVoice":
       result(FlutterError(
         code: "voice_unavailable",
-        message: "Pair Mac Station to use cloned voices on iPhone",
+        message: "Pair PlushBuddy Hub to use cloned voices on iPhone",
         details: nil
       ))
     case "storeSecret":
@@ -658,13 +658,13 @@ final class PlushPalPlatformPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
       cookie.hasPrefix("pp_session="),
       cookie.count <= 512
     else {
-      result(FlutterError(code: "invalid_pairing", message: "Invalid Mac Station pairing data", details: nil))
+      result(FlutterError(code: "invalid_pairing", message: "Invalid Hub pairing data", details: nil))
       return
     }
     let providedClientId = (arguments["clientId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     let clientId = providedClientId.isEmpty ? stationClientId() : providedClientId
     guard clientId.range(of: #"^ios-[a-f0-9-]{36}$"#, options: .regularExpression) != nil else {
-      result(FlutterError(code: "invalid_pairing", message: "Invalid Mac Station pairing data", details: nil))
+      result(FlutterError(code: "invalid_pairing", message: "Invalid Hub pairing data", details: nil))
       return
     }
     writeJSONObject(["baseUrl": base, "cookie": cookie, "clientId": clientId], account: "station-pairing-v1")

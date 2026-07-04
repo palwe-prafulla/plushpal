@@ -78,20 +78,20 @@ final class MacClientAppDelegate: NSObject, NSApplicationDelegate, WKNavigationD
 
         fallbackView = NSView()
         fallbackView.translatesAutoresizingMaskIntoConstraints = false
-        let title = NSTextField(labelWithString: "Open PlushBuddy from Station")
+        let title = NSTextField(labelWithString: "Open PlushBuddy from Hub")
         title.font = .systemFont(ofSize: 28, weight: .semibold)
         title.alignment = .center
         title.translatesAutoresizingMaskIntoConstraints = false
 
         statusLabel = NSTextField(wrappingLabelWithString: """
-        PlushBuddy is the Mac client UI. Start PlushBuddy Station first so it can prepare voice services, then click “Open PlushBuddy Mac app” in Station.
+        PlushBuddy is the Mac client UI. Start PlushBuddy Hub first so it can prepare voice services, then click “Open Mac client” in Hub.
         """)
         statusLabel.font = .systemFont(ofSize: 15)
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.alignment = .center
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        let openStationButton = NSButton(title: "Open PlushBuddy Station", target: self, action: #selector(openStation))
+        let openStationButton = NSButton(title: "Open PlushBuddy Hub", target: self, action: #selector(openStation))
         openStationButton.bezelStyle = .rounded
         openStationButton.translatesAutoresizingMaskIntoConstraints = false
 
@@ -166,26 +166,32 @@ final class MacClientAppDelegate: NSObject, NSApplicationDelegate, WKNavigationD
     }
 
     private func persistedStationUrl() -> URL? {
-        let file = applicationSupportDirectory()
-            .appendingPathComponent("Station", isDirectory: true)
-            .appendingPathComponent("latest-client-url.txt", isDirectory: false)
-        guard let text = try? String(contentsOf: file, encoding: .utf8)
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-              !text.isEmpty else {
-            return nil
+        let candidates = ["Hub", "Station"].map {
+            applicationSupportDirectory()
+                .appendingPathComponent($0, isDirectory: true)
+                .appendingPathComponent("latest-client-url.txt", isDirectory: false)
         }
-        return URL(string: text)
+        for file in candidates {
+            guard let text = try? String(contentsOf: file, encoding: .utf8)
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+                  !text.isEmpty else {
+                continue
+            }
+            return URL(string: text)
+        }
+        return nil
     }
 
     @objc private func openStation() {
         let candidates = [
+            Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("PlushBuddy Hub.app", isDirectory: true),
             Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("PlushBuddy Station.app", isDirectory: true),
             Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("PlushPal.app", isDirectory: true),
         ]
         if let station = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }) {
             NSWorkspace.shared.openApplication(at: station, configuration: NSWorkspace.OpenConfiguration())
         } else {
-            statusLabel.stringValue = "I could not find PlushBuddy Station next to this app. Open Station manually, then launch this app from Station."
+            statusLabel.stringValue = "I could not find PlushBuddy Hub next to this app. Open Hub manually, then launch this app from Hub."
         }
     }
 
@@ -205,7 +211,7 @@ final class MacClientAppDelegate: NSObject, NSApplicationDelegate, WKNavigationD
         appendLog("client-app.log", "navigation failed \(error.localizedDescription)")
         fallbackView.isHidden = false
         webView.isHidden = true
-        statusLabel.stringValue = "PlushBuddy could not connect to Station: \(error.localizedDescription). Start Station and try again."
+        statusLabel.stringValue = "PlushBuddy could not connect to Hub: \(error.localizedDescription). Start Hub and try again."
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {

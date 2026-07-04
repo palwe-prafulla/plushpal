@@ -646,7 +646,7 @@ class _PlushPalRootState extends State<PlushPalRoot>
       setState(
         () => message = stationPaired
             ? 'Magic Voice Box connected automatically.'
-            : 'Open PlushBuddy from Station, then refresh this client.',
+            : 'Open PlushBuddy from Hub, then refresh this client.',
       );
       return;
     }
@@ -2331,7 +2331,7 @@ class OnboardingScreen extends StatelessWidget {
                           label: stationPaired
                               ? 'Magic Voice Box connected'
                               : kIsWeb
-                              ? 'Open from Station to connect Magic Voice Box'
+                              ? 'Open from Hub to connect Magic Voice Box'
                               : 'Connect Magic Voice Box',
                         ),
                         _StatusLine(
@@ -2521,7 +2521,7 @@ class OnboardingScreen extends StatelessWidget {
                     stationPaired
                         ? 'Connected to ${stationBaseUrl ?? 'the Magic Voice Box'}'
                         : kIsWeb
-                        ? 'Open this browser or Mac app from PlushBuddy Station. It connects automatically.'
+                        ? 'Open this browser or Mac app from PlushBuddy Hub. It connects automatically.'
                         : 'Use the Mac only for buddy voices and toy audio.',
                   ),
                   const SizedBox(height: 12),
@@ -2680,7 +2680,7 @@ class _StationQrScannerScreenState extends State<StationQrScannerScreen> {
     if (!value.startsWith('http://') || !value.contains('#bootstrap=')) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('That is not a PlushBuddy Station pairing QR code.'),
+          content: Text('That is not a PlushBuddy Hub pairing QR code.'),
         ),
       );
       return;
@@ -3293,7 +3293,7 @@ class SettingsMenuScreen extends StatelessWidget {
                 subtitle: stationPaired
                     ? 'Connected to the Mac voice helper.'
                     : kIsWeb
-                    ? 'Opens from Station and connects automatically.'
+                    ? 'Opens from Hub and connects automatically.'
                     : 'Scan the QR code from the Mac app.',
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () => _push(
@@ -3485,8 +3485,8 @@ class _MacStationSettingsScreen extends StatelessWidget {
               subtitle: stationPaired
                   ? 'Your Mac is ready to make buddy voices.'
                   : kIsWeb
-                  ? 'Open this browser or Mac app from PlushBuddy Station. No QR scan is needed on this Mac.'
-                  : 'Open PlushBuddy on the phone and scan the QR code from Station.',
+                  ? 'Open this browser or Mac app from PlushBuddy Hub. No QR scan is needed on this Mac.'
+                  : 'Open PlushBuddy on the phone and scan the QR code from Hub.',
               trailing: stationPaired
                   ? const Icon(Icons.check_circle, color: Colors.green)
                   : Icon(kIsWeb ? Icons.sync : Icons.qr_code_2),
@@ -4723,7 +4723,7 @@ class _RuntimeModeBanner extends StatelessWidget {
         : isLocalFirst
         ? (
             'Privacy local-first mode',
-            'The Hub avoids cloud LLM calls and uses local models when installed. If local reasoning is not ready, configure Cloud LLM mode in Station.',
+            'The Hub avoids cloud LLM calls and uses local models when installed. If local reasoning is not ready, configure Cloud LLM mode in Hub.',
             Icons.lock,
             const Color(0xffe8f5e9),
           )

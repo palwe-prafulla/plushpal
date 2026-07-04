@@ -105,7 +105,7 @@ Built from: $ROOT
 Build workspace: $WORKTREE
 
 macOS:
-  $ARTIFACTS_ROOT/macos/PlushBuddy Station.app
+  $ARTIFACTS_ROOT/macos/PlushBuddy Hub.app
   $ARTIFACTS_ROOT/macos/PlushBuddy.app
   $ARTIFACTS_ROOT/macos/PlushBuddy-*.zip
   $ARTIFACTS_ROOT/macos/PlushBuddy-*.dmg, when hdiutil is available

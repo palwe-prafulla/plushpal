@@ -7,9 +7,9 @@
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>PlushBuddy converts the child&apos;s speech to text for the toy conversation.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>PlushBuddy uses the camera only to scan the MacStation pairing QR code.</string>
+	<string>PlushBuddy uses the camera only to scan the Hub pairing QR code.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>PlushBuddy connects to MacStation on your local Wi-Fi for private toy voice generation.</string>
+	<string>PlushBuddy connects to PlushBuddy Hub on your local Wi-Fi for private toy voice generation.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>

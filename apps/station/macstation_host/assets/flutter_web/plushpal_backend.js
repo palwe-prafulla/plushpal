@@ -272,7 +272,7 @@
       bootstrapAttempted = true;
       const status = await window.__plushpalStationBootstrapReady;
       if (status === 'failed') {
-        throw new Error('MacStation session expired. Open PlushBuddy from Station again.');
+        throw new Error('Hub session expired. Open PlushBuddy from Hub again.');
       }
       return;
     }
@@ -288,7 +288,7 @@
           'x-plushbuddy-client-id': stableClientId(),
         },
       });
-      if (!response.ok) throw new Error('MacStation session expired. Open PlushBuddy from Station again.');
+      if (!response.ok) throw new Error('Hub session expired. Open PlushBuddy from Hub again.');
       history.replaceState(null, document.title, `${window.location.pathname}${window.location.search}`);
       return;
     }
@@ -308,7 +308,7 @@
       },
     });
     if (response.status === 401 || response.status === 403) {
-      throw new Error('MacStation session is not ready. Open this browser or Mac app from PlushBuddy Station again.');
+      throw new Error('Hub session is not ready. Open this browser or Mac app from PlushBuddy Hub again.');
     }
     return response;
   };

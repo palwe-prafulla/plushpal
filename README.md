@@ -147,10 +147,10 @@ The publisher reads `GITHUB_TOKEN` or the macOS Keychain service
 Open:
 
 ```text
-~/Downloads/PlushPal/artifacts/macos/PlushBuddy Station.app
+~/Downloads/PlushPal/artifacts/macos/PlushBuddy Hub.app
 ```
 
-Then use Hub/Station to open the Mac app, open the local browser client, or
+Then use Hub to open the Mac app, open the local browser client, or
 scan the QR code from Android/iPhone.
 
 For a lightweight developer demo without LuxTTS voice cloning or a cloud API
@@ -422,7 +422,7 @@ not dirty the source checkout. It downloads the LuxTTS source dependency into
 Expected artifacts, depending on installed platform toolchains:
 
 ```text
-~/Downloads/PlushPal/artifacts/macos/PlushBuddy Station.app
+~/Downloads/PlushPal/artifacts/macos/PlushBuddy Hub.app
 ~/Downloads/PlushPal/artifacts/macos/PlushBuddy.app
 ~/Downloads/PlushPal/artifacts/macos/PlushBuddy-0.1.0-macos.zip
 ~/Downloads/PlushPal/artifacts/macos/PlushBuddy-0.1.0-macos.dmg
@@ -440,7 +440,7 @@ make package-macos
 Outputs:
 
 ```text
-~/Downloads/PlushPal/artifacts/macos/PlushBuddy Station.app
+~/Downloads/PlushPal/artifacts/macos/PlushBuddy Hub.app
 ~/Downloads/PlushPal/artifacts/macos/PlushBuddy.app
 ~/Downloads/PlushPal/artifacts/macos/PlushBuddy-0.1.0-macos.zip
 ~/Downloads/PlushPal/artifacts/macos/PlushBuddy-0.1.0-macos.dmg
@@ -465,7 +465,7 @@ This builds:
 ### Start PlushBuddy Hub
 
 ```sh
-open "$HOME/Downloads/PlushPal/artifacts/macos/PlushBuddy Station.app"
+open "$HOME/Downloads/PlushPal/artifacts/macos/PlushBuddy Hub.app"
 ```
 
 Wait until health checks are green. Hub should show:

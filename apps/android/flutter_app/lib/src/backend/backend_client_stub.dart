@@ -741,9 +741,7 @@ class _StationBackendClient implements BackendClient {
         parsed.port == 0 ||
         bootstrap == null ||
         bootstrap.isEmpty) {
-      throw const FormatException(
-        'Paste the full PlushPal pairing URL from the Mac Station app.',
-      );
+      throw const FormatException('Paste the full PlushBuddy Hub pairing URL.');
     }
     final baseUrl = parsed.replace(path: '', query: '', fragment: '');
     final origin = _StationConfig._origin(baseUrl);
@@ -761,7 +759,7 @@ class _StationBackendClient implements BackendClient {
       );
       await response.drain<void>();
       if (response.statusCode != HttpStatus.noContent) {
-        throw HttpException('Mac Station rejected the pairing URL.');
+        throw HttpException('Hub rejected the pairing URL.');
       }
       final cookie =
           response.cookies
@@ -774,9 +772,7 @@ class _StationBackendClient implements BackendClient {
               .where((value) => value.startsWith('pp_session='))
               .firstOrNull;
       if (cookie == null || cookie.isEmpty) {
-        throw const HttpException(
-          'Mac Station did not return a session cookie.',
-        );
+        throw const HttpException('Hub did not return a session cookie.');
       }
       return _StationConfig(
         baseUrl: Uri.parse(origin),
@@ -814,7 +810,7 @@ class _StationBackendClient implements BackendClient {
       );
       final bytes = await consolidateHttpClientResponseBytes(response);
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        var message = 'Mac Station request failed.';
+        var message = 'Hub request failed.';
         try {
           final decoded =
               jsonDecode(utf8.decode(bytes)) as Map<String, Object?>;
@@ -893,7 +889,7 @@ class _StationBackendClient implements BackendClient {
 
   @override
   Future<void> pairStation(String pairingUrl) =>
-      throw UnsupportedError('Already paired to a Mac Station.');
+      throw UnsupportedError('Already paired to a Hub.');
 
   @override
   Future<void> clearStationPairing() =>
@@ -1390,7 +1386,7 @@ class _StationBackendClient implements BackendClient {
   }) {
     if (wavBytes == null || wavBytes.isEmpty) {
       throw UnsupportedError(
-        'Choose an audio sample before creating a Mac Station voice profile.',
+        'Choose an audio sample before creating a Hub voice profile.',
       );
     }
     final filename = sourceFilename ?? '';

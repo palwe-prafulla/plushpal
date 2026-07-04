@@ -144,39 +144,26 @@ def main() -> int:
     if args.voice_engine == "demo":
         env["PLUSHPAL_VOICE_ENGINE"] = "demo"
     elif args.voice_engine == "luxtts":
+        packaged_hub = (
+            Path.home()
+            / "Downloads"
+            / "PlushPal"
+            / "artifacts"
+            / "macos"
+            / "PlushBuddy Hub.app"
+        )
+        packaged_station = packaged_hub.with_name("PlushBuddy Station.app")
+        packaged_app = packaged_hub if packaged_hub.exists() else packaged_station
         env.update(
             {
                 "PLUSHPAL_VOICE_ENGINE": "luxtts",
                 "PLUSHPAL_LUXTTS_PYTHON": env.get(
                     "PLUSHPAL_LUXTTS_PYTHON",
-                    str(
-                        Path.home()
-                        / "Downloads"
-                        / "PlushPal"
-                        / "artifacts"
-                        / "macos"
-                        / "PlushBuddy Station.app"
-                        / "Contents"
-                        / "Resources"
-                        / "python"
-                        / "bin"
-                        / "python"
-                    ),
+                    str(packaged_app / "Contents" / "Resources" / "python" / "bin" / "python"),
                 ),
                 "PLUSHPAL_LUXTTS_SCRIPT": env.get(
                     "PLUSHPAL_LUXTTS_SCRIPT",
-                    str(
-                        Path.home()
-                        / "Downloads"
-                        / "PlushPal"
-                        / "artifacts"
-                        / "macos"
-                        / "PlushBuddy Station.app"
-                        / "Contents"
-                        / "Resources"
-                        / "voice"
-                        / "luxtts_tts.py"
-                    ),
+                    str(packaged_app / "Contents" / "Resources" / "voice" / "luxtts_tts.py"),
                 ),
                 "PLUSHPAL_LUXTTS_NUM_STEPS": env.get("PLUSHPAL_LUXTTS_NUM_STEPS", "8"),
                 "PLUSHPAL_LUXTTS_SPEED": env.get("PLUSHPAL_LUXTTS_SPEED", "0.88"),
