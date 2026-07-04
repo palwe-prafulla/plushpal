@@ -247,6 +247,13 @@
     }
   };
 
+  const stableClientLabel = () => {
+    const nav = window.navigator || {};
+    const platform =
+      nav.userAgentData?.platform || nav.platform || 'browser';
+    return `Browser on ${String(platform).slice(0, 60)}`;
+  };
+
   const providerDisplayName = (provider) =>
     provider === 'openai' ? 'OpenAI' : 'Gemini';
 
@@ -286,6 +293,7 @@
         headers: {
           'x-plushpal-bootstrap': token,
           'x-plushbuddy-client-id': stableClientId(),
+          'x-plushbuddy-client-label': stableClientLabel(),
         },
       });
       if (!response.ok) throw new Error('Hub session expired. Open PlushBuddy from Hub again.');

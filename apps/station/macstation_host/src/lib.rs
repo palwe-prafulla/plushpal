@@ -2233,10 +2233,12 @@ async fn exchange_bootstrap(State(state): State<HostState>, headers: HeaderMap) 
     }
     if let (Some(store), Some(client_id)) = (&state.parent_profile_store, client_id) {
         let platform = client_platform(&client_id).unwrap_or("unknown").to_owned();
-        let label = headers
-            .get(header::USER_AGENT)
-            .and_then(|value| value.to_str().ok())
-            .map(|value| value.chars().take(120).collect::<String>());
+        let label = client_label_from_headers(&headers).or_else(|| {
+            headers
+                .get(header::USER_AGENT)
+                .and_then(|value| value.to_str().ok())
+                .map(|value| value.chars().take(120).collect::<String>())
+        });
         let _ = store.record_paired_client(&PairedClientConfiguration {
             client_id,
             platform,
@@ -2776,6 +2778,25 @@ fn session_cookie(headers: &HeaderMap) -> Option<String> {
 fn client_id_from_headers(headers: &HeaderMap) -> Option<String> {
     let value = headers.get("x-plushbuddy-client-id")?.to_str().ok()?.trim();
     is_valid_client_id(value).then(|| value.to_owned())
+}
+
+fn client_label_from_headers(headers: &HeaderMap) -> Option<String> {
+    let value = headers
+        .get("x-plushbuddy-client-label")?
+        .to_str()
+        .ok()?
+        .trim();
+    if value.is_empty() {
+        return None;
+    }
+    let sanitized = value
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(80)
+        .collect::<String>()
+        .trim()
+        .to_owned();
+    (!sanitized.is_empty()).then_some(sanitized)
 }
 
 fn is_valid_client_id(value: &str) -> bool {
@@ -6596,6 +6617,7 @@ mod tests {
             .header(header::USER_AGENT, "PlushBuddy test client")
             .header("x-plushpal-bootstrap", token)
             .header("x-plushbuddy-client-id", client_id)
+            .header("x-plushbuddy-client-label", "Google Pixel Test")
             .body(Body::empty())
             .unwrap()
     }
@@ -6884,6 +6906,7 @@ mod tests {
         )
         .unwrap();
         assert!(body.contains(client_id));
+        assert!(body.contains("Google Pixel Test"));
 
         let revoke = app
             .clone()

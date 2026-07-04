@@ -40,6 +40,7 @@ import android.graphics.BitmapFactory
 import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.provider.OpenableColumns
+import android.provider.Settings
 import java.io.ByteArrayOutputStream
 import android.util.Base64
 import android.util.Log
@@ -213,6 +214,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, TextToS
             "saveKid" -> saveKid(call, result)
             "deleteKid" -> deleteKid(call, result)
             "stationClientId" -> result.success(stationClientId())
+            "stationClientLabel" -> result.success(stationClientLabel())
             "stationPairingStatus" -> stationPairingStatus(result)
             "saveStationPairing" -> saveStationPairing(call, result)
             "clearStationPairing" -> clearStationPairing(result)
@@ -1395,9 +1397,35 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, TextToS
         readEncryptedValue("station-client-id-v1")?.let { existing ->
             if (existing.matches(Regex("^android-[a-f0-9-]{36}$"))) return existing
         }
-        val generated = "android-${UUID.randomUUID()}"
+        val androidId = Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID)
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() && it != "9774d56d682e549c" }
+        val generated = if (androidId != null) {
+            val stable = UUID.nameUUIDFromBytes(
+                "plushbuddy:android:$androidId".toByteArray(StandardCharsets.UTF_8),
+            )
+            "android-$stable"
+        } else {
+            "android-${UUID.randomUUID()}"
+        }
         writeEncryptedValue("station-client-id-v1", generated)
         return generated
+    }
+
+    private fun stationClientLabel(): String {
+        val manufacturer = Build.MANUFACTURER
+            .orEmpty()
+            .trim()
+            .replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.US) else it.toString() }
+        val model = Build.MODEL.orEmpty().trim()
+        val label = when {
+            manufacturer.isEmpty() && model.isEmpty() -> "Android phone"
+            manufacturer.isEmpty() -> model
+            model.isEmpty() -> "$manufacturer Android"
+            model.startsWith(manufacturer, ignoreCase = true) -> model
+            else -> "$manufacturer $model"
+        }
+        return label.take(80)
     }
 
     private fun handleDebugSavePairingIntent(intent: Intent?) {

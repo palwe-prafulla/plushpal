@@ -3593,6 +3593,17 @@ class _MacStationSettingsScreen extends StatelessWidget {
   final Future<List<PairedClientInfo>> Function() loadPairedClients;
   final Future<void> Function(PairedClientInfo client) revokePairedClient;
 
+  void _openPairedClients(BuildContext context) {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => _PairedClientsSettingsScreen(
+          loadPairedClients: loadPairedClients,
+          revokePairedClient: revokePairedClient,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('Magic Voice Box')),
@@ -3617,37 +3628,47 @@ class _MacStationSettingsScreen extends StatelessWidget {
               trailing: stationPaired
                   ? const Icon(Icons.check_circle, color: Colors.green)
                   : Icon(kIsWeb ? Icons.sync : Icons.qr_code_2),
-              onTap: pairWithStation,
             ),
-            if (stationPaired && !kIsWeb)
-              _SettingsTile(
-                icon: Icons.link_off,
-                title: 'Forget Voice Box',
-                subtitle: 'Remove this client’s connection.',
-                onTap: clearStationPairing,
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  FilledButton.tonalIcon(
+                    onPressed: pairWithStation,
+                    icon: Icon(kIsWeb ? Icons.sync : Icons.qr_code_2),
+                    label: Text(
+                      stationPaired
+                          ? 'Reconnect'
+                          : kIsWeb
+                          ? 'Check'
+                          : 'Pair phone',
+                    ),
+                  ),
+                  if (stationPaired)
+                    OutlinedButton.icon(
+                      onPressed: () => _openPairedClients(context),
+                      icon: const Icon(Icons.devices_other),
+                      label: const Text('Manage paired devices'),
+                    ),
+                  if (stationPaired && !kIsWeb)
+                    TextButton.icon(
+                      onPressed: clearStationPairing,
+                      icon: const Icon(Icons.link_off),
+                      label: const Text('Forget'),
+                    ),
+                ],
               ),
-          ],
-        ),
-        _SettingsGroup(
-          title: 'Paired clients',
-          children: [
-            _SettingsTile(
-              icon: Icons.devices_other,
-              title: 'Manage paired devices',
-              subtitle:
-                  'Review phones, apps, and browsers allowed to use this Magic Voice Box.',
-              trailing: const Icon(Icons.chevron_right),
-              onTap: stationPaired
-                  ? () => Navigator.of(context).push<void>(
-                      MaterialPageRoute(
-                        builder: (_) => _PairedClientsSettingsScreen(
-                          loadPairedClients: loadPairedClients,
-                          revokePairedClient: revokePairedClient,
-                        ),
-                      ),
-                    )
-                  : null,
             ),
+            if (stationPaired)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: Text(
+                  'Manage shows every phone, app, and browser allowed to use this Magic Voice Box.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
           ],
         ),
       ],
@@ -3655,47 +3676,11 @@ class _MacStationSettingsScreen extends StatelessWidget {
   );
 }
 
-class _ThemeSettingsScreen extends StatelessWidget {
-  const _ThemeSettingsScreen({
-    required this.themePreference,
-    required this.onThemePreferenceChanged,
-  });
-
-  final AppThemePreference themePreference;
-  final ValueChanged<AppThemePreference> onThemePreferenceChanged;
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Theme')),
-    body: ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        _SettingsGroup(
-          title: 'Choose colors',
-          children: AppThemePreference.values
-              .map(
-                (preference) => ListTile(
-                  leading: Icon(preference.icon),
-                  title: Text(preference.label),
-                  subtitle: Text(switch (preference) {
-                    AppThemePreference.system =>
-                      'Follow this device’s light or dark setting.',
-                    AppThemePreference.light =>
-                      'Warm cream background with bright PlushBuddy colors.',
-                    AppThemePreference.dark =>
-                      'Cozy dark background with the same playful colors.',
-                  }),
-                  trailing: preference == themePreference
-                      ? const Icon(Icons.check_circle, color: Colors.green)
-                      : null,
-                  onTap: () => onThemePreferenceChanged(preference),
-                ),
-              )
-              .toList(),
-        ),
-      ],
-    ),
-  );
+String _shortClientId(String clientId) {
+  final parts = clientId.split('-');
+  final suffix = parts.isEmpty ? clientId : parts.last;
+  if (suffix.length <= 8) return suffix;
+  return suffix.substring(suffix.length - 8);
 }
 
 class _PairedClientsSettingsScreen extends StatefulWidget {
@@ -3818,7 +3803,10 @@ class _PairedClientTile extends StatelessWidget {
     final isRevoked = client.revokedAt != null;
     final label = client.label?.trim();
     final title = label == null || label.isEmpty ? client.platform : label;
-    final subtitleParts = <String>[client.platform];
+    final subtitleParts = <String>[
+      client.platform,
+      'ID ${_shortClientId(client.clientId)}',
+    ];
     final lastSeenIp = client.lastSeenIp;
     if (lastSeenIp != null && lastSeenIp.isNotEmpty) {
       subtitleParts.add('last IP $lastSeenIp');
@@ -3833,6 +3821,49 @@ class _PairedClientTile extends StatelessWidget {
           : TextButton(onPressed: onRevoke, child: const Text('Forget')),
     );
   }
+}
+
+class _ThemeSettingsScreen extends StatelessWidget {
+  const _ThemeSettingsScreen({
+    required this.themePreference,
+    required this.onThemePreferenceChanged,
+  });
+
+  final AppThemePreference themePreference;
+  final ValueChanged<AppThemePreference> onThemePreferenceChanged;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('Theme')),
+    body: ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        _SettingsGroup(
+          title: 'Choose colors',
+          children: AppThemePreference.values
+              .map(
+                (preference) => ListTile(
+                  leading: Icon(preference.icon),
+                  title: Text(preference.label),
+                  subtitle: Text(switch (preference) {
+                    AppThemePreference.system =>
+                      'Follow this device’s light or dark setting.',
+                    AppThemePreference.light =>
+                      'Warm cream background with bright PlushBuddy colors.',
+                    AppThemePreference.dark =>
+                      'Cozy dark background with the same playful colors.',
+                  }),
+                  trailing: preference == themePreference
+                      ? const Icon(Icons.check_circle, color: Colors.green)
+                      : null,
+                  onTap: () => onThemePreferenceChanged(preference),
+                ),
+              )
+              .toList(),
+        ),
+      ],
+    ),
+  );
 }
 
 class _SettingsEmptyState extends StatelessWidget {

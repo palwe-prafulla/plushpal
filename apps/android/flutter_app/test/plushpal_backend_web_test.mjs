@@ -124,6 +124,11 @@ function createHarness({runBootstrapScript = false} = {}) {
             options.headers['X-PlushBuddy-Client-Id'],
           /^web-[a-f0-9-]{36}$/,
         );
+        assert.match(
+          options.headers['x-plushbuddy-client-label'] ??
+            options.headers['X-PlushBuddy-Client-Label'],
+          /^Browser on /,
+        );
         return {ok: true, status: 204, text: async () => ''};
       }
       if (!String(url).startsWith('https://')) {

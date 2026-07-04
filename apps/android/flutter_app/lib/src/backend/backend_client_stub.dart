@@ -62,9 +62,13 @@ class MethodChannelBackendClient implements BackendClient {
     final clientId =
         await channel.invokeMethod<String>('stationClientId') ??
         'unknown-client';
+    final clientLabel =
+        await channel.invokeMethod<String>('stationClientLabel') ??
+        'Android phone';
     final config = await _StationBackendClient.exchangeBootstrap(
       pairingUrl,
       clientId: clientId,
+      clientLabel: clientLabel,
     );
     await channel.invokeMethod<void>('saveStationPairing', {
       'baseUrl': config.baseUrl.toString(),
@@ -728,6 +732,7 @@ class _StationBackendClient implements BackendClient {
   static Future<_StationConfig> exchangeBootstrap(
     String pairingUrl, {
     required String clientId,
+    required String clientLabel,
   }) async {
     final parsed = Uri.parse(pairingUrl.trim());
     final bootstrap = parsed.fragment
@@ -753,6 +758,7 @@ class _StationBackendClient implements BackendClient {
       request.headers
         ..set('X-PlushPal-Bootstrap', bootstrap)
         ..set('X-PlushBuddy-Client-Id', clientId)
+        ..set('X-PlushBuddy-Client-Label', clientLabel)
         ..set('origin', origin);
       final response = await request.close().timeout(
         const Duration(seconds: 10),

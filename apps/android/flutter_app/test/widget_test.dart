@@ -123,9 +123,9 @@ class FakeBackend implements BackendClient {
     }
     return const [
       PairedClientInfo(
-        clientId: 'android-fixture',
+        clientId: 'android-123e4567-e89b-12d3-a456-426614174000',
         platform: 'Android',
-        label: 'Test phone',
+        label: 'Google Pixel Test',
         createdAt: 100,
         lastSeenAt: 200,
         lastSeenIp: '192.168.1.42',
@@ -965,6 +965,52 @@ void main() {
     expect(find.text('PlushBuddy'), findsOneWidget);
     expect(find.text('Mochi'), findsOneWidget);
   });
+
+  testWidgets(
+    'paired device management is next to pairing only after pairing',
+    (tester) async {
+      await tester.pumpWidget(
+        PlushPalApp(
+          backend: FakeBackend(
+            parentConfigured: true,
+            restoredAgeBand: '6-8',
+            restoredCharacterAlias: 'Mochi',
+          ),
+          platform: FakePlatform(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await openSettings(tester);
+      await tapVisible(tester, 'Magic Voice Box');
+      expect(find.text('Pair phone'), findsOneWidget);
+      expect(find.text('Manage paired devices'), findsNothing);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      final pairedBackend =
+          FakeBackend(
+              parentConfigured: true,
+              restoredAgeBand: '6-8',
+              restoredCharacterAlias: 'Mochi',
+            )
+            ..stationPaired = true
+            ..voiceRuntimeReady = true;
+      await tester.pumpWidget(
+        PlushPalApp(backend: pairedBackend, platform: FakePlatform()),
+      );
+      await tester.pumpAndSettle();
+
+      await openSettings(tester);
+      await tapVisible(tester, 'Magic Voice Box');
+      expect(find.text('Reconnect'), findsOneWidget);
+      expect(find.text('Manage paired devices'), findsOneWidget);
+      await tapVisible(tester, 'Manage paired devices');
+      await tester.pumpAndSettle();
+      expect(find.text('Google Pixel Test'), findsOneWidget);
+      expect(find.textContaining('ID 14174000'), findsOneWidget);
+    },
+  );
 
   testWidgets(
     'character add and delete refresh the settings list immediately',

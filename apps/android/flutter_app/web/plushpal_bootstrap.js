@@ -12,6 +12,13 @@
     }
   };
 
+  const clientLabel = () => {
+    const nav = window.navigator || {};
+    const platform =
+      nav.userAgentData?.platform || nav.platform || 'browser';
+    return `Browser on ${String(platform).slice(0, 60)}`;
+  };
+
   window.__plushpalStationBootstrapStatus = 'not-needed';
   window.__plushpalStationBootstrapReady = (async () => {
     const parameters = new URLSearchParams(window.location.hash.slice(1));
@@ -29,6 +36,7 @@
       headers: {
         'X-PlushPal-Bootstrap': bootstrap,
         'X-PlushBuddy-Client-Id': clientId(),
+        'X-PlushBuddy-Client-Label': clientLabel(),
       },
       credentials: 'same-origin',
     });
