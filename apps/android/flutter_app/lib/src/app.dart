@@ -2635,6 +2635,7 @@ class OnboardingScreen extends StatelessWidget {
                     children: [
                       FilledButton.tonalIcon(
                         onPressed: pairWithStation,
+                        style: _leftAlignedButtonStyle(context),
                         icon: Icon(kIsWeb ? Icons.sync : Icons.qr_code_2),
                         label: Text(
                           kIsWeb
@@ -2646,11 +2647,13 @@ class OnboardingScreen extends StatelessWidget {
                       ),
                       TextButton(
                         onPressed: assessDevice,
+                        style: _leftAlignedTextButtonStyle(context),
                         child: const Text('Check again'),
                       ),
                       if (stationPaired && !kIsWeb)
                         TextButton(
                           onPressed: clearStationPairing,
+                          style: _leftAlignedTextButtonStyle(context),
                           child: const Text('Disconnect'),
                         ),
                     ],
@@ -2747,11 +2750,13 @@ class OnboardingScreen extends StatelessWidget {
               const SizedBox(height: 24),
               FilledButton(
                 onPressed: completeOnboarding,
+                style: _leftAlignedButtonStyle(context),
                 child: const Text('Continue to parent home'),
               ),
               const SizedBox(height: 8),
               FilledButton.tonalIcon(
                 onPressed: () => completeOnboarding(addVoiceAfterSave: true),
+                style: _leftAlignedButtonStyle(context),
                 icon: const Icon(Icons.graphic_eq),
                 label: const Text('Continue and add voice sample'),
               ),
@@ -3271,11 +3276,7 @@ class _PlaySetupStep extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         children: [
-          Icon(
-            complete ? Icons.check_circle : Icons.radio_button_unchecked,
-            size: 20,
-            color: complete ? const Color(0xff16a34a) : colorScheme.outline,
-          ),
+          _PlayfulStatusIcon(ok: complete),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
@@ -5043,6 +5044,7 @@ class _SettingsCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final successColor = const Color(0xff16a34a);
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
       child: Padding(
@@ -5055,10 +5057,10 @@ class _SettingsCard extends StatelessWidget {
               children: [
                 CircleAvatar(
                   backgroundColor: complete
-                      ? colorScheme.primaryContainer
+                      ? const Color(0xffdcfce7)
                       : colorScheme.surfaceContainerHighest,
                   foregroundColor: complete
-                      ? colorScheme.onPrimaryContainer
+                      ? successColor
                       : colorScheme.onSurfaceVariant,
                   child: Icon(icon),
                 ),
@@ -5073,22 +5075,26 @@ class _SettingsCard extends StatelessWidget {
                             ?.copyWith(fontWeight: FontWeight.w700),
                       ),
                       const SizedBox(height: 2),
-                      Text(
-                        status,
-                        style: TextStyle(
-                          color: complete
-                              ? Colors.green.shade700
-                              : colorScheme.onSurfaceVariant,
-                          fontWeight: FontWeight.w600,
-                        ),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _PlayfulStatusIcon(ok: complete, size: 18),
+                          const SizedBox(width: 6),
+                          Flexible(
+                            child: Text(
+                              status,
+                              style: TextStyle(
+                                color: colorScheme.onSurfaceVariant,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
                 ),
-                Icon(
-                  complete ? Icons.check_circle : Icons.error_outline,
-                  color: complete ? Colors.green : colorScheme.outline,
-                ),
+                _PlayfulStatusIcon(ok: complete, size: 30),
               ],
             ),
             const SizedBox(height: 16),
@@ -5111,17 +5117,64 @@ class _StatusLine extends StatelessWidget {
     padding: const EdgeInsets.symmetric(vertical: 2),
     child: Row(
       children: [
-        Icon(
-          ok ? Icons.check_circle : Icons.radio_button_unchecked,
-          color: ok ? Colors.green : Theme.of(context).colorScheme.outline,
-          size: 20,
-        ),
+        _PlayfulStatusIcon(ok: ok, size: 20),
         const SizedBox(width: 8),
         Expanded(child: Text(label)),
       ],
     ),
   );
 }
+
+class _PlayfulStatusIcon extends StatelessWidget {
+  const _PlayfulStatusIcon({required this.ok, this.size = 22});
+
+  final bool ok;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final foreground = ok ? const Color(0xff16a34a) : colorScheme.outline;
+    final background = ok
+        ? const Color(0xffdcfce7)
+        : colorScheme.surfaceContainerHighest;
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: background,
+        shape: BoxShape.circle,
+        border: Border.all(color: foreground.withValues(alpha: 0.35)),
+        boxShadow: ok
+            ? [
+                BoxShadow(
+                  color: foreground.withValues(alpha: 0.16),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ]
+            : null,
+      ),
+      child: Icon(
+        ok ? Icons.check_rounded : Icons.more_horiz_rounded,
+        color: foreground,
+        size: size * 0.68,
+      ),
+    );
+  }
+}
+
+ButtonStyle _leftAlignedButtonStyle(BuildContext context) =>
+    FilledButton.styleFrom(
+      alignment: Alignment.centerLeft,
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+    );
+
+ButtonStyle _leftAlignedTextButtonStyle(BuildContext context) =>
+    TextButton.styleFrom(
+      alignment: Alignment.centerLeft,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+    );
 
 class ChildModeScreen extends StatelessWidget {
   const ChildModeScreen({

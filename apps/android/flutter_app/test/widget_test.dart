@@ -715,6 +715,20 @@ void main() {
     expect(find.byIcon(Icons.favorite), findsNothing);
   });
 
+  testWidgets('setup checklist uses playful status badges', (tester) async {
+    await tester.pumpWidget(
+      PlushPalApp(
+        backend: FakeBackend(modelReady: false),
+        platform: FakePlatform(),
+      ),
+    );
+
+    expect(find.text('Setup checklist'), findsOneWidget);
+    expect(find.byIcon(Icons.check_rounded), findsAtLeastNWidgets(1));
+    expect(find.byIcon(Icons.more_horiz_rounded), findsAtLeastNWidgets(1));
+    expect(find.byIcon(Icons.check_circle), findsNothing);
+  });
+
   testWidgets('child screen hides transcripts and exposes large talk state', (
     tester,
   ) async {

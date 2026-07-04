@@ -157,6 +157,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var detailLabel: NSTextField!
     private var progress: NSProgressIndicator!
     private var serviceStatusStack: NSStackView!
+    private var storageStatusIcon: NSImageView!
+    private var reasoningStatusIcon: NSImageView!
+    private var voiceStatusIcon: NSImageView!
+    private var sttStatusIcon: NSImageView!
+    private var hostStatusIcon: NSImageView!
+    private var browserStatusIcon: NSImageView!
     private var storageStatusLabel: NSTextField!
     private var reasoningStatusLabel: NSTextField!
     private var voiceStatusLabel: NSTextField!
@@ -310,12 +316,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         progress.startAnimation(nil)
         progress.translatesAutoresizingMaskIntoConstraints = false
 
-        storageStatusLabel = NSTextField(labelWithString: "○ Secure storage: getting ready")
-        reasoningStatusLabel = NSTextField(labelWithString: "○ Conversations: checking")
-        voiceStatusLabel = NSTextField(labelWithString: "○ Buddy voices: checking")
-        sttStatusLabel = NSTextField(labelWithString: "○ Listening helper: checking")
-        hostStatusLabel = NSTextField(labelWithString: "○ Hub: starting")
-        browserStatusLabel = NSTextField(labelWithString: "○ Apps: waiting")
+        func makeStatusIcon() -> NSImageView {
+            let icon = NSImageView(image: NSImage(systemSymbolName: "clock.fill", accessibilityDescription: nil) ?? NSImage())
+            icon.translatesAutoresizingMaskIntoConstraints = false
+            icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 14, weight: .semibold)
+            icon.contentTintColor = .secondaryLabelColor
+            return icon
+        }
+
+        storageStatusIcon = makeStatusIcon()
+        reasoningStatusIcon = makeStatusIcon()
+        voiceStatusIcon = makeStatusIcon()
+        sttStatusIcon = makeStatusIcon()
+        hostStatusIcon = makeStatusIcon()
+        browserStatusIcon = makeStatusIcon()
+
+        storageStatusLabel = NSTextField(labelWithString: "Secure storage: getting ready")
+        reasoningStatusLabel = NSTextField(labelWithString: "Conversations: checking")
+        voiceStatusLabel = NSTextField(labelWithString: "Buddy voices: checking")
+        sttStatusLabel = NSTextField(labelWithString: "Listening helper: checking")
+        hostStatusLabel = NSTextField(labelWithString: "Hub: starting")
+        browserStatusLabel = NSTextField(labelWithString: "Apps: waiting")
         for label in [storageStatusLabel, reasoningStatusLabel, voiceStatusLabel, sttStatusLabel, hostStatusLabel, browserStatusLabel] {
             label?.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
             label?.textColor = .secondaryLabelColor
@@ -324,13 +345,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             label?.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             label?.translatesAutoresizingMaskIntoConstraints = false
         }
+
+        func statusRow(icon: NSImageView, label: NSTextField) -> NSStackView {
+            let row = NSStackView(views: [icon, label])
+            row.orientation = .horizontal
+            row.alignment = .centerY
+            row.distribution = .fill
+            row.spacing = 8
+            row.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                icon.widthAnchor.constraint(equalToConstant: 18),
+                icon.heightAnchor.constraint(equalToConstant: 18),
+            ])
+            return row
+        }
+
         serviceStatusStack = NSStackView(views: [
-            storageStatusLabel,
-            reasoningStatusLabel,
-            voiceStatusLabel,
-            sttStatusLabel,
-            hostStatusLabel,
-            browserStatusLabel,
+            statusRow(icon: storageStatusIcon, label: storageStatusLabel),
+            statusRow(icon: reasoningStatusIcon, label: reasoningStatusLabel),
+            statusRow(icon: voiceStatusIcon, label: voiceStatusLabel),
+            statusRow(icon: sttStatusIcon, label: sttStatusLabel),
+            statusRow(icon: hostStatusIcon, label: hostStatusLabel),
+            statusRow(icon: browserStatusIcon, label: browserStatusLabel),
         ])
         serviceStatusStack.orientation = .vertical
         serviceStatusStack.alignment = .leading
@@ -397,6 +433,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         resetVoiceRuntimeButton.bezelStyle = .rounded
         resetVoiceRuntimeButton.isHidden = true
         resetVoiceRuntimeButton.translatesAutoresizingMaskIntoConstraints = false
+
+        for button in [
+            retryButton,
+            quitButton,
+            openBrowserButton,
+            pairAndroidButton,
+            openInAppButton,
+            runtimeModeButton,
+            themeModeButton,
+            parentSetupButton,
+            configureCloudLlmButton,
+            copyDiagnosticsButton,
+            openLogsButton,
+            resetVoiceRuntimeButton,
+        ] {
+            button?.alignment = .left
+            button?.imagePosition = .imageLeading
+        }
 
         func sectionTitle(_ text: String) -> NSTextField {
             let label = NSTextField(labelWithString: text)
@@ -1567,8 +1621,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func refreshChecklistButtons(conversationReady: Bool? = nil) {
         let parentPinReady = UserDefaults.standard.bool(forKey: "PlushBuddyHubParentPinConfigured")
         let cloudReady = conversationReady == true || UserDefaults.standard.bool(forKey: "PlushBuddyHubCloudLlmConfigured")
-        parentSetupButton?.title = parentPinReady ? "✓ Parent PIN done" : "Set parent PIN"
-        configureCloudLlmButton?.title = cloudReady ? "✓ Cloud LLM key done" : "Configure Cloud LLM key"
+        setChecklistButton(parentSetupButton, title: parentPinReady ? "Parent PIN done" : "Set parent PIN", complete: parentPinReady)
+        setChecklistButton(configureCloudLlmButton, title: cloudReady ? "Cloud LLM key done" : "Configure Cloud LLM key", complete: cloudReady)
+    }
+
+    private func setChecklistButton(_ button: NSButton?, title: String, complete: Bool) {
+        guard let button else { return }
+        button.title = title
+        button.alignment = .left
+        button.imagePosition = .imageLeading
+        if complete {
+            button.image = NSImage(systemSymbolName: "checkmark.seal.fill", accessibilityDescription: nil)
+            button.contentTintColor = NSColor(calibratedRed: 0.08, green: 0.55, blue: 0.24, alpha: 1.0)
+            button.bezelColor = NSColor(calibratedRed: 0.86, green: 0.96, blue: 0.88, alpha: 1.0)
+        } else {
+            button.image = nil
+            button.contentTintColor = NSColor(calibratedRed: 0.55, green: 0.36, blue: 0.96, alpha: 1.0)
+            button.bezelColor = nil
+        }
     }
 
     private func saveParentPinToHub(pin: String) throws {
@@ -2249,16 +2319,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     private func updateStatusLabel(_ label: NSTextField, text: String) {
-        label.stringValue = text
-        if text.hasPrefix("✓") {
-            label.textColor = NSColor(calibratedRed: 0.08, green: 0.55, blue: 0.24, alpha: 1.0)
-        } else if text.hasPrefix("△") {
-            label.textColor = NSColor(calibratedRed: 0.82, green: 0.48, blue: 0.00, alpha: 1.0)
-        } else if text.hasPrefix("✕") {
-            label.textColor = NSColor.systemRed
-        } else {
-            label.textColor = .secondaryLabelColor
+        let state = statusState(from: text)
+        label.stringValue = statusTextWithoutPrefix(text)
+        label.textColor = .secondaryLabelColor
+        guard let icon = statusIcon(for: label) else { return }
+        icon.image = NSImage(systemSymbolName: state.symbolName, accessibilityDescription: nil)
+        icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 14, weight: .semibold)
+        icon.contentTintColor = state.color
+    }
+
+    private func statusTextWithoutPrefix(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let statusPrefixes: Set<Character> = ["✓", "●", "○", "△", "✕"]
+        guard let first = trimmed.first, statusPrefixes.contains(first) else {
+            return trimmed
         }
+        return String(trimmed.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func statusState(from text: String) -> (symbolName: String, color: NSColor) {
+        if text.hasPrefix("✓") || text.hasPrefix("●") {
+            return ("checkmark.seal.fill", NSColor(calibratedRed: 0.08, green: 0.62, blue: 0.30, alpha: 1.0))
+        }
+        if text.hasPrefix("△") {
+            return ("exclamationmark.triangle.fill", NSColor(calibratedRed: 0.92, green: 0.56, blue: 0.05, alpha: 1.0))
+        }
+        if text.hasPrefix("✕") {
+            return ("xmark.octagon.fill", NSColor.systemRed)
+        }
+        return ("clock.fill", .secondaryLabelColor)
+    }
+
+    private func statusIcon(for label: NSTextField) -> NSImageView? {
+        if label === storageStatusLabel { return storageStatusIcon }
+        if label === reasoningStatusLabel { return reasoningStatusIcon }
+        if label === voiceStatusLabel { return voiceStatusIcon }
+        if label === sttStatusLabel { return sttStatusIcon }
+        if label === hostStatusLabel { return hostStatusIcon }
+        if label === browserStatusLabel { return browserStatusIcon }
+        return nil
     }
 
     private func updateDetail(_ message: String) {
