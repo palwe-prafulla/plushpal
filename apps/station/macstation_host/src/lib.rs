@@ -2747,6 +2747,7 @@ pub mod native_runtime {
             atomic::{AtomicBool, Ordering},
             Arc, Mutex,
         },
+        thread,
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
@@ -4588,7 +4589,8 @@ pub mod native_runtime {
         seed: Option<String>,
         return_smooth: bool,
         temporary_directory: PathBuf,
-        worker: Mutex<Option<LuxTtsWorker>>,
+        worker: Arc<Mutex<Option<LuxTtsWorker>>>,
+        worker_starting: Arc<AtomicBool>,
     }
 
     struct LuxTtsWorker {
@@ -4697,7 +4699,7 @@ pub mod native_runtime {
             let temporary_directory = data_directory.join("voice-runtime/luxtts");
             std::fs::create_dir_all(&temporary_directory)
                 .map_err(|_| HostError::PersistenceUnavailable)?;
-            let mut candidate = Self {
+            let candidate = Self {
                 python_executable,
                 script_path,
                 worker_script_path,
@@ -4712,21 +4714,77 @@ pub mod native_runtime {
                 seed,
                 return_smooth,
                 temporary_directory,
-                worker: Mutex::new(None),
+                worker: Arc::new(Mutex::new(None)),
+                worker_starting: Arc::new(AtomicBool::new(false)),
             };
-            let worker = candidate.start_worker()?;
-            *candidate
-                .worker
-                .get_mut()
-                .map_err(|_| HostError::VoiceUnavailable)? = Some(worker);
+            candidate.start_worker_in_background();
             Ok(candidate)
         }
 
+        fn start_worker_in_background(&self) {
+            if self.worker_starting.swap(true, Ordering::SeqCst) {
+                return;
+            }
+            let python_executable = self.python_executable.clone();
+            let worker_script_path = self.worker_script_path.clone();
+            let model = self.model.clone();
+            let device = self.device.clone();
+            let threads = self.threads.clone();
+            let ref_duration = self.ref_duration.clone();
+            let rms = self.rms.clone();
+            let num_steps = self.num_steps.clone();
+            let t_shift = self.t_shift.clone();
+            let speed = self.speed.clone();
+            let seed = self.seed.clone();
+            let return_smooth = self.return_smooth;
+            let temporary_directory = self.temporary_directory.clone();
+            let worker_slot = Arc::clone(&self.worker);
+            let worker_starting = Arc::clone(&self.worker_starting);
+            thread::spawn(move || {
+                let result = Self::start_worker_from_parts(
+                    &python_executable,
+                    &worker_script_path,
+                    &model,
+                    &device,
+                    &threads,
+                    &ref_duration,
+                    &rms,
+                    &num_steps,
+                    &t_shift,
+                    &speed,
+                    seed.as_deref(),
+                    return_smooth,
+                    &temporary_directory,
+                );
+                match result {
+                    Ok(worker) => {
+                        if let Ok(mut guard) = worker_slot.lock() {
+                            *guard = Some(worker);
+                            eprintln!("LuxTTS worker warmed and ready.");
+                        }
+                    }
+                    Err(error) => {
+                        eprintln!("LuxTTS worker background startup failed: {error:?}");
+                    }
+                }
+                worker_starting.store(false, Ordering::SeqCst);
+            });
+        }
+
         fn base_command(&self) -> Command {
-            let mut command = Command::new(&self.python_executable);
+            Self::base_command_for(&self.python_executable, &self.temporary_directory)
+        }
+
+        fn base_command_for(python_executable: &Path, temporary_directory: &Path) -> Command {
+            let mut command = Command::new(python_executable);
+            let bundled_hf_home = env::current_dir()
+                .ok()
+                .map(|directory| directory.join("model-cache/huggingface"))
+                .filter(|path| path.join("hub").is_dir());
             let hf_home = env::var_os("HF_HOME")
                 .map(PathBuf::from)
-                .unwrap_or_else(|| self.temporary_directory.join("huggingface"));
+                .or(bundled_hf_home)
+                .unwrap_or_else(|| temporary_directory.join("huggingface"));
             let hf_hub_cache = env::var_os("HF_HUB_CACHE")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| hf_home.join("hub"));
@@ -4739,6 +4797,17 @@ pub mod native_runtime {
                 .env("HF_HOME", hf_home)
                 .env("HF_HUB_CACHE", hf_hub_cache)
                 .env("TRANSFORMERS_CACHE", transformers_cache);
+            if env::var_os("HF_HOME").is_none()
+                && env::current_dir()
+                    .ok()
+                    .map(|directory| directory.join("model-cache/huggingface/hub").is_dir())
+                    .unwrap_or(false)
+            {
+                command
+                    .env("HF_HUB_OFFLINE", "1")
+                    .env("TRANSFORMERS_OFFLINE", "1")
+                    .env("HF_HUB_DISABLE_TELEMETRY", "1");
+            }
             command
         }
 
@@ -4750,30 +4819,92 @@ pub mod native_runtime {
 
         fn start_worker(&self) -> Result<LuxTtsWorker, HostError> {
             let mut command = self.worker_command();
+            Self::start_worker_from_command(
+                &mut command,
+                &self.model,
+                &self.device,
+                &self.threads,
+                &self.ref_duration,
+                &self.rms,
+                &self.num_steps,
+                &self.t_shift,
+                &self.speed,
+                self.seed.as_deref(),
+                self.return_smooth,
+            )
+        }
+
+        #[allow(clippy::too_many_arguments)]
+        fn start_worker_from_parts(
+            python_executable: &Path,
+            worker_script_path: &Path,
+            model: &str,
+            device: &str,
+            threads: &str,
+            ref_duration: &str,
+            rms: &str,
+            num_steps: &str,
+            t_shift: &str,
+            speed: &str,
+            seed: Option<&str>,
+            return_smooth: bool,
+            temporary_directory: &Path,
+        ) -> Result<LuxTtsWorker, HostError> {
+            let mut command = Self::base_command_for(python_executable, temporary_directory);
+            command.arg(worker_script_path);
+            Self::start_worker_from_command(
+                &mut command,
+                model,
+                device,
+                threads,
+                ref_duration,
+                rms,
+                num_steps,
+                t_shift,
+                speed,
+                seed,
+                return_smooth,
+            )
+        }
+
+        #[allow(clippy::too_many_arguments)]
+        fn start_worker_from_command(
+            command: &mut Command,
+            model: &str,
+            device: &str,
+            threads: &str,
+            ref_duration: &str,
+            rms: &str,
+            num_steps: &str,
+            t_shift: &str,
+            speed: &str,
+            seed: Option<&str>,
+            return_smooth: bool,
+        ) -> Result<LuxTtsWorker, HostError> {
             command
                 .arg("--model")
-                .arg(&self.model)
+                .arg(model)
                 .arg("--device")
-                .arg(&self.device)
+                .arg(device)
                 .arg("--threads")
-                .arg(&self.threads)
+                .arg(threads)
                 .arg("--ref-duration")
-                .arg(&self.ref_duration)
+                .arg(ref_duration)
                 .arg("--rms")
-                .arg(&self.rms)
+                .arg(rms)
                 .arg("--num-steps")
-                .arg(&self.num_steps)
+                .arg(num_steps)
                 .arg("--t-shift")
-                .arg(&self.t_shift)
+                .arg(t_shift)
                 .arg("--speed")
-                .arg(&self.speed)
+                .arg(speed)
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::inherit());
-            if let Some(seed) = &self.seed {
+            if let Some(seed) = seed {
                 command.arg("--seed").arg(seed);
             }
-            if self.return_smooth {
+            if return_smooth {
                 command.arg("--return-smooth");
             }
             let mut child = command.spawn().map_err(|_| HostError::VoiceUnavailable)?;
@@ -4867,7 +4998,9 @@ pub mod native_runtime {
 
     impl VoiceEngine for LuxTtsVoiceEngine {
         fn is_ready(&self) -> bool {
-            true
+            self.worker
+                .lock()
+                .is_ok_and(|guard| guard.as_ref().is_some_and(|worker| worker.child.id() > 0))
         }
 
         fn synthesize(&self, reference_wav: &[u8], text: &str) -> Result<Vec<u8>, HostError> {

@@ -607,11 +607,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             appendLog("app-shell.log", "Hub STT fallback is not bundled")
             return nil
         }
-        if isSpeechToTextRuntimeReady(python: bundledPython, script: script),
-           let command = writeSpeechToTextCommandWrapper(python: bundledPython, script: script) {
+        if let command = writeSpeechToTextCommandWrapper(python: bundledPython, script: script) {
+            appendLog("app-shell.log", "Hub STT fallback wrapper prepared")
             return SpeechToTextRuntime(command: command)
         }
-        appendLog("app-shell.log", "Hub STT fallback script exists but healthcheck failed")
+        appendLog("app-shell.log", "Hub STT fallback script exists but wrapper creation failed")
         return nil
     }
 
@@ -619,8 +619,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let directory = applicationSupportDirectory()
             .appendingPathComponent("stt-runtime", isDirectory: true)
         let command = directory.appendingPathComponent("whisper-transcribe", isDirectory: false)
+        let bundledHfHome = Bundle.main.resourceURL?
+            .appendingPathComponent("model-cache", isDirectory: true)
+            .appendingPathComponent("huggingface", isDirectory: true)
+        let cacheExports: String
+        if let bundledHfHome,
+           FileManager.default.fileExists(atPath: bundledHfHome.appendingPathComponent("hub", isDirectory: true).path) {
+            cacheExports = """
+            export HF_HOME=\(shellQuote(bundledHfHome.path))
+            export HF_HUB_CACHE=\(shellQuote(bundledHfHome.appendingPathComponent("hub", isDirectory: true).path))
+            export TRANSFORMERS_CACHE=\(shellQuote(bundledHfHome.appendingPathComponent("hub", isDirectory: true).path))
+            export HF_HUB_OFFLINE=1
+            export TRANSFORMERS_OFFLINE=1
+            export HF_HUB_DISABLE_TELEMETRY=1
+            """
+        } else {
+            cacheExports = ""
+        }
         let contents = """
         #!/bin/sh
+        \(cacheExports)
         exec \(shellQuote(python.path)) \(shellQuote(script.path)) "$@"
         """
         do {
