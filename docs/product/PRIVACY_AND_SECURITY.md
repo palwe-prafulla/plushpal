@@ -2,7 +2,7 @@
 
 Last updated: 2026-07-02
 
-PlushBuddy is designed as a local-first pretend-play system. The vNext
+PlushBuddy is designed as a local-first pretend-play system. The current
 architecture uses **PlushBuddy Hub** as the local private backend. The Hub runs
 on the parent’s computer, stores durable app data in an encrypted SQLCipher
 database, runs voice generation locally, and exposes paired APIs to native
@@ -10,7 +10,7 @@ clients on the same local network.
 
 ## Core privacy boundary
 
-Target architecture:
+Current paired-product architecture:
 
 - Hub owns kid profiles, character profiles, provider settings, conversation
   history, prompt construction, runtime mode, and voice profiles.
@@ -25,8 +25,8 @@ Target architecture:
 
 | Mode | Cloud use | Local processing |
 |---|---|---|
-| Privacy local-first | No cloud LLM calls after model setup/update checks | Hub local STT fallback, local LLM, LuxTTS, SQLCipher |
-| Cloud LLM | Redacted/minimized text prompt goes to Gemini/OpenAI | Hub STT fallback, redaction, guardrails, LuxTTS, SQLCipher |
+| Privacy local-first | No cloud LLM calls after model setup/update checks | Packaged Hub local STT fallback, local LLM target, LuxTTS, SQLCipher |
+| Cloud LLM | Redacted/minimized text prompt goes to Gemini/OpenAI | Redaction, guardrails, LuxTTS, SQLCipher |
 
 Provider cloud STT is not used silently. If cloud STT is ever added, it must be
 an explicit parent opt-in.
@@ -39,9 +39,11 @@ Native clients must prefer verified on-device STT:
 - iPhone/Mac: Apple speech recognition with `requiresOnDeviceRecognition`.
 - Windows future: verified device/in-process recognizer only.
 
-If verified on-device STT is unavailable, the client sends bounded audio to Hub
-local STT over the local paired session. Hub STT should use a local model such
-as Whisper through `whisper.cpp` or an equivalent local ASR runtime.
+If verified on-device STT is unavailable or fails, Android/iPhone record a
+bounded local WAV and send it to Hub local STT over the local paired session.
+Local browser/Mac WebKit clients use the same bounded-audio policy when browser
+microphone capture is available. The Hub packages and health-checks a local
+Whisper wrapper for this endpoint.
 
 ## Data flow summary
 
@@ -59,7 +61,7 @@ as Whisper through `whisper.cpp` or an equivalent local ASR runtime.
 
 ## Secrets and storage
 
-Hub target storage:
+Hub storage:
 
 - SQLCipher database for durable app records.
 - Platform secure storage for DB key wrapping and high-value secrets where
@@ -67,20 +69,21 @@ Hub target storage:
 - Encrypted voice reference files referenced by SQLCipher.
 - Paired-client credentials stored in Hub DB/secure storage.
 
-Client target storage:
+Paired client storage:
 
 - stable client ID;
-- client key pair or high-entropy device secret;
+- pairing/session secret;
 - Hub URL / last-known Hub address;
 - short-lived session token/cookie;
 - no durable kids, characters, API keys, or conversation history.
 
 ## Paired-client identity
 
-IP address is never identity. Clients generate a stable identity and credential
-at first pairing. The Hub records `client_id`, platform, friendly label, public
-key/secret reference, creation time, last seen time, and last seen IP for
-diagnostics only.
+IP address is never identity. Clients generate a stable identity at first
+pairing and send it with Hub requests. Hub stores a paired-device registry with
+`client_id`, platform, friendly label, creation time, last seen time, last seen
+IP for diagnostics only, and parent-gated revocation. Normal family-data APIs
+resolve to an encrypted per-client Hub store using that stable `client_id`.
 
 If a phone’s IP changes, it remains the same paired client.
 
@@ -115,10 +118,12 @@ Before a consumer release, PlushBuddy should add:
 
 - signed and notarized Hub launcher;
 - signed Android/iPhone/Mac clients;
-- Hub device revocation UI;
-- SQLCipher backup/export/import;
-- enforced local-only STT checks on native clients;
-- Hub STT fallback;
+- stronger paired-client key-pair credentials beyond bearer session cookies;
+- file-based backup/export/import UX polish beyond the current parent-PIN
+  encrypted clipboard flow;
+- broaden Mac/WebKit microphone QA across macOS versions;
+- replace the Python/Transformers Hub STT wrapper with a leaner packaged
+  `whisper.cpp` runtime if performance requires it;
 - local LLM bakeoff and safety regression suite;
 - clear parent consent for cloud LLM mode;
 - telemetry/diagnostics that do not collect child content;

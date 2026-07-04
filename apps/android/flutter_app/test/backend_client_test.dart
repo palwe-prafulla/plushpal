@@ -32,6 +32,12 @@ void main() {
             };
           }
           if (call.method == 'authorizeParentPin') return true;
+          if (call.method == 'exportBackup') {
+            return <String, Object>{
+              'backupBase64': 'encrypted-backup-fixture',
+              'exportedAt': 1234,
+            };
+          }
           if (call.method == 'voiceStatus') {
             return <String, Object>{
               'enrolled': true,
@@ -146,6 +152,25 @@ void main() {
     expect(backendCalls().single.method, 'deleteAllLocalData');
     expect(backendCalls().single.arguments, {'pin': '4826'});
   });
+
+  test(
+    'encrypted backup export and import stay behind parent boundary',
+    () async {
+      final backup = await client.exportBackup('4826');
+      expect(backup.backupBase64, 'encrypted-backup-fixture');
+      expect(backup.exportedAt, 1234);
+      await client.importBackup(pin: '4826', backupBase64: backup.backupBase64);
+      expect(backendCalls().map((call) => call.method), [
+        'exportBackup',
+        'importBackup',
+      ]);
+      expect(backendCalls().first.arguments, {'pin': '4826'});
+      expect(backendCalls().last.arguments, {
+        'pin': '4826',
+        'backupBase64': 'encrypted-backup-fixture',
+      });
+    },
+  );
 
   test(
     'history review and deletion remain behind native parent boundary',

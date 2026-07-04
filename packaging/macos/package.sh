@@ -7,7 +7,11 @@ ARCHIVE_TIMESTAMP=${PLUSHPAL_ARCHIVE_TIMESTAMP:-202601010000}
 ARTIFACTS_ROOT=${PLUSHPAL_ARTIFACTS_DIR:-"$ROOT/dist"}
 BUILD_ROOT=${PLUSHPAL_BUILD_DIR:-"$ROOT/build"}
 CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-"$ROOT/target"}
-LUXTTS_SOURCE_DIR=${PLUSHPAL_LUXTTS_SOURCE_DIR:-"$ROOT/third_party/LuxTTS"}
+DEFAULT_LUXTTS_SOURCE_DIR="$HOME/Downloads/PlushPal/deps/LuxTTS"
+if [ ! -f "$DEFAULT_LUXTTS_SOURCE_DIR/requirements.txt" ]; then
+  DEFAULT_LUXTTS_SOURCE_DIR="$ROOT/third_party/LuxTTS"
+fi
+LUXTTS_SOURCE_DIR=${PLUSHPAL_LUXTTS_SOURCE_DIR:-"$DEFAULT_LUXTTS_SOURCE_DIR"}
 OUTPUT="$ARTIFACTS_ROOT/macos"
 STATION_APP="$OUTPUT/PlushBuddy Station.app"
 CLIENT_APP="$OUTPUT/PlushBuddy.app"
@@ -50,9 +54,12 @@ test -n "$LLAMA_DYLIB"
 cp "$LLAMA_DYLIB" "$STATION_APP/Contents/Frameworks/libplushpal_llama.dylib"
 install_name_tool -add_rpath '@executable_path/../Frameworks' "$STATION_APP/Contents/MacOS/plushpal-desktop-host"
 mkdir -p "$STATION_APP/Contents/Resources/voice"
+mkdir -p "$STATION_APP/Contents/Resources/stt"
 cp tools/voice/chatterbox_tts.py "$STATION_APP/Contents/Resources/voice/chatterbox_tts.py"
 cp tools/voice/luxtts_tts.py "$STATION_APP/Contents/Resources/voice/luxtts_tts.py"
 cp tools/voice/luxtts_worker.py "$STATION_APP/Contents/Resources/voice/luxtts_worker.py"
+cp tools/stt/whisper_transcribe.py "$STATION_APP/Contents/Resources/stt/whisper_transcribe.py"
+chmod +x "$STATION_APP/Contents/Resources/stt/whisper_transcribe.py"
 cp packaging/macos/install_chatterbox_runtime.sh "$STATION_APP/Contents/Resources/install_chatterbox_runtime.sh"
 cp packaging/macos/install_luxtts_runtime.sh "$STATION_APP/Contents/Resources/install_luxtts_runtime.sh"
 mkdir -p "$STATION_APP/Contents/Resources/third_party"
@@ -131,8 +138,10 @@ fi
 sed "s/@VERSION@/$VERSION/g" packaging/macos/StationInfo.plist.in > "$STATION_APP/Contents/Info.plist"
 
 TEAM_ID=${PLUSHPAL_TEAM_ID:-LOCAL}
-ENTITLEMENTS="$OUTPUT/PlushBuddyStation.entitlements"
-sed "s/@TEAM_ID@/$TEAM_ID/g" packaging/macos/PlushBuddyStation.entitlements.in > "$ENTITLEMENTS"
+STATION_ENTITLEMENTS="$OUTPUT/PlushBuddyStation.entitlements"
+CLIENT_ENTITLEMENTS="$OUTPUT/PlushBuddy.entitlements"
+sed "s/@TEAM_ID@/$TEAM_ID/g" packaging/macos/PlushBuddyStation.entitlements.in > "$STATION_ENTITLEMENTS"
+sed "s/@TEAM_ID@/$TEAM_ID/g" packaging/macos/PlushPal.entitlements.in > "$CLIENT_ENTITLEMENTS"
 
 find "$CLIENT_APP" "$STATION_APP" -type l -exec touch -h -t "$ARCHIVE_TIMESTAMP" {} +
 find "$CLIENT_APP" "$STATION_APP" ! -type l -exec touch -t "$ARCHIVE_TIMESTAMP" {} +
@@ -140,13 +149,13 @@ find "$CLIENT_APP" "$STATION_APP" ! -type l -exec touch -t "$ARCHIVE_TIMESTAMP" 
 if [ -n "${PLUSHPAL_CODESIGN_IDENTITY:-}" ]; then
   codesign --force --options runtime --timestamp --sign "$PLUSHPAL_CODESIGN_IDENTITY" \
     "$STATION_APP/Contents/Frameworks/libplushpal_llama.dylib"
-  codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" \
+  codesign --force --options runtime --timestamp --entitlements "$STATION_ENTITLEMENTS" \
     --sign "$PLUSHPAL_CODESIGN_IDENTITY" "$STATION_APP/Contents/MacOS/plushpal-desktop-host"
-  codesign --force --options runtime --timestamp \
+  codesign --force --options runtime --timestamp --entitlements "$CLIENT_ENTITLEMENTS" \
     --sign "$PLUSHPAL_CODESIGN_IDENTITY" "$CLIENT_APP"
-  codesign --force --options runtime --timestamp \
+  codesign --force --options runtime --timestamp --entitlements "$CLIENT_ENTITLEMENTS" \
     --sign "$PLUSHPAL_CODESIGN_IDENTITY" "$STATION_APP/Contents/Resources/PlushBuddy.app"
-  codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" \
+  codesign --force --options runtime --timestamp --entitlements "$STATION_ENTITLEMENTS" \
     --sign "$PLUSHPAL_CODESIGN_IDENTITY" "$STATION_APP"
 else
   codesign --force --sign - "$STATION_APP/Contents/Frameworks/libplushpal_llama.dylib"

@@ -11,6 +11,8 @@ use std::{
 use std::path::PathBuf;
 
 use plushpal_desktop_gateway::LoopbackEndpoint;
+#[cfg(feature = "native-runtime")]
+use plushpal_desktop_host::ParentProfileStore;
 use plushpal_desktop_host::{build_router, HostState, OsTokenSource, SystemClock, TokenSource};
 use tokio::net::TcpListener;
 
@@ -20,6 +22,8 @@ enum RuntimeMode {
     Mock,
     Demo,
     LocalVoice,
+    PrivacyLocalFirst,
+    CloudLlm,
     Cloud,
     Full,
 }
@@ -37,6 +41,10 @@ impl RuntimeMode {
                 "mock" => Self::Mock,
                 "demo" => Self::Demo,
                 "local_voice" | "local-voice" => Self::LocalVoice,
+                "privacy_local_first" | "privacy-local-first" | "local_first" | "local-first" => {
+                    Self::PrivacyLocalFirst
+                }
+                "cloud_llm" | "cloud-llm" => Self::CloudLlm,
                 "cloud" => Self::Cloud,
                 "full" => Self::Full,
                 other => {
@@ -52,8 +60,12 @@ impl RuntimeMode {
 
     fn default_voice_engine(self) -> Option<&'static str> {
         match self {
-            Self::Mock | Self::Demo | Self::Cloud => Some("demo"),
-            Self::LocalVoice | Self::Full => Some("luxtts"),
+            Self::Mock | Self::Demo => Some("demo"),
+            Self::LocalVoice
+            | Self::PrivacyLocalFirst
+            | Self::CloudLlm
+            | Self::Cloud
+            | Self::Full => Some("luxtts"),
             Self::Custom => None,
         }
     }
@@ -68,13 +80,38 @@ impl RuntimeMode {
     }
 
     #[cfg_attr(not(feature = "native-runtime"), allow(dead_code))]
+    fn cloud_allowed(self) -> bool {
+        !matches!(
+            self,
+            Self::PrivacyLocalFirst | Self::Mock | Self::Demo | Self::LocalVoice
+        )
+    }
+
+    #[cfg_attr(not(feature = "native-runtime"), allow(dead_code))]
+    fn local_model_allowed(self) -> bool {
+        !matches!(
+            self,
+            Self::CloudLlm | Self::Cloud | Self::Mock | Self::Demo | Self::LocalVoice
+        )
+    }
+
+    #[cfg_attr(not(feature = "native-runtime"), allow(dead_code))]
+    fn prefers_cloud(self) -> bool {
+        matches!(
+            self,
+            Self::CloudLlm | Self::Cloud | Self::Custom | Self::Full
+        )
+    }
+
+    #[cfg_attr(not(feature = "native-runtime"), allow(dead_code))]
     fn as_str(self) -> &'static str {
         match self {
             Self::Custom => "custom",
             Self::Mock => "mock",
             Self::Demo => "demo",
             Self::LocalVoice => "local_voice",
-            Self::Cloud => "cloud",
+            Self::PrivacyLocalFirst => "privacy_local_first",
+            Self::CloudLlm | Self::Cloud => "cloud_llm",
             Self::Full => "full",
         }
     }
@@ -119,7 +156,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         use plushpal_desktop_host::native_runtime::{
             ChatterboxVoiceEngine, DemoConversationEngine, DemoVoiceEngine,
             GeminiConversationEngine, LuxTtsVoiceEngine, NativeConversationEngine,
-            NativeModelInstaller, NativeParentProfileStore, PocketVoiceEngine,
+            NativeModelInstaller, NativeParentProfileStore, OpenAiConversationEngine,
+            PocketVoiceEngine, WhisperCliSpeechToTextEngine,
         };
 
         let runtime_mode = RuntimeMode::from_env();
@@ -150,8 +188,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         let mut state = state
             .with_model_installer(installer)
-            .with_parent_profile_store(profile_store)
+            .with_parent_profile_store(profile_store.clone())
             .map_err(|error| std::io::Error::other(format!("{error:?}")))?;
+        let saved_cloud_provider = profile_store
+            .reasoning_provider_status()
+            .ok()
+            .filter(|status| status.configured)
+            .and_then(|status| {
+                profile_store
+                    .load_provider_api_key(&status.provider)
+                    .ok()
+                    .flatten()
+                    .map(|api_key| (status.provider, api_key))
+            });
         let requested_voice_engine = env::var("PLUSHPAL_VOICE_ENGINE").unwrap_or_else(|_| {
             runtime_mode
                 .default_voice_engine()
@@ -271,28 +320,127 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 state = state.with_voice_engine(Arc::new(voice_engine));
             }
         }
+        if let Some(command_path) = env::var_os("PLUSHPAL_STT_COMMAND").map(PathBuf::from) {
+            match WhisperCliSpeechToTextEngine::new(command_path, &data_directory) {
+                Ok(engine) => {
+                    eprintln!("PlushPal local STT fallback enabled.");
+                    state = state.with_speech_to_text_engine(Arc::new(engine));
+                }
+                Err(error) => {
+                    eprintln!(
+                        "PlushPal local STT fallback is unavailable; native clients must use verified on-device STT: {error:?}"
+                    );
+                }
+            }
+        }
         if runtime_mode.uses_demo_conversation() {
             eprintln!(
                 "PlushPal demo conversation engine enabled; no cloud reasoning calls will be made."
             );
             state = state.with_conversation_engine(Arc::new(DemoConversationEngine));
         } else if !runtime_mode.suppress_cloud_and_local_model() {
-            if let Some(api_key) = gemini_api_key(&data_directory) {
-                let model = env::var("PLUSHPAL_GEMINI_MODEL")
-                    .unwrap_or_else(|_| "gemini-2.5-flash".to_owned());
-                match GeminiConversationEngine::new(api_key, model.clone()) {
-                    Ok(engine) => {
-                        eprintln!("PlushPal Gemini reasoning enabled with model {model}");
-                        state = state.with_conversation_engine(Arc::new(engine));
-                    }
-                    Err(error) => {
-                        eprintln!("PlushPal Gemini reasoning is unavailable: {error:?}");
+            let mut loaded_conversation = false;
+            if runtime_mode.prefers_cloud() && runtime_mode.cloud_allowed() {
+                if let Some((provider, api_key)) = saved_cloud_provider.clone().or_else(|| {
+                    gemini_api_key(&data_directory).map(|key| ("gemini".to_owned(), key))
+                }) {
+                    match provider.as_str() {
+                        "openai" => {
+                            let model = env::var("PLUSHPAL_OPENAI_MODEL")
+                                .unwrap_or_else(|_| "gpt-4.1-mini".to_owned());
+                            match OpenAiConversationEngine::new(api_key, model.clone()) {
+                                Ok(engine) => {
+                                    eprintln!(
+                                        "PlushPal OpenAI reasoning enabled with model {model}"
+                                    );
+                                    state = state.with_conversation_engine(Arc::new(engine));
+                                    loaded_conversation = true;
+                                }
+                                Err(error) => {
+                                    eprintln!(
+                                        "PlushPal OpenAI reasoning is unavailable: {error:?}"
+                                    );
+                                }
+                            }
+                        }
+                        _ => {
+                            let model = env::var("PLUSHPAL_GEMINI_MODEL")
+                                .unwrap_or_else(|_| "gemini-2.5-flash".to_owned());
+                            match GeminiConversationEngine::new(api_key, model.clone()) {
+                                Ok(engine) => {
+                                    eprintln!(
+                                        "PlushPal Gemini reasoning enabled with model {model}"
+                                    );
+                                    state = state.with_conversation_engine(Arc::new(engine));
+                                    loaded_conversation = true;
+                                }
+                                Err(error) => {
+                                    eprintln!(
+                                        "PlushPal Gemini reasoning is unavailable: {error:?}"
+                                    );
+                                }
+                            }
+                        }
                     }
                 }
-            } else if let Some(model_path) = model_path {
-                let engine = NativeConversationEngine::load(&model_path)
-                    .map_err(|error| std::io::Error::other(format!("{error:?}")))?;
-                state = state.with_conversation_engine(Arc::new(engine));
+            }
+            if !loaded_conversation && runtime_mode.local_model_allowed() {
+                if let Some(model_path) = model_path.as_ref() {
+                    match NativeConversationEngine::load(model_path) {
+                        Ok(engine) => {
+                            state = state.with_conversation_engine(Arc::new(engine));
+                            loaded_conversation = true;
+                        }
+                        Err(error) => {
+                            eprintln!(
+                                "PlushPal local conversation model is unavailable: {error:?}"
+                            );
+                        }
+                    }
+                }
+            }
+            if !loaded_conversation && !runtime_mode.prefers_cloud() && runtime_mode.cloud_allowed()
+            {
+                if let Some((provider, api_key)) = saved_cloud_provider.clone().or_else(|| {
+                    gemini_api_key(&data_directory).map(|key| ("gemini".to_owned(), key))
+                }) {
+                    match provider.as_str() {
+                        "openai" => {
+                            let model = env::var("PLUSHPAL_OPENAI_MODEL")
+                                .unwrap_or_else(|_| "gpt-4.1-mini".to_owned());
+                            match OpenAiConversationEngine::new(api_key, model.clone()) {
+                                Ok(engine) => {
+                                    eprintln!(
+                                        "PlushPal OpenAI reasoning enabled with model {model}"
+                                    );
+                                    state = state.with_conversation_engine(Arc::new(engine));
+                                }
+                                Err(error) => {
+                                    eprintln!(
+                                        "PlushPal OpenAI reasoning is unavailable: {error:?}"
+                                    );
+                                }
+                            }
+                        }
+                        _ => {
+                            let model = env::var("PLUSHPAL_GEMINI_MODEL")
+                                .unwrap_or_else(|_| "gemini-2.5-flash".to_owned());
+                            match GeminiConversationEngine::new(api_key, model.clone()) {
+                                Ok(engine) => {
+                                    eprintln!(
+                                        "PlushPal Gemini reasoning enabled with model {model}"
+                                    );
+                                    state = state.with_conversation_engine(Arc::new(engine));
+                                }
+                                Err(error) => {
+                                    eprintln!(
+                                        "PlushPal Gemini reasoning is unavailable: {error:?}"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
         state
@@ -449,6 +597,15 @@ mod tests {
             RuntimeMode::parse(Some("local_voice")),
             RuntimeMode::LocalVoice
         );
+        assert_eq!(
+            RuntimeMode::parse(Some("privacy-local-first")),
+            RuntimeMode::PrivacyLocalFirst
+        );
+        assert_eq!(
+            RuntimeMode::parse(Some("local_first")),
+            RuntimeMode::PrivacyLocalFirst
+        );
+        assert_eq!(RuntimeMode::parse(Some("cloud-llm")), RuntimeMode::CloudLlm);
         assert_eq!(RuntimeMode::parse(Some("cloud")), RuntimeMode::Cloud);
         assert_eq!(RuntimeMode::parse(Some("full")), RuntimeMode::Full);
     }
@@ -457,7 +614,12 @@ mod tests {
     fn runtime_mode_selects_safe_defaults() {
         assert_eq!(RuntimeMode::Mock.default_voice_engine(), Some("demo"));
         assert_eq!(RuntimeMode::Demo.default_voice_engine(), Some("demo"));
-        assert_eq!(RuntimeMode::Cloud.default_voice_engine(), Some("demo"));
+        assert_eq!(RuntimeMode::Cloud.default_voice_engine(), Some("luxtts"));
+        assert_eq!(RuntimeMode::CloudLlm.default_voice_engine(), Some("luxtts"));
+        assert_eq!(
+            RuntimeMode::PrivacyLocalFirst.default_voice_engine(),
+            Some("luxtts")
+        );
         assert_eq!(
             RuntimeMode::LocalVoice.default_voice_engine(),
             Some("luxtts")
@@ -469,6 +631,12 @@ mod tests {
         assert!(RuntimeMode::Demo.uses_demo_conversation());
         assert!(RuntimeMode::LocalVoice.uses_demo_conversation());
         assert!(!RuntimeMode::Cloud.uses_demo_conversation());
+        assert!(!RuntimeMode::CloudLlm.uses_demo_conversation());
+        assert!(!RuntimeMode::PrivacyLocalFirst.uses_demo_conversation());
         assert!(!RuntimeMode::Full.uses_demo_conversation());
+        assert!(!RuntimeMode::PrivacyLocalFirst.cloud_allowed());
+        assert!(RuntimeMode::PrivacyLocalFirst.local_model_allowed());
+        assert!(RuntimeMode::CloudLlm.cloud_allowed());
+        assert!(!RuntimeMode::CloudLlm.local_model_allowed());
     }
 }

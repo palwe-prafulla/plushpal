@@ -30,13 +30,20 @@ class MethodChannelBackendClient implements BackendClient {
     if (response == null || response['paired'] != true) return null;
     final baseUrl = response['baseUrl'] as String?;
     final cookie = response['cookie'] as String?;
+    final clientId = response['clientId'] as String?;
     if (baseUrl == null ||
         cookie == null ||
+        clientId == null ||
         baseUrl.isEmpty ||
-        cookie.isEmpty) {
+        cookie.isEmpty ||
+        clientId.isEmpty) {
       return null;
     }
-    return _StationConfig(baseUrl: Uri.parse(baseUrl), cookie: cookie);
+    return _StationConfig(
+      baseUrl: Uri.parse(baseUrl),
+      cookie: cookie,
+      clientId: clientId,
+    );
   }
 
   @override
@@ -52,10 +59,17 @@ class MethodChannelBackendClient implements BackendClient {
 
   @override
   Future<void> pairStation(String pairingUrl) async {
-    final config = await _StationBackendClient.exchangeBootstrap(pairingUrl);
+    final clientId =
+        await channel.invokeMethod<String>('stationClientId') ??
+        'unknown-client';
+    final config = await _StationBackendClient.exchangeBootstrap(
+      pairingUrl,
+      clientId: clientId,
+    );
     await channel.invokeMethod<void>('saveStationPairing', {
       'baseUrl': config.baseUrl.toString(),
       'cookie': config.cookie,
+      'clientId': config.clientId,
     });
   }
 
@@ -64,7 +78,28 @@ class MethodChannelBackendClient implements BackendClient {
       channel.invokeMethod<void>('clearStationPairing');
 
   @override
+  Future<List<PairedClientInfo>> pairedClients(String pin) async {
+    final station = await _stationBackend();
+    if (station != null) return station.pairedClients(pin);
+    return const [];
+  }
+
+  @override
+  Future<void> revokePairedClient({
+    required String pin,
+    required String clientId,
+  }) async {
+    final station = await _stationBackend();
+    if (station != null) {
+      return station.revokePairedClient(pin: pin, clientId: clientId);
+    }
+    throw UnsupportedError('Paired devices are managed by PlushBuddy Hub.');
+  }
+
+  @override
   Future<ReasoningProviderStatus> reasoningProviderStatus() async {
+    final station = await _stationBackend();
+    if (station != null) return station.reasoningProviderStatus();
     final response = await channel.invokeMapMethod<Object?, Object?>(
       'reasoningProviderStatus',
     );
@@ -77,19 +112,32 @@ class MethodChannelBackendClient implements BackendClient {
 
   @override
   Future<void> configureApiKey({
+    required String pin,
     required String provider,
     required String apiKey,
-  }) => channel.invokeMethod<void>('saveProviderApiKey', {
-    'provider': provider,
-    'apiKey': apiKey,
-  });
+  }) async {
+    final station = await _stationBackend();
+    if (station != null) {
+      return station.configureApiKey(
+        pin: pin,
+        provider: provider,
+        apiKey: apiKey,
+      );
+    }
+    return channel.invokeMethod<void>('saveProviderApiKey', {
+      'provider': provider,
+      'apiKey': apiKey,
+    });
+  }
 
   @override
   Future<void> configureGeminiApiKey(String apiKey) =>
-      configureApiKey(provider: 'gemini', apiKey: apiKey);
+      configureApiKey(pin: '', provider: 'gemini', apiKey: apiKey);
 
   @override
   Future<List<KidProfile>> kids() async {
+    final station = await _stationBackend();
+    if (station != null) return station.kids();
     final rows = await channel.invokeListMethod<Object?>('kids') ?? const [];
     return rows.map((row) {
       final kid = row! as Map<Object?, Object?>;
@@ -114,21 +162,44 @@ class MethodChannelBackendClient implements BackendClient {
     required String birthdateIso,
     Uint8List? photoBytes,
     String? photoMime,
-  }) => channel.invokeMethod<void>('saveKid', {
-    'pin': pin,
-    'kidId': kidId,
-    'name': name,
-    'birthdateIso': birthdateIso,
-    'photoBytes': photoBytes,
-    'photoMime': photoMime,
-  });
+  }) async {
+    final station = await _stationBackend();
+    if (station != null) {
+      return station.saveKid(
+        pin: pin,
+        kidId: kidId,
+        name: name,
+        birthdateIso: birthdateIso,
+        photoBytes: photoBytes,
+        photoMime: photoMime,
+      );
+    }
+    return channel.invokeMethod<void>('saveKid', {
+      'pin': pin,
+      'kidId': kidId,
+      'name': name,
+      'birthdateIso': birthdateIso,
+      'photoBytes': photoBytes,
+      'photoMime': photoMime,
+    });
+  }
 
   @override
-  Future<void> deleteKid({required String pin, required String kidId}) =>
-      channel.invokeMethod<void>('deleteKid', {'pin': pin, 'kidId': kidId});
+  Future<void> deleteKid({required String pin, required String kidId}) async {
+    final station = await _stationBackend();
+    if (station != null) {
+      return station.deleteKid(pin: pin, kidId: kidId);
+    }
+    return channel.invokeMethod<void>('deleteKid', {
+      'pin': pin,
+      'kidId': kidId,
+    });
+  }
 
   @override
   Future<LocalModelReadiness> localModelReadiness() async {
+    final station = await _stationBackend();
+    if (station != null) return station.localModelReadiness();
     final response = await channel.invokeMapMethod<Object?, Object?>(
       'modelStatus',
     );
@@ -150,6 +221,7 @@ class MethodChannelBackendClient implements BackendClient {
               .cast<String>(),
       parentGuidance: response['parentGuidance'] as String?,
       retentionDays: response['retentionDays'] as int?,
+      speechToTextReady: response['speechToTextReady'] as bool? ?? false,
     );
   }
 
@@ -164,6 +236,19 @@ class MethodChannelBackendClient implements BackendClient {
     int? childAgeMonths,
     int? characterPlayAgeYears,
   }) async {
+    final station = await _stationBackend();
+    if (station != null) {
+      return station.beginLocalTurn(
+        ageBand: ageBand,
+        characterAlias: characterAlias,
+        text: text,
+        kidId: kidId,
+        kidName: kidName,
+        childAgeYears: childAgeYears,
+        childAgeMonths: childAgeMonths,
+        characterPlayAgeYears: characterPlayAgeYears,
+      );
+    }
     final response = await channel
         .invokeMapMethod<Object?, Object?>('generateLocal', {
           'ageBand': ageBand,
@@ -185,17 +270,32 @@ class MethodChannelBackendClient implements BackendClient {
   }
 
   @override
-  Future<void> cancelTurn() async => channel.invokeMethod<void>('cancelTurn');
+  Future<String> transcribeSpeech(Uint8List wavBytes) async {
+    final station = await _stationBackend();
+    if (station != null) return station.transcribeSpeech(wavBytes);
+    throw UnsupportedError(
+      'Hub speech-to-text requires PlushBuddy Hub pairing.',
+    );
+  }
 
   @override
-  Future<void> endSession() async => channel.invokeMethod<void>('endSession');
+  Future<void> cancelTurn() async =>
+      (await _stationBackend())?.cancelTurn() ??
+      channel.invokeMethod<void>('cancelTurn');
+
+  @override
+  Future<void> endSession() async =>
+      (await _stationBackend())?.endSession() ??
+      channel.invokeMethod<void>('endSession');
 
   @override
   Future<void> installLocalModel() async =>
+      (await _stationBackend())?.installLocalModel() ??
       channel.invokeMethod<void>('installLocalModel');
 
   @override
   Future<void> cancelModelInstall() async =>
+      (await _stationBackend())?.cancelModelInstall() ??
       channel.invokeMethod<void>('cancelModelInstall');
 
   @override
@@ -208,6 +308,18 @@ class MethodChannelBackendClient implements BackendClient {
     required int? retentionDays,
     String? kidId,
   }) async {
+    final station = await _stationBackend();
+    if (station != null) {
+      return station.configureParentPin(
+        pin: pin,
+        ageBand: ageBand,
+        characterAlias: characterAlias,
+        characterTraits: characterTraits,
+        parentGuidance: parentGuidance,
+        retentionDays: retentionDays,
+        kidId: kidId,
+      );
+    }
     return channel.invokeMethod<void>('configureParentPin', {
       'pin': pin,
       'ageBand': ageBand,
@@ -220,16 +332,55 @@ class MethodChannelBackendClient implements BackendClient {
   }
 
   @override
-  Future<bool> authorizeParentPin(String pin) async =>
-      await channel.invokeMethod<bool>('authorizeParentPin', {'pin': pin}) ??
-      false;
+  Future<bool> authorizeParentPin(String pin) async {
+    final station = await _stationBackend();
+    if (station != null) return station.authorizeParentPin(pin);
+    return await channel.invokeMethod<bool>('authorizeParentPin', {
+          'pin': pin,
+        }) ??
+        false;
+  }
 
   @override
   Future<void> deleteAllLocalData(String pin) async =>
+      (await _stationBackend())?.deleteAllLocalData(pin) ??
       channel.invokeMethod<void>('deleteAllLocalData', {'pin': pin});
 
   @override
+  Future<HubBackup> exportBackup(String pin) async {
+    final station = await _stationBackend();
+    if (station != null) return station.exportBackup(pin);
+    final response = await channel.invokeMapMethod<Object?, Object?>(
+      'exportBackup',
+      {'pin': pin},
+    );
+    final backupBase64 = response?['backupBase64'] as String?;
+    final exportedAt = response?['exportedAt'] as int?;
+    if (backupBase64 == null || backupBase64.isEmpty || exportedAt == null) {
+      throw PlatformException(code: 'invalid_backup_export');
+    }
+    return HubBackup(backupBase64: backupBase64, exportedAt: exportedAt);
+  }
+
+  @override
+  Future<void> importBackup({
+    required String pin,
+    required String backupBase64,
+  }) async {
+    final station = await _stationBackend();
+    if (station != null) {
+      return station.importBackup(pin: pin, backupBase64: backupBase64);
+    }
+    return channel.invokeMethod<void>('importBackup', {
+      'pin': pin,
+      'backupBase64': backupBase64,
+    });
+  }
+
+  @override
   Future<List<ConversationHistoryEntry>> history(String pin) async {
+    final station = await _stationBackend();
+    if (station != null) return station.history(pin);
     final rows =
         await channel.invokeListMethod<Object?>('history', {'pin': pin}) ??
         const [];
@@ -249,6 +400,14 @@ class MethodChannelBackendClient implements BackendClient {
     String? kidId,
     String? characterAlias,
   }) async {
+    final station = await _stationBackend();
+    if (station != null) {
+      return station.scopedHistory(
+        pin,
+        kidId: kidId,
+        characterAlias: characterAlias,
+      );
+    }
     final rows =
         await channel.invokeListMethod<Object?>('history', {
           'pin': pin,
@@ -268,6 +427,7 @@ class MethodChannelBackendClient implements BackendClient {
 
   @override
   Future<void> deleteHistory(String pin) async =>
+      (await _stationBackend())?.deleteHistory(pin) ??
       channel.invokeMethod<void>('deleteHistory', {'pin': pin});
 
   VoiceProfileStatus _voiceFromMap(Map<Object?, Object?>? response) =>
@@ -281,9 +441,10 @@ class MethodChannelBackendClient implements BackendClient {
 
   @override
   Future<List<CharacterConfiguration>> characters() async {
+    final station = await _stationBackend();
+    if (station != null) return station.characters();
     final rows =
         await channel.invokeListMethod<Object?>('characters') ?? const [];
-    final station = await _stationBackend();
     final characters = rows.map((row) {
       final character = row! as Map<Object?, Object?>;
       return CharacterConfiguration(
@@ -301,28 +462,7 @@ class MethodChannelBackendClient implements BackendClient {
         photoMime: character['photoMime'] as String?,
       );
     }).toList();
-    if (station == null) return characters;
-    return Future.wait(
-      characters.map((character) async {
-        try {
-          final voice = await station.voiceStatus(
-            characterAlias: character.alias,
-          );
-          return CharacterConfiguration(
-            alias: character.alias,
-            traits: character.traits,
-            parentGuidance: character.parentGuidance,
-            voice: voice,
-            kidId: character.kidId,
-            personaAgeYears: character.personaAgeYears,
-            photoBytes: character.photoBytes,
-            photoMime: character.photoMime,
-          );
-        } catch (_) {
-          return character;
-        }
-      }),
-    );
+    return characters;
   }
 
   @override
@@ -334,6 +474,17 @@ class MethodChannelBackendClient implements BackendClient {
     String? kidId,
     int? personaAgeYears,
   }) async {
+    final station = await _stationBackend();
+    if (station != null) {
+      return station.saveCharacter(
+        pin: pin,
+        characterAlias: characterAlias,
+        characterTraits: characterTraits,
+        parentGuidance: parentGuidance,
+        kidId: kidId,
+        personaAgeYears: personaAgeYears,
+      );
+    }
     return channel.invokeMethod<void>('saveCharacter', {
       'pin': pin,
       'characterAlias': characterAlias,
@@ -368,6 +519,15 @@ class MethodChannelBackendClient implements BackendClient {
     required Uint8List photoBytes,
     required String? photoMime,
   }) async {
+    final station = await _stationBackend();
+    if (station != null) {
+      return station.saveCharacterPhoto(
+        pin: pin,
+        characterAlias: characterAlias,
+        photoBytes: photoBytes,
+        photoMime: photoMime,
+      );
+    }
     return channel.invokeMethod<void>('saveCharacterPhoto', {
       'pin': pin,
       'characterAlias': characterAlias,
@@ -382,6 +542,14 @@ class MethodChannelBackendClient implements BackendClient {
     required String characterAlias,
     String? kidId,
   }) async {
+    final station = await _stationBackend();
+    if (station != null) {
+      return station.deleteCharacter(
+        pin: pin,
+        characterAlias: characterAlias,
+        kidId: kidId,
+      );
+    }
     return channel.invokeMethod<void>('deleteCharacter', {
       'pin': pin,
       'characterAlias': characterAlias,
@@ -535,10 +703,15 @@ class MethodChannelBackendClient implements BackendClient {
 }
 
 class _StationConfig {
-  const _StationConfig({required this.baseUrl, required this.cookie});
+  const _StationConfig({
+    required this.baseUrl,
+    required this.cookie,
+    required this.clientId,
+  });
 
   final Uri baseUrl;
   final String cookie;
+  final String clientId;
 
   String get origin => _origin(baseUrl);
 
@@ -552,7 +725,10 @@ class _StationBackendClient implements BackendClient {
   final _StationConfig config;
   final MethodChannel channel;
 
-  static Future<_StationConfig> exchangeBootstrap(String pairingUrl) async {
+  static Future<_StationConfig> exchangeBootstrap(
+    String pairingUrl, {
+    required String clientId,
+  }) async {
     final parsed = Uri.parse(pairingUrl.trim());
     final bootstrap = parsed.fragment
         .split('&')
@@ -578,6 +754,7 @@ class _StationBackendClient implements BackendClient {
       );
       request.headers
         ..set('X-PlushPal-Bootstrap', bootstrap)
+        ..set('X-PlushBuddy-Client-Id', clientId)
         ..set('origin', origin);
       final response = await request.close().timeout(
         const Duration(seconds: 10),
@@ -601,7 +778,11 @@ class _StationBackendClient implements BackendClient {
           'Mac Station did not return a session cookie.',
         );
       }
-      return _StationConfig(baseUrl: Uri.parse(origin), cookie: cookie);
+      return _StationConfig(
+        baseUrl: Uri.parse(origin),
+        cookie: cookie,
+        clientId: clientId,
+      );
     } finally {
       client.close(force: true);
     }
@@ -622,6 +803,7 @@ class _StationBackendClient implements BackendClient {
       if (authenticated) {
         request.headers.set(HttpHeaders.cookieHeader, config.cookie);
       }
+      request.headers.set('X-PlushBuddy-Client-Id', config.clientId);
       if (mutating) request.headers.set('origin', config.origin);
       if (body != null) {
         request.headers.contentType = ContentType.json;
@@ -718,25 +900,89 @@ class _StationBackendClient implements BackendClient {
       throw UnsupportedError('Use the platform backend to clear pairing.');
 
   @override
-  Future<ReasoningProviderStatus> reasoningProviderStatus() async =>
-      const ReasoningProviderStatus(
-        provider: 'station',
-        configured: false,
-        displayName: 'Mac Station voice only',
+  Future<List<PairedClientInfo>> pairedClients(String pin) async {
+    final rows = await _requestJsonList(
+      'POST',
+      '/api/v1/paired-clients',
+      body: {'pin': pin},
+    );
+    return rows.map((item) {
+      final row = item! as Map<String, Object?>;
+      return PairedClientInfo(
+        clientId: row['client_id']! as String,
+        platform: row['platform']! as String,
+        label: row['label'] as String?,
+        createdAt: row['created_at']! as int,
+        lastSeenAt: row['last_seen_at']! as int,
+        lastSeenIp: row['last_seen_ip'] as String?,
+        revokedAt: row['revoked_at'] as int?,
       );
+    }).toList();
+  }
+
+  @override
+  Future<void> revokePairedClient({
+    required String pin,
+    required String clientId,
+  }) => _requestBytes(
+    'POST',
+    '/api/v1/paired-clients/revoke',
+    body: {'pin': pin, 'client_id': clientId},
+  );
+
+  @override
+  Future<ReasoningProviderStatus> reasoningProviderStatus() async {
+    final decoded = await _requestJson(
+      'GET',
+      '/api/v1/provider/status',
+      mutating: false,
+    );
+    return ReasoningProviderStatus(
+      provider: decoded['provider'] as String? ?? 'gemini',
+      configured: decoded['configured'] as bool? ?? false,
+      displayName: decoded['display_name'] as String? ?? 'Gemini',
+    );
+  }
 
   @override
   Future<void> configureApiKey({
+    required String pin,
     required String provider,
     required String apiKey,
-  }) => throw UnsupportedError('Reasoning API keys are stored on Android.');
+  }) async {
+    if (pin.isEmpty) {
+      throw const HttpException(
+        'Open parent settings before saving an API key.',
+      );
+    }
+    await _requestBytes(
+      'POST',
+      '/api/v1/provider/api-key',
+      body: {'pin': pin, 'provider': provider, 'api_key': apiKey},
+    );
+  }
 
   @override
   Future<void> configureGeminiApiKey(String apiKey) =>
-      throw UnsupportedError('Gemini is configured on the Android client.');
+      configureApiKey(pin: '', provider: 'gemini', apiKey: apiKey);
 
   @override
-  Future<List<KidProfile>> kids() async => const [];
+  Future<List<KidProfile>> kids() async {
+    final rows = await _requestJsonList('GET', '/api/v1/kids', mutating: false);
+    return rows.map((item) {
+      final kid = item! as Map<String, Object?>;
+      return KidProfile(
+        id: kid['id']! as String,
+        name: kid['name']! as String,
+        birthdateIso: kid['birthdate_iso']! as String,
+        photoBytes: switch (kid['photo_base64'] as String?) {
+          final value? when value.isNotEmpty => base64Decode(value),
+          _ => null,
+        },
+        photoMime: kid['photo_mime'] as String?,
+      );
+    }).toList();
+  }
 
   @override
   Future<void> saveKid({
@@ -746,11 +992,26 @@ class _StationBackendClient implements BackendClient {
     required String birthdateIso,
     Uint8List? photoBytes,
     String? photoMime,
-  }) => throw UnsupportedError('Kid profiles are stored on Android.');
+  }) => _requestBytes(
+    'POST',
+    '/api/v1/kids/save',
+    body: {
+      'pin': pin,
+      'kid_id': kidId,
+      'name': name,
+      'birthdate_iso': birthdateIso,
+      'photo_base64': photoBytes == null ? null : base64Encode(photoBytes),
+      'photo_mime': photoMime,
+    },
+  );
 
   @override
   Future<void> deleteKid({required String pin, required String kidId}) =>
-      throw UnsupportedError('Kid profiles are stored on Android.');
+      _requestBytes(
+        'POST',
+        '/api/v1/kids/delete',
+        body: {'pin': pin, 'kid_id': kidId},
+      );
 
   @override
   Future<LocalModelReadiness> localModelReadiness() async {
@@ -774,6 +1035,7 @@ class _StationBackendClient implements BackendClient {
               .cast<String>(),
       parentGuidance: decoded['parent_guidance'] as String?,
       retentionDays: decoded['retention_days'] as int?,
+      speechToTextReady: decoded['speech_to_text_ready'] as bool? ?? false,
     );
   }
 
@@ -832,6 +1094,10 @@ class _StationBackendClient implements BackendClient {
             'age_band': ageBand,
             'character_alias': characterAlias,
             'text': text,
+            'kid_id': kidId,
+            'kid_name': kidName,
+            'child_age_years': childAgeYears,
+            'child_age_months': childAgeMonths,
             'character_play_age_years': characterPlayAgeYears,
           },
         },
@@ -855,6 +1121,19 @@ class _StationBackendClient implements BackendClient {
       'command': command,
     },
   );
+
+  @override
+  Future<String> transcribeSpeech(Uint8List wavBytes) async {
+    if (wavBytes.isEmpty || wavBytes.length > 12 * 1_048_576) {
+      throw const HttpException('Recorded speech audio is invalid.');
+    }
+    final decoded = await _requestJson(
+      'POST',
+      '/api/v1/stt/transcribe',
+      body: {'wav_base64': base64Encode(wavBytes)},
+    );
+    return decoded['transcript'] as String? ?? '';
+  }
 
   @override
   Future<void> cancelTurn() => _command('cancel_turn');
@@ -908,6 +1187,29 @@ class _StationBackendClient implements BackendClient {
   @override
   Future<void> deleteAllLocalData(String pin) =>
       _requestBytes('POST', '/api/v1/local-data/delete', body: {'pin': pin});
+
+  @override
+  Future<HubBackup> exportBackup(String pin) async {
+    final decoded = await _requestJson(
+      'POST',
+      '/api/v1/backup/export',
+      body: {'pin': pin},
+    );
+    return HubBackup(
+      backupBase64: decoded['backup_base64']! as String,
+      exportedAt: decoded['exported_at']! as int,
+    );
+  }
+
+  @override
+  Future<void> importBackup({
+    required String pin,
+    required String backupBase64,
+  }) => _requestBytes(
+    'POST',
+    '/api/v1/backup/import',
+    body: {'pin': pin, 'backup_base64': backupBase64},
+  );
 
   @override
   Future<List<ConversationHistoryEntry>> history(String pin) async {
@@ -994,8 +1296,21 @@ class _StationBackendClient implements BackendClient {
   );
 
   @override
-  Future<PickedCharacterPhoto> pickCharacterPhoto() =>
-      throw UnsupportedError('Character photos are stored on this device.');
+  Future<PickedCharacterPhoto> pickCharacterPhoto() async {
+    final picked = await channel.invokeMapMethod<Object?, Object?>(
+      'pickCharacterPhoto',
+    );
+    if (picked == null) throw PlatformException(code: 'no_photo');
+    final bytes = picked['bytes'] as Uint8List?;
+    if (bytes == null || bytes.isEmpty) {
+      throw PlatformException(code: 'invalid_photo');
+    }
+    return PickedCharacterPhoto(
+      bytes: bytes,
+      filename: picked['filename'] as String? ?? 'character-photo',
+      mime: picked['mime'] as String?,
+    );
+  }
 
   @override
   Future<void> saveCharacterPhoto({
@@ -1003,7 +1318,16 @@ class _StationBackendClient implements BackendClient {
     required String characterAlias,
     required Uint8List photoBytes,
     required String? photoMime,
-  }) => throw UnsupportedError('Character photos are stored on this device.');
+  }) => _requestBytes(
+    'POST',
+    '/api/v1/characters/photo',
+    body: {
+      'pin': pin,
+      'character_alias': characterAlias,
+      'photo_base64': base64Encode(photoBytes),
+      'photo_mime': photoMime,
+    },
+  );
 
   @override
   Future<void> deleteCharacter({

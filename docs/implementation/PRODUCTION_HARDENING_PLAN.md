@@ -1,14 +1,13 @@
 # Production hardening completion plan
 
-Last updated: 2026-07-02
+Last updated: 2026-07-03
 Scope: finish the 10 public-production-readiness items identified after the
 initial GitHub publication.
 
-Architecture note: PlushBuddy is moving toward the **PlushBuddy Hub** model,
-where the local backend owns storage, business logic, reasoning orchestration,
-STT fallback, and LuxTTS. Some hardening items below still say MacStation
-because the current macOS Hub implementation path is named `macstation_host`.
-In product language, read those as Hub reliability/setup items.
+Architecture note: PlushBuddy now uses the **PlushBuddy Hub** model, where the
+local backend owns storage, business logic, reasoning orchestration, STT
+fallback, and LuxTTS. Some code paths still use the legacy `macstation_host`
+directory name, but product-facing docs call this component the Hub.
 
 This plan is intentionally practical. The goal is not to make PlushBuddy a
 hosted commercial product overnight; the goal is to make the public repo stable,
@@ -26,13 +25,13 @@ understand it, run checks, and exercise core flows without hand-holding.
 | 5 | Separate mock vs real integrations cleanly | Partial | Add UI labels and broader client-mode tests |
 | 6 | Harden security/privacy | Partial | Browser local encryption, safety corpus, network/privacy regression tests |
 | 7 | Better release artifacts | Partial | Optional signing/notarization path |
-| 8 | MacStation reliability dashboard | Partial | Add reset/repair actions and richer setup phase detail |
+| 8 | Hub reliability dashboard | Partial | Add reset/repair actions and richer setup phase detail |
 | 9 | Add more E2E scripted tests | Partial | Add UI journey automation across Android/iOS/browser/Mac where practical |
 | 10 | Document limitations clearly | Done | Keep updated as architecture evolves |
 
 ## Recommended completion order
 
-1. MacStation reliability dashboard.
+1. Hub reliability dashboard.
 2. LuxTTS installer/setup hardening.
 3. Full demo/mock mode and mode matrix.
 4. More E2E scripted tests.
@@ -115,7 +114,7 @@ Reasoning:
 - `PLUSHPAL_RUNTIME_MODE=demo` and `make run-demo` provide deterministic demo
   reasoning plus synthetic voice synthesis.
 - `PLUSHPAL_VOICE_ENGINE=demo` remains available as a lower-level override.
-- MacStation API smoke supports `--runtime-mode demo --synthesize`.
+- Hub API smoke supports `--runtime-mode demo --synthesize`.
 - Demo/mock/local-voice modes do not call Gemini/OpenAI or the legacy local
   model path.
 - Runtime mode parser has unit coverage.
@@ -141,7 +140,7 @@ Reasoning:
 
 ### Tests
 
-- MacStation demo API smoke.
+- Hub demo API smoke.
 - Browser demo smoke.
 - Flutter tests for demo-state entry/exit.
 - Optional Android/iOS simulator smoke using demo state.
@@ -224,7 +223,7 @@ Done for baseline clone health.
 ### Tests
 
 - Unit tests for mode parsing and provider selection.
-- Browser and MacStation demo smoke.
+- Browser and Hub demo smoke.
 - Negative tests proving no cloud calls in mock/demo mode.
 
 ## Item 6 — Harden security/privacy
@@ -240,7 +239,7 @@ Done for baseline clone health.
   localStorage.
 - Browser backend test asserts localStorage does not contain the provider API
   key after configuration.
-- MacStation diagnostics endpoint/smoke test verifies private diagnostic fields
+- Hub diagnostics endpoint/smoke test verifies private diagnostic fields
   are not exposed.
 
 ### Remaining deliverables
@@ -313,7 +312,7 @@ Done for baseline clone health.
 - Checksum verification test.
 - Packaged app smoke from release artifact.
 
-## Item 8 — MacStation reliability dashboard
+## Item 8 — Hub reliability dashboard
 
 ### Status
 
@@ -329,7 +328,7 @@ GET /api/v1/diagnostics
 
 - Diagnostics endpoint reports safe service flags and loopback origin only.
 - Diagnostics endpoint test verifies authentication and redaction expectations.
-- MacStation API smoke now verifies authenticated diagnostics and scans for
+- Hub API smoke now verifies authenticated diagnostics and scans for
   private-field regressions.
 - Station setup UI now exposes:
   - copy redacted diagnostics;
@@ -384,9 +383,9 @@ GET /api/v1/diagnostics
 ### Already done
 
 - Local quality gate.
-- MacStation API smoke.
-- MacStation LuxTTS E2E.
-- MacStation demo voice E2E.
+- Hub API smoke.
+- Hub LuxTTS E2E.
+- Hub demo voice E2E.
 - Android install/launch and pairing smokes.
 - iOS simulator launch smoke.
 - Browser and Mac client render smokes.

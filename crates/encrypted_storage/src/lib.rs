@@ -38,6 +38,30 @@ pub struct CharacterProfileRecord {
     pub traits_json: String,
     pub parent_guidance: Option<String>,
     pub enabled: bool,
+    pub kid_id: Option<String>,
+    pub persona_age_years: Option<u8>,
+    pub photo_base64: Option<String>,
+    pub photo_mime: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct KidRecord {
+    pub id: String,
+    pub name: String,
+    pub birthdate_iso: String,
+    pub photo_base64: Option<String>,
+    pub photo_mime: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PairedClientRecord {
+    pub client_id: String,
+    pub platform: String,
+    pub label: Option<String>,
+    pub created_at: TimestampSeconds,
+    pub last_seen_at: TimestampSeconds,
+    pub last_seen_ip: Option<String>,
+    pub revoked_at: Option<TimestampSeconds>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -195,6 +219,18 @@ const SETTINGS_AND_PROFILE_SCHEMA: &[&str] = &[
     "ALTER TABLE characters ADD COLUMN parent_guidance TEXT",
     "ALTER TABLE characters ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1",
 ];
+const HUB_APP_STATE_SCHEMA: &[&str] = &[
+    "CREATE TABLE kids (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, birthdate_iso TEXT NOT NULL, photo_base64 TEXT, photo_mime TEXT)",
+    "ALTER TABLE characters ADD COLUMN kid_id TEXT",
+    "ALTER TABLE characters ADD COLUMN persona_age_years INTEGER",
+    "ALTER TABLE characters ADD COLUMN photo_base64 TEXT",
+    "ALTER TABLE characters ADD COLUMN photo_mime TEXT",
+    "CREATE INDEX characters_kid_id ON characters(kid_id)",
+];
+const PAIRED_CLIENTS_SCHEMA: &[&str] = &[
+    "CREATE TABLE paired_clients (client_id TEXT PRIMARY KEY NOT NULL, platform TEXT NOT NULL, label TEXT, created_at INTEGER NOT NULL, last_seen_at INTEGER NOT NULL, last_seen_ip TEXT, revoked_at INTEGER)",
+    "CREATE INDEX paired_clients_revoked_seen ON paired_clients(revoked_at, last_seen_at)",
+];
 
 pub const APPLICATION_MIGRATIONS: &[Migration] = &[
     Migration {
@@ -209,7 +245,30 @@ pub const APPLICATION_MIGRATIONS: &[Migration] = &[
         version: 3,
         statements: SETTINGS_AND_PROFILE_SCHEMA,
     },
+    Migration {
+        version: 4,
+        statements: HUB_APP_STATE_SCHEMA,
+    },
+    Migration {
+        version: 5,
+        statements: PAIRED_CLIENTS_SCHEMA,
+    },
 ];
+
+fn is_valid_client_id(value: &str) -> bool {
+    let Some((platform, uuid)) = value.split_once('-') else {
+        return false;
+    };
+    matches!(
+        platform,
+        "android" | "ios" | "web" | "macos" | "windows" | "linux"
+    ) && uuid.len() == 36
+        && uuid.chars().enumerate().all(|(index, character)| {
+            matches!(index, 8 | 13 | 18 | 23)
+                .then_some(character == '-')
+                .unwrap_or_else(|| character.is_ascii_hexdigit())
+        })
+}
 
 impl fmt::Debug for SqlCipherDatabase {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -376,6 +435,89 @@ impl SqlCipherDatabase {
             .transpose()
     }
 
+    pub fn put_kid(&mut self, record: &KidRecord) -> Result<(), StorageError> {
+        if record.id.trim().is_empty()
+            || record.id.len() > 128
+            || record.name.trim().is_empty()
+            || record.name.chars().count() > 80
+            || record.birthdate_iso.len() != 10
+            || record
+                .photo_base64
+                .as_ref()
+                .is_some_and(|value| value.len() > 8_000_000)
+            || record
+                .photo_mime
+                .as_ref()
+                .is_some_and(|value| value.len() > 80)
+        {
+            return Err(StorageError::InvalidData);
+        }
+        self.connection
+            .execute(
+                "INSERT INTO kids (id, name, birthdate_iso, photo_base64, photo_mime) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(id) DO UPDATE SET name = excluded.name, birthdate_iso = excluded.birthdate_iso, photo_base64 = excluded.photo_base64, photo_mime = excluded.photo_mime",
+                params![
+                    record.id,
+                    record.name,
+                    record.birthdate_iso,
+                    record.photo_base64,
+                    record.photo_mime,
+                ],
+            )
+            .map_err(|_| StorageError::MigrationFailed)?;
+        Ok(())
+    }
+
+    pub fn list_kids(&self) -> Result<Vec<KidRecord>, StorageError> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT id, name, birthdate_iso, photo_base64, photo_mime FROM kids ORDER BY name, id",
+            )
+            .map_err(|_| StorageError::MigrationFailed)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok(KidRecord {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    birthdate_iso: row.get(2)?,
+                    photo_base64: row.get(3)?,
+                    photo_mime: row.get(4)?,
+                })
+            })
+            .map_err(|_| StorageError::MigrationFailed)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|_| StorageError::InvalidData)
+    }
+
+    pub fn delete_kid(&mut self, kid_id: &str) -> Result<(), StorageError> {
+        if kid_id.trim().is_empty() || kid_id.len() > 128 {
+            return Err(StorageError::InvalidData);
+        }
+        let transaction = self
+            .connection
+            .transaction()
+            .map_err(|_| StorageError::MigrationFailed)?;
+        transaction
+            .execute("DELETE FROM turns WHERE session_id IN (SELECT sessions.id FROM sessions JOIN characters ON sessions.character_id = characters.id WHERE characters.kid_id = ?1)", [kid_id])
+            .map_err(|_| StorageError::MigrationFailed)?;
+        transaction
+            .execute("DELETE FROM sessions WHERE character_id IN (SELECT id FROM characters WHERE kid_id = ?1)", [kid_id])
+            .map_err(|_| StorageError::MigrationFailed)?;
+        transaction
+            .execute("DELETE FROM voice_assets WHERE character_id IN (SELECT id FROM characters WHERE kid_id = ?1)", [kid_id])
+            .map_err(|_| StorageError::MigrationFailed)?;
+        transaction
+            .execute("DELETE FROM characters WHERE kid_id = ?1", [kid_id])
+            .map_err(|_| StorageError::MigrationFailed)?;
+        transaction
+            .execute("DELETE FROM kids WHERE id = ?1", [kid_id])
+            .map_err(|_| StorageError::MigrationFailed)?;
+        transaction
+            .commit()
+            .map_err(|_| StorageError::MigrationFailed)?;
+        Ok(())
+    }
+
     pub fn put_character(
         &mut self,
         record: &CharacterRecord,
@@ -430,11 +572,14 @@ impl SqlCipherDatabase {
         let mut statement = self
             .connection
             .prepare(
-                "SELECT id, alias, voice_asset_id, traits_json, parent_guidance, enabled FROM characters WHERE enabled = 1 ORDER BY alias, id",
+                "SELECT id, alias, voice_asset_id, traits_json, parent_guidance, enabled, kid_id, persona_age_years, photo_base64, photo_mime FROM characters WHERE enabled = 1 ORDER BY alias, id",
             )
             .map_err(|_| StorageError::MigrationFailed)?;
         let rows = statement
             .query_map([], |row| {
+                let persona_age_years = row
+                    .get::<_, Option<i64>>(7)?
+                    .and_then(|value| u8::try_from(value).ok());
                 Ok(CharacterProfileRecord {
                     record: CharacterRecord {
                         id: CharacterId(row.get(0)?),
@@ -444,11 +589,46 @@ impl SqlCipherDatabase {
                     traits_json: row.get(3)?,
                     parent_guidance: row.get(4)?,
                     enabled: row.get::<_, i64>(5)? == 1,
+                    kid_id: row.get(6)?,
+                    persona_age_years,
+                    photo_base64: row.get(8)?,
+                    photo_mime: row.get(9)?,
                 })
             })
             .map_err(|_| StorageError::MigrationFailed)?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|_| StorageError::InvalidData)
+    }
+
+    pub fn put_character_metadata(
+        &mut self,
+        character_id: &CharacterId,
+        kid_id: Option<&str>,
+        persona_age_years: Option<u8>,
+        photo_base64: Option<&str>,
+        photo_mime: Option<&str>,
+    ) -> Result<(), StorageError> {
+        if character_id.0.is_empty()
+            || kid_id.is_some_and(|value| value.len() > 128)
+            || !matches!(persona_age_years, None | Some(1..=12))
+            || photo_base64.is_some_and(|value| value.len() > 8_000_000)
+            || photo_mime.is_some_and(|value| value.len() > 80)
+        {
+            return Err(StorageError::InvalidData);
+        }
+        self.connection
+            .execute(
+                "UPDATE characters SET kid_id = COALESCE(?1, kid_id), persona_age_years = COALESCE(?2, persona_age_years), photo_base64 = COALESCE(?3, photo_base64), photo_mime = COALESCE(?4, photo_mime) WHERE id = ?5",
+                params![
+                    kid_id,
+                    persona_age_years.map(i64::from),
+                    photo_base64,
+                    photo_mime,
+                    character_id.0,
+                ],
+            )
+            .map_err(|_| StorageError::MigrationFailed)?;
+        Ok(())
     }
 
     pub fn delete_character(&mut self, character_id: &CharacterId) -> Result<(), StorageError> {
@@ -621,6 +801,105 @@ impl SqlCipherDatabase {
             .map_err(|_| StorageError::MigrationFailed)
     }
 
+    pub fn upsert_paired_client(
+        &mut self,
+        record: &PairedClientRecord,
+    ) -> Result<(), StorageError> {
+        if !is_valid_client_id(&record.client_id)
+            || !matches!(
+                record.platform.as_str(),
+                "android" | "ios" | "web" | "macos" | "windows" | "linux" | "unknown"
+            )
+            || record.label.as_ref().is_some_and(|value| value.len() > 120)
+            || record
+                .last_seen_ip
+                .as_ref()
+                .is_some_and(|value| value.len() > 96 || value.contains('\n'))
+            || record.created_at <= 0
+            || record.last_seen_at < record.created_at
+        {
+            return Err(StorageError::InvalidData);
+        }
+        self.connection
+            .execute(
+                "INSERT INTO paired_clients (client_id, platform, label, created_at, last_seen_at, last_seen_ip, revoked_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT(client_id) DO UPDATE SET platform = excluded.platform, label = COALESCE(excluded.label, paired_clients.label), last_seen_at = excluded.last_seen_at, last_seen_ip = excluded.last_seen_ip",
+                params![
+                    record.client_id,
+                    record.platform,
+                    record.label,
+                    record.created_at,
+                    record.last_seen_at,
+                    record.last_seen_ip,
+                    record.revoked_at,
+                ],
+            )
+            .map_err(|_| StorageError::MigrationFailed)?;
+        Ok(())
+    }
+
+    pub fn list_paired_clients(&self) -> Result<Vec<PairedClientRecord>, StorageError> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT client_id, platform, label, created_at, last_seen_at, last_seen_ip, revoked_at FROM paired_clients ORDER BY revoked_at IS NOT NULL, last_seen_at DESC, client_id",
+            )
+            .map_err(|_| StorageError::MigrationFailed)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok(PairedClientRecord {
+                    client_id: row.get(0)?,
+                    platform: row.get(1)?,
+                    label: row.get(2)?,
+                    created_at: row.get(3)?,
+                    last_seen_at: row.get(4)?,
+                    last_seen_ip: row.get(5)?,
+                    revoked_at: row.get(6)?,
+                })
+            })
+            .map_err(|_| StorageError::MigrationFailed)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|_| StorageError::InvalidData)
+    }
+
+    pub fn revoke_paired_client(
+        &mut self,
+        client_id: &str,
+        revoked_at: TimestampSeconds,
+    ) -> Result<(), StorageError> {
+        if !is_valid_client_id(client_id) || revoked_at <= 0 {
+            return Err(StorageError::InvalidData);
+        }
+        let changed = self
+            .connection
+            .execute(
+                "UPDATE paired_clients SET revoked_at = ?2 WHERE client_id = ?1",
+                params![client_id, revoked_at],
+            )
+            .map_err(|_| StorageError::MigrationFailed)?;
+        if changed == 0 {
+            return Err(StorageError::NotFound);
+        }
+        Ok(())
+    }
+
+    pub fn paired_client_is_revoked(&self, client_id: &str) -> Result<bool, StorageError> {
+        if !is_valid_client_id(client_id) {
+            return Err(StorageError::InvalidData);
+        }
+        let revoked_at = self
+            .connection
+            .query_row(
+                "SELECT revoked_at FROM paired_clients WHERE client_id = ?1",
+                [client_id],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .map_err(|error| match error {
+                rusqlite::Error::QueryReturnedNoRows => StorageError::NotFound,
+                _ => StorageError::MigrationFailed,
+            })?;
+        Ok(revoked_at.is_some())
+    }
+
     pub fn list_history(
         &self,
         maximum_turns: usize,
@@ -688,6 +967,8 @@ impl SqlCipherDatabase {
             "sessions",
             "voice_assets",
             "characters",
+            "kids",
+            "paired_clients",
             "settings",
             "evidence_cache",
             "deletion_journal",
@@ -1528,12 +1809,44 @@ mod tests {
             APPLICATION_MIGRATIONS,
         )
         .unwrap();
-        assert_eq!(database.schema_version().unwrap(), 3);
+        assert_eq!(database.schema_version().unwrap(), 5);
         database.put_setting("parent_pin_ref", marker).unwrap();
         assert_eq!(
             database.get_setting("parent_pin_ref").unwrap().as_deref(),
             Some(marker)
         );
+        let kid = KidRecord {
+            id: "kid-1".to_owned(),
+            name: "Inaaya".to_owned(),
+            birthdate_iso: "2021-01-01".to_owned(),
+            photo_base64: Some("a2lkLXBob3Rv".to_owned()),
+            photo_mime: Some("image/jpeg".to_owned()),
+        };
+        database.put_kid(&kid).unwrap();
+        assert_eq!(database.list_kids().unwrap(), vec![kid]);
+        let client = PairedClientRecord {
+            client_id: "android-123e4567-e89b-12d3-a456-426614174000".to_owned(),
+            platform: "android".to_owned(),
+            label: Some("Pixel test phone".to_owned()),
+            created_at: 1_000,
+            last_seen_at: 1_100,
+            last_seen_ip: Some("192.168.1.20".to_owned()),
+            revoked_at: None,
+        };
+        database.upsert_paired_client(&client).unwrap();
+        assert_eq!(
+            database.list_paired_clients().unwrap(),
+            vec![client.clone()]
+        );
+        assert!(!database
+            .paired_client_is_revoked(&client.client_id)
+            .unwrap());
+        database
+            .revoke_paired_client(&client.client_id, 1_200)
+            .unwrap();
+        assert!(database
+            .paired_client_is_revoked(&client.client_id)
+            .unwrap());
         let character = CharacterRecord {
             id: CharacterId("character-1".to_owned()),
             alias: "Teddy".to_owned(),
@@ -1547,7 +1860,20 @@ mod tests {
                 true,
             )
             .unwrap();
+        database
+            .put_character_metadata(
+                &character.id,
+                Some("kid-1"),
+                Some(3),
+                Some("Y2hhcmFjdGVyLXBob3Rv"),
+                Some("image/png"),
+            )
+            .unwrap();
         assert_eq!(database.list_characters().unwrap(), vec![character.clone()]);
+        let profiles = database.list_character_profiles().unwrap();
+        assert_eq!(profiles[0].kid_id.as_deref(), Some("kid-1"));
+        assert_eq!(profiles[0].persona_age_years, Some(3));
+        assert_eq!(profiles[0].photo_mime.as_deref(), Some("image/png"));
         let voice = VoiceAssetRecord {
             id: VoiceAssetId("voice-1".to_owned()),
             character_id: character.id.clone(),
@@ -1621,6 +1947,8 @@ mod tests {
         assert!(database.list_history(10).unwrap().is_empty());
         database.delete_all().unwrap();
         assert!(database.list_characters().unwrap().is_empty());
+        assert!(database.list_kids().unwrap().is_empty());
+        assert!(database.list_paired_clients().unwrap().is_empty());
         assert_eq!(database.get_setting("parent_pin_ref").unwrap(), None);
         drop(database);
 

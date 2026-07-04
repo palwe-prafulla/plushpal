@@ -11,6 +11,9 @@ final class PlushPalPlatformPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
   private let synthesizer = AVSpeechSynthesizer()
   private let audioEngine = AVAudioEngine()
   private var recognitionTask: SFSpeechRecognitionTask?
+  private var speechRecorder: AVAudioRecorder?
+  private var speechRecordingResult: FlutterResult?
+  private var speechRecordingUrl: URL?
   private var wavPlayer: AVAudioPlayer?
   private var mobileEngine: OpaquePointer?
   private var speechResult: FlutterResult?
@@ -106,6 +109,8 @@ final class PlushPalPlatformPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
       history(call, result: result)
     case "deleteHistory":
       deleteHistory(call, result: result)
+    case "stationClientId":
+      result(stationClientId())
     case "stationPairingStatus":
       stationPairingStatus(result: result)
     case "saveStationPairing":
@@ -156,11 +161,14 @@ final class PlushPalPlatformPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
       deleteSecret(call, result: result)
     case "listen":
       listen(result: result)
+    case "recordSpeechWav":
+      recordSpeechWav(result: result)
     case "speak":
       speak(call, result: result)
     case "cancelSpeech":
       recognitionTask?.cancel()
       audioEngine.stop()
+      finishSpeechRecording(error: FlutterError(code: "speech_cancelled", message: "Speech recording cancelled", details: nil))
       wavPlayer?.stop()
       finishWavPlayback(error: FlutterError(code: "audio_cancelled", message: "Voice playback cancelled", details: nil))
       synthesizer.stopSpeaking(at: .immediate)
@@ -624,7 +632,11 @@ final class PlushPalPlatformPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
       !baseUrl.isEmpty,
       cookie.hasPrefix("pp_session=")
     else { return nil }
-    return ["baseUrl": baseUrl, "cookie": cookie]
+    return [
+      "baseUrl": baseUrl,
+      "cookie": cookie,
+      "clientId": object["clientId"] ?? stationClientId(),
+    ]
   }
 
   private func stationPairingStatus(result: FlutterResult) {
@@ -633,6 +645,7 @@ final class PlushPalPlatformPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
       "paired": config != nil,
       "baseUrl": config?["baseUrl"] ?? NSNull(),
       "cookie": config?["cookie"] ?? NSNull(),
+      "clientId": config?["clientId"] ?? stationClientId(),
     ])
   }
 
@@ -648,8 +661,27 @@ final class PlushPalPlatformPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
       result(FlutterError(code: "invalid_pairing", message: "Invalid Mac Station pairing data", details: nil))
       return
     }
-    writeJSONObject(["baseUrl": base, "cookie": cookie], account: "station-pairing-v1")
+    let providedClientId = (arguments["clientId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    let clientId = providedClientId.isEmpty ? stationClientId() : providedClientId
+    guard clientId.range(of: #"^ios-[a-f0-9-]{36}$"#, options: .regularExpression) != nil else {
+      result(FlutterError(code: "invalid_pairing", message: "Invalid Mac Station pairing data", details: nil))
+      return
+    }
+    writeJSONObject(["baseUrl": base, "cookie": cookie, "clientId": clientId], account: "station-pairing-v1")
     result(nil)
+  }
+
+  private func stationClientId() -> String {
+    if
+      let data = readProtectedData(account: "station-client-id-v1"),
+      let existing = String(data: data, encoding: .utf8),
+      existing.range(of: #"^ios-[a-f0-9-]{36}$"#, options: .regularExpression) != nil
+    {
+      return existing
+    }
+    let generated = "ios-\(UUID().uuidString.lowercased())"
+    writeProtectedData(Data(generated.utf8), account: "station-client-id-v1")
+    return generated
   }
 
   private func clearStationPairing(result: FlutterResult) {
@@ -1435,8 +1467,13 @@ final class PlushPalPlatformPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
       result(FlutterError(code: "speech_unavailable", message: "Speech recognition is unavailable", details: nil))
       return
     }
+    guard recognizer.supportsOnDeviceRecognition else {
+      result(FlutterError(code: "speech_on_device_unavailable", message: "On-device speech recognition is unavailable on this device. Type a message or install offline speech support.", details: nil))
+      return
+    }
     let request = SFSpeechAudioBufferRecognitionRequest()
     request.shouldReportPartialResults = false
+    request.requiresOnDeviceRecognition = true
     let input = audioEngine.inputNode
     let format = input.outputFormat(forBus: 0)
     input.removeTap(onBus: 0)
@@ -1476,6 +1513,78 @@ final class PlushPalPlatformPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
     audioEngine.inputNode.removeTap(onBus: 0)
     recognitionTask?.cancel()
     recognitionTask = nil
+  }
+
+  private func recordSpeechWav(result: @escaping FlutterResult) {
+    guard speechRecordingResult == nil else {
+      result(FlutterError(code: "speech_busy", message: "Speech recording is already active", details: nil))
+      return
+    }
+    AVAudioSession.sharedInstance().requestRecordPermission { [weak self] granted in
+      DispatchQueue.main.async {
+        guard let self else { return }
+        guard granted else {
+          result(FlutterError(code: "microphone_permission", message: "Microphone permission is required", details: nil))
+          return
+        }
+        self.startSpeechWavRecording(result: result)
+      }
+    }
+  }
+
+  private func startSpeechWavRecording(result: @escaping FlutterResult) {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("plushbuddy-hub-stt-\(UUID().uuidString).wav")
+    do {
+      let session = AVAudioSession.sharedInstance()
+      try session.setCategory(.record, mode: .measurement, options: .duckOthers)
+      try session.setActive(true, options: .notifyOthersOnDeactivation)
+      let settings: [String: Any] = [
+        AVFormatIDKey: kAudioFormatLinearPCM,
+        AVSampleRateKey: 16_000,
+        AVNumberOfChannelsKey: 1,
+        AVLinearPCMBitDepthKey: 16,
+        AVLinearPCMIsFloatKey: false,
+        AVLinearPCMIsBigEndianKey: false,
+      ]
+      let recorder = try AVAudioRecorder(url: url, settings: settings)
+      recorder.isMeteringEnabled = true
+      recorder.prepareToRecord()
+      speechRecorder = recorder
+      speechRecordingResult = result
+      speechRecordingUrl = url
+      recorder.record(forDuration: 8.0)
+      DispatchQueue.main.asyncAfter(deadline: .now() + 8.2) { [weak self] in
+        self?.finishSpeechRecording(error: nil)
+      }
+    } catch {
+      try? FileManager.default.removeItem(at: url)
+      result(FlutterError(code: "speech_recording_failed", message: "Microphone recording failed", details: nil))
+    }
+  }
+
+  private func finishSpeechRecording(error: FlutterError?) {
+    guard let result = speechRecordingResult else { return }
+    let url = speechRecordingUrl
+    speechRecorder?.stop()
+    speechRecorder = nil
+    speechRecordingResult = nil
+    speechRecordingUrl = nil
+    defer {
+      if let url { try? FileManager.default.removeItem(at: url) }
+      try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
+    if let error {
+      result(error)
+      return
+    }
+    guard let url,
+          let data = try? Data(contentsOf: url),
+          data.count > 44 else {
+      result(FlutterError(code: "speech_no_audio", message: "I did not hear speech yet. Try again after the beep.", details: nil))
+      return
+    }
+    result(FlutterStandardTypedData(bytes: data))
   }
 
   private func speak(_ call: FlutterMethodCall, result: @escaping FlutterResult) {

@@ -1,7 +1,10 @@
 (() => {
   const STORE_KEY = 'plushbuddy-web-client-v1';
+  const CLIENT_ID_KEY = 'plushbuddy-web-client-id-v1';
+  const SESSION_REASONING_KEY = 'plushbuddy-web-reasoning-session-v1';
   const DEFAULT_TRAITS = ['gentle', 'curious'];
   let activeAudio = null;
+  let volatileReasoning = null;
 
   const defaultState = () => ({
     parent: null,
@@ -14,18 +17,72 @@
     },
   });
 
+  const readSessionReasoning = () => {
+    try {
+      const raw = window.sessionStorage?.getItem(SESSION_REASONING_KEY);
+      if (!raw) return volatileReasoning;
+      const parsed = JSON.parse(raw);
+      if (!parsed?.apiKey) return volatileReasoning;
+      return {
+        provider: parsed.provider === 'openai' ? 'openai' : 'gemini',
+        apiKey: String(parsed.apiKey),
+      };
+    } catch (_) {
+      return volatileReasoning;
+    }
+  };
+
+  const writeSessionReasoning = (provider, apiKey) => {
+    const normalized = provider === 'openai' ? 'openai' : 'gemini';
+    volatileReasoning = {provider: normalized, apiKey};
+    try {
+      window.sessionStorage?.setItem(
+        SESSION_REASONING_KEY,
+        JSON.stringify(volatileReasoning),
+      );
+    } catch (_) {}
+  };
+
+  const clearSessionReasoning = () => {
+    volatileReasoning = null;
+    try {
+      window.sessionStorage?.removeItem(SESSION_REASONING_KEY);
+    } catch (_) {}
+  };
+
   const loadState = () => {
     try {
       const raw = window.localStorage.getItem(STORE_KEY);
-      if (!raw) return defaultState();
-      return {...defaultState(), ...JSON.parse(raw)};
+      const persisted = raw ? JSON.parse(raw) : defaultState();
+      const sessionReasoning = readSessionReasoning();
+      const provider =
+        persisted?.reasoning?.provider ||
+        sessionReasoning?.provider ||
+        defaultState().reasoning.provider;
+      return {
+        ...defaultState(),
+        ...persisted,
+        reasoning: {
+          provider,
+          apiKey: sessionReasoning?.provider === provider
+            ? sessionReasoning.apiKey
+            : null,
+        },
+      };
     } catch (_) {
       return defaultState();
     }
   };
 
   const saveState = (state) => {
-    window.localStorage.setItem(STORE_KEY, JSON.stringify(state));
+    const persisted = {
+      ...state,
+      reasoning: {
+        provider: state.reasoning?.provider || 'gemini',
+        apiKey: null,
+      },
+    };
+    window.localStorage.setItem(STORE_KEY, JSON.stringify(persisted));
   };
 
   const textEncoder = new TextEncoder();
@@ -38,12 +95,157 @@
   const base64ToBytes = (base64) =>
     Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
 
+  const encodeWavBase64 = (samples, sampleRate) => {
+    const bytesPerSample = 2;
+    const buffer = new ArrayBuffer(44 + samples.length * bytesPerSample);
+    const view = new DataView(buffer);
+    const writeAscii = (offset, value) => {
+      for (let index = 0; index < value.length; index += 1) {
+        view.setUint8(offset + index, value.charCodeAt(index));
+      }
+    };
+    writeAscii(0, 'RIFF');
+    view.setUint32(4, 36 + samples.length * bytesPerSample, true);
+    writeAscii(8, 'WAVE');
+    writeAscii(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * bytesPerSample, true);
+    view.setUint16(32, bytesPerSample, true);
+    view.setUint16(34, 16, true);
+    writeAscii(36, 'data');
+    view.setUint32(40, samples.length * bytesPerSample, true);
+    let offset = 44;
+    for (const sample of samples) {
+      const clamped = Math.max(-1, Math.min(1, sample));
+      view.setInt16(offset, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true);
+      offset += 2;
+    }
+    return bytesToBase64(new Uint8Array(buffer));
+  };
+
+  const resampleLinear = (chunks, sourceRate, targetRate) => {
+    const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+    const source = new Float32Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      source.set(chunk, offset);
+      offset += chunk.length;
+    }
+    if (!source.length || sourceRate === targetRate) return source;
+    const targetLength = Math.max(1, Math.round(source.length * targetRate / sourceRate));
+    const target = new Float32Array(targetLength);
+    const ratio = (source.length - 1) / Math.max(1, targetLength - 1);
+    for (let index = 0; index < targetLength; index += 1) {
+      const position = index * ratio;
+      const left = Math.floor(position);
+      const right = Math.min(source.length - 1, left + 1);
+      const weight = position - left;
+      target[index] = source[left] * (1 - weight) + source[right] * weight;
+    }
+    return target;
+  };
+
+  window.plushpalWebSpeechSupported = () =>
+    Boolean(
+      navigator.mediaDevices?.getUserMedia &&
+      (window.AudioContext || window.webkitAudioContext)
+    );
+
+  window.plushpalRecordSpeechWav = async () => {
+    if (!window.plushpalWebSpeechSupported()) {
+      throw new Error('Browser microphone capture is unavailable.');
+    }
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+    const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+    const audioContext = new AudioContextCtor();
+    const sourceSampleRate = audioContext.sampleRate || 48_000;
+    const source = audioContext.createMediaStreamSource(stream);
+    const processor = audioContext.createScriptProcessor(4096, 1, 1);
+    const sink = audioContext.createGain();
+    sink.gain.value = 0;
+    const chunks = [];
+    let started = false;
+    let lastVoiceAt = performance.now();
+    const startedAt = performance.now();
+    const stopTracks = () => {
+      for (const track of stream.getTracks()) track.stop();
+    };
+    try {
+      await new Promise((resolve) => {
+        processor.onaudioprocess = (event) => {
+          const input = event.inputBuffer.getChannelData(0);
+          chunks.push(new Float32Array(input));
+          let peak = 0;
+          for (let index = 0; index < input.length; index += 1) {
+            peak = Math.max(peak, Math.abs(input[index]));
+          }
+          const now = performance.now();
+          if (peak > 0.025) {
+            started = true;
+            lastVoiceAt = now;
+          }
+          if (now - startedAt >= 10_000) resolve();
+          if (!started && now - startedAt >= 5_000) resolve();
+          if (started && now - startedAt >= 1_200 && now - lastVoiceAt >= 1_800) resolve();
+        };
+        source.connect(processor);
+        processor.connect(sink);
+        sink.connect(audioContext.destination);
+      });
+    } finally {
+      processor.disconnect();
+      source.disconnect();
+      sink.disconnect();
+      stopTracks();
+      await audioContext.close().catch(() => {});
+    }
+    const samples = resampleLinear(chunks, sourceSampleRate, 16_000);
+    if (samples.length < 800) throw new Error('I did not hear speech yet. Try again after the beep.');
+    return encodeWavBase64(samples, 16_000);
+  };
+
+  window.plushpalSpeakText = async (text) => {
+    if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) {
+      throw new Error('Browser speech synthesis is unavailable.');
+    }
+    await new Promise((resolve, reject) => {
+      const utterance = new SpeechSynthesisUtterance(String(text || '').slice(0, 2000));
+      utterance.lang = 'en-US';
+      utterance.onend = resolve;
+      utterance.onerror = () => reject(new Error('Browser speech synthesis failed.'));
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(utterance);
+    });
+  };
+
   const sha256Base64 = async (text) => {
     const digest = await crypto.subtle.digest('SHA-256', textEncoder.encode(text));
     return bytesToBase64(new Uint8Array(digest));
   };
 
   const newId = (prefix) => `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+
+  const stableClientId = () => {
+    try {
+      const existing = window.localStorage.getItem(CLIENT_ID_KEY);
+      if (/^web-[a-f0-9-]{36}$/.test(existing || '')) return existing;
+      const generated = `web-${crypto.randomUUID()}`;
+      window.localStorage.setItem(CLIENT_ID_KEY, generated);
+      return generated;
+    } catch (_) {
+      return `web-${crypto.randomUUID()}`;
+    }
+  };
 
   const providerDisplayName = (provider) =>
     provider === 'openai' ? 'OpenAI' : 'Gemini';
@@ -66,15 +268,27 @@
 
   let bootstrapAttempted = false;
   const ensureStationSession = async () => {
+    if (!bootstrapAttempted && window.__plushpalStationBootstrapReady) {
+      bootstrapAttempted = true;
+      const status = await window.__plushpalStationBootstrapReady;
+      if (status === 'failed') {
+        throw new Error('MacStation session expired. Open PlushBuddy from Station again.');
+      }
+      return;
+    }
+
     const token = currentBootstrapToken();
     if (token && !bootstrapAttempted) {
       bootstrapAttempted = true;
       const response = await fetch('/api/v1/bootstrap', {
         method: 'POST',
         credentials: 'same-origin',
-        headers: {'x-plushpal-bootstrap': token},
+        headers: {
+          'x-plushpal-bootstrap': token,
+          'x-plushbuddy-client-id': stableClientId(),
+        },
       });
-      if (!response.ok) throw new Error('MacStation pairing expired. Open a fresh browser link from MacStation.');
+      if (!response.ok) throw new Error('MacStation session expired. Open PlushBuddy from Station again.');
       history.replaceState(null, document.title, `${window.location.pathname}${window.location.search}`);
       return;
     }
@@ -89,11 +303,12 @@
       ...options,
       headers: {
         ...(options.body ? {'Content-Type': 'application/json'} : {}),
+        'X-PlushBuddy-Client-Id': stableClientId(),
         ...(options.headers || {}),
       },
     });
     if (response.status === 401 || response.status === 403) {
-      throw new Error('MacStation session is not ready. Open PlushBuddy from the MacStation browser link or refresh with a fresh QR/link.');
+      throw new Error('MacStation session is not ready. Open this browser or Mac app from PlushBuddy Station again.');
     }
     return response;
   };
@@ -291,42 +506,46 @@ Current child message: ${safeText}`;
   };
 
   window.plushpalReasoningProviderStatus = async () => {
-    const state = loadState();
-    return JSON.stringify({
-      provider: state.reasoning.provider || 'gemini',
-      configured: Boolean(state.reasoning.apiKey),
-      display_name: providerDisplayName(state.reasoning.provider || 'gemini'),
-    });
+    const response = await stationFetch('/api/v1/provider/status');
+    if (!response.ok) {
+      throw new Error(await responseErrorMessage(response, 'Reasoning provider status failed'));
+    }
+    return JSON.stringify(await response.json());
   };
 
-  window.plushpalConfigureApiKey = async (provider, apiKey) => {
+  window.plushpalConfigureApiKey = async (pin, provider, apiKey) => {
     const normalized = provider === 'openai' ? 'openai' : 'gemini';
     if (!apiKey || !apiKey.trim()) throw new Error('API key is required.');
-    const state = loadState();
-    state.reasoning = {provider: normalized, apiKey: apiKey.trim()};
-    saveState(state);
+    const response = await stationFetch('/api/v1/provider/api-key', {
+      method: 'POST',
+      body: JSON.stringify({
+        pin,
+        provider: normalized,
+        api_key: apiKey.trim(),
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(await responseErrorMessage(response, 'Could not save the API key'));
+    }
+    clearSessionReasoning();
   };
 
   window.plushpalModelStatus = async () => {
-    const state = loadState();
     const station = await stationStatus();
-    const character = state.characters[0] || null;
     return JSON.stringify({
-      model_id: state.reasoning.apiKey
-        ? `${state.reasoning.provider || 'gemini'}-cloud`
-        : 'browser-cloud',
-      display_name: state.reasoning.apiKey
-        ? `${providerDisplayName(state.reasoning.provider || 'gemini')} cloud reasoning`
-        : 'Browser cloud reasoning',
-      model_ready: Boolean(state.reasoning.apiKey),
+      model_id: station?.model_id || 'hub-runtime',
+      display_name: station?.display_name || 'PlushBuddy Hub',
+      runtime_mode: station?.runtime_mode || 'browser',
+      model_ready: Boolean(station?.model_ready),
       model_install_supported: Boolean(station),
-      model_installing: false,
-      parent_configured: Boolean(state.parent),
-      age_band: state.parent?.age_band || null,
-      character_alias: character?.alias || state.parent?.character_alias || null,
-      character_traits: character?.traits || state.parent?.character_traits || DEFAULT_TRAITS,
-      parent_guidance: character?.parent_guidance || state.parent?.parent_guidance || null,
-      retention_days: state.parent?.retention_days || null,
+      model_installing: Boolean(station?.model_installing),
+      speech_to_text_ready: Boolean(station?.speech_to_text_ready),
+      parent_configured: Boolean(station?.parent_configured),
+      age_band: station?.age_band || null,
+      character_alias: station?.character_alias || null,
+      character_traits: station?.character_traits || DEFAULT_TRAITS,
+      parent_guidance: station?.parent_guidance || null,
+      retention_days: station?.retention_days || null,
     });
   };
 
@@ -340,39 +559,55 @@ Current child message: ${safeText}`;
     childAgeMonths,
     characterPlayAgeYears,
   ) => {
-    const state = loadState();
-    if (!state.reasoning.apiKey) throw new Error('Save a Gemini or OpenAI API key first.');
-    const prompt = buildPrompt({
-      ageBand,
-      characterAlias,
-      text,
-      kidId,
-      kidName,
-      childAgeYears,
-      childAgeMonths,
-      characterPlayAgeYears,
+    const response = await stationFetch('/api/v1/conversation/turn', {
+      method: 'POST',
+      body: JSON.stringify({
+        age_band: ageBand,
+        character_alias: characterAlias,
+        text,
+        kid_id: kidId || null,
+        kid_name: kidName || null,
+        child_age_years: childAgeYears ?? null,
+        child_age_months: childAgeMonths ?? null,
+        character_play_age_years: characterPlayAgeYears ?? null,
+      }),
     });
-    const result = state.reasoning.provider === 'openai'
-      ? await callOpenAI(state.reasoning.apiKey, prompt)
-      : await callGemini(state.reasoning.apiKey, prompt);
-
-    const turn = {
-      kid_id: kidId || null,
-      character_alias: characterAlias,
-      child_text: text,
-      character_text: result.speech,
-      completed_at: Date.now(),
-    };
-    const next = loadState();
-    next.history = [...(next.history || []), turn].slice(-200);
-    saveState(next);
-    return JSON.stringify(result);
+    if (!response.ok) {
+      throw new Error(await responseErrorMessage(response, 'Conversation failed'));
+    }
+    return JSON.stringify(await response.json());
   };
 
-  window.plushpalCancelTurn = async () => {};
-  window.plushpalEndSession = async () => {};
-  window.plushpalInstallLocalModel = async () => {};
-  window.plushpalCancelModelInstall = async () => {};
+  window.plushpalTranscribeSpeech = async (wavBase64) => {
+    const response = await stationFetch('/api/v1/stt/transcribe', {
+      method: 'POST',
+      body: JSON.stringify({wav_base64: wavBase64}),
+    });
+    if (!response.ok) {
+      throw new Error(await responseErrorMessage(response, 'Hub speech-to-text could not understand that yet.'));
+    }
+    const decoded = await response.json();
+    return decoded?.transcript || '';
+  };
+
+  const stationCommand = async (command) => {
+    const response = await stationFetch('/api/v1/commands', {
+      method: 'POST',
+      body: JSON.stringify({
+        schema_version: 1,
+        request_id: `browser-${Date.now()}-${Math.floor(Math.random() * 1e9)}`,
+        command,
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(await responseErrorMessage(response, 'Hub command failed'));
+    }
+  };
+
+  window.plushpalCancelTurn = async () => stationCommand('cancel_turn');
+  window.plushpalEndSession = async () => stationCommand('exit_child_mode');
+  window.plushpalInstallLocalModel = async () => stationCommand('install_local_model');
+  window.plushpalCancelModelInstall = async () => stationCommand('cancel_model_install');
 
   window.plushpalConfigureParentPin = async (
     pin,
@@ -383,38 +618,71 @@ Current child message: ${safeText}`;
     retentionDays,
     kidId,
   ) => {
-    if (!/^[0-9]{4,8}$/.test(pin)) throw new Error('Choose a 4-8 digit parent PIN.');
-    const salt = bytesToBase64(crypto.getRandomValues(new Uint8Array(16)));
-    const hash = await sha256Base64(`${salt}:${pin}`);
-    const state = loadState();
-    state.parent = {
-      pin_salt: salt,
-      pin_hash: hash,
-      age_band: ageBand,
-      character_alias: characterAlias,
-      character_traits: Array.from(characterTraits || DEFAULT_TRAITS),
-      parent_guidance: parentGuidance || null,
-      retention_days: retentionDays || null,
-      kid_id: kidId || null,
-    };
-    saveState(state);
+    const response = await stationFetch('/api/v1/parent-pin/configure', {
+      method: 'POST',
+      body: JSON.stringify({
+        pin,
+        age_band: ageBand,
+        character_alias: characterAlias,
+        character_traits: Array.from(characterTraits || DEFAULT_TRAITS),
+        parent_guidance: parentGuidance || null,
+        retention_days: retentionDays || null,
+        kid_id: kidId || null,
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(await responseErrorMessage(response, 'Could not configure parent PIN'));
+    }
   };
 
   window.plushpalAuthorizeParentPin = async (pin) => {
     try {
-      await requirePin(pin);
-      return true;
+      const response = await stationFetch('/api/v1/parent-pin/authorize', {
+        method: 'POST',
+        body: JSON.stringify({pin}),
+      });
+      return response.ok;
     } catch (_) {
       return false;
     }
   };
 
   window.plushpalDeleteAllLocalData = async (pin) => {
-    await requirePin(pin);
-    window.localStorage.removeItem(STORE_KEY);
+    const response = await stationFetch('/api/v1/local-data/delete', {
+      method: 'POST',
+      body: JSON.stringify({pin}),
+    });
+    if (!response.ok) {
+      throw new Error(await responseErrorMessage(response, 'Could not delete local data'));
+    }
+    try {
+      window.localStorage?.removeItem(STORE_KEY);
+    } catch (_) {}
+    clearSessionReasoning();
   };
 
-  window.plushpalKids = async () => JSON.stringify(loadState().kids || []);
+  window.plushpalExportBackup = async (pin) => {
+    const response = await stationFetch('/api/v1/backup/export', {
+      method: 'POST',
+      body: JSON.stringify({pin}),
+    });
+    if (!response.ok) throw new Error(await responseErrorMessage(response, 'Could not export encrypted backup'));
+    return JSON.stringify(await response.json());
+  };
+
+  window.plushpalImportBackup = async (pin, backupBase64) => {
+    const response = await stationFetch('/api/v1/backup/import', {
+      method: 'POST',
+      body: JSON.stringify({pin, backup_base64: backupBase64}),
+    });
+    if (!response.ok) throw new Error(await responseErrorMessage(response, 'Could not import encrypted backup'));
+  };
+
+  window.plushpalKids = async () => {
+    const response = await stationFetch('/api/v1/kids');
+    if (!response.ok) throw new Error(await responseErrorMessage(response, 'Could not load kids'));
+    return JSON.stringify(await response.json());
+  };
 
   window.plushpalSaveKid = async (
     pin,
@@ -424,52 +692,66 @@ Current child message: ${safeText}`;
     photoBase64,
     photoMime,
   ) => {
-    const state = await requirePin(pin);
-    const id = kidId || newId('kid');
-    const row = {
-      id,
-      name: name.trim(),
-      birthdate_iso: birthdateIso.trim(),
-      photo_base64: photoBase64 || null,
-      photo_mime: photoMime || null,
-    };
-    state.kids = [
-      ...state.kids.filter((kid) => kid.id !== id),
-      row,
-    ];
-    saveState(state);
+    const response = await stationFetch('/api/v1/kids/save', {
+      method: 'POST',
+      body: JSON.stringify({
+        pin,
+        kid_id: kidId || null,
+        name: name.trim(),
+        birthdate_iso: birthdateIso.trim(),
+        photo_base64: photoBase64 || null,
+        photo_mime: photoMime || null,
+      }),
+    });
+    if (!response.ok) throw new Error(await responseErrorMessage(response, 'Could not save kid'));
   };
 
   window.plushpalDeleteKid = async (pin, kidId) => {
-    const state = await requirePin(pin);
-    state.kids = state.kids.filter((kid) => kid.id !== kidId);
-    state.characters = state.characters.filter((character) => character.kid_id !== kidId);
-    state.history = state.history.filter((turn) => turn.kid_id !== kidId);
-    saveState(state);
+    const response = await stationFetch('/api/v1/kids/delete', {
+      method: 'POST',
+      body: JSON.stringify({pin, kid_id: kidId}),
+    });
+    if (!response.ok) throw new Error(await responseErrorMessage(response, 'Could not delete kid'));
+  };
+
+  window.plushpalPairedClients = async (pin) => {
+    const response = await stationFetch('/api/v1/paired-clients', {
+      method: 'POST',
+      body: JSON.stringify({pin}),
+    });
+    if (!response.ok) throw new Error(await responseErrorMessage(response, 'Could not load paired devices'));
+    return JSON.stringify(await response.json());
+  };
+
+  window.plushpalRevokePairedClient = async (pin, clientId) => {
+    const response = await stationFetch('/api/v1/paired-clients/revoke', {
+      method: 'POST',
+      body: JSON.stringify({pin, client_id: clientId}),
+    });
+    if (!response.ok) throw new Error(await responseErrorMessage(response, 'Could not revoke paired device'));
   };
 
   window.plushpalHistory = async (pin) => {
-    const state = await requirePin(pin);
-    return JSON.stringify((state.history || []).map((turn) => ({
-      child_text: turn.child_text,
-      character_text: turn.character_text,
-      completed_at: turn.completed_at,
-    })));
+    const response = await stationFetch('/api/v1/history/list', {
+      method: 'POST',
+      body: JSON.stringify({pin}),
+    });
+    if (!response.ok) throw new Error(await responseErrorMessage(response, 'Could not load history'));
+    return JSON.stringify(await response.json());
   };
 
   window.plushpalDeleteHistory = async (pin) => {
-    const state = await requirePin(pin);
-    state.history = [];
-    saveState(state);
+    const response = await stationFetch('/api/v1/history/delete', {
+      method: 'POST',
+      body: JSON.stringify({pin}),
+    });
+    if (!response.ok) throw new Error(await responseErrorMessage(response, 'Could not delete history'));
   };
 
   window.plushpalCharacters = async () => {
-    const state = loadState();
-    const rows = await Promise.all((state.characters || []).map(async (character) => ({
-      ...character,
-      voice: await voiceStatusFor(character.alias),
-    })));
-    return JSON.stringify(rows);
+    const response = await stationFetch('/api/v1/characters');
+    if (!response.ok) throw new Error(await responseErrorMessage(response, 'Could not load characters'));
+    return JSON.stringify(await response.json());
   };
 
   window.plushpalSaveCharacter = async (
@@ -480,38 +762,30 @@ Current child message: ${safeText}`;
     kidId,
     personaAgeYears,
   ) => {
-    const state = await requirePin(pin);
-    const alias = characterAlias.trim();
-    const existing = state.characters.find((character) => character.alias === alias);
-    const row = {
-      alias,
-      traits: Array.from(characterTraits || DEFAULT_TRAITS),
-      parent_guidance: parentGuidance || null,
-      kid_id: kidId || existing?.kid_id || state.parent?.kid_id || null,
-      persona_age_years: personaAgeYears || existing?.persona_age_years || null,
-      photo_base64: existing?.photo_base64 || null,
-      photo_mime: existing?.photo_mime || null,
-      voice: existing?.voice || {
-        enrolled: false,
-        approved: false,
-        runtime_ready: false,
-        profile_id: alias,
-      },
-    };
-    state.characters = [
-      ...state.characters.filter((character) => character.alias !== alias),
-      row,
-    ];
-    saveState(state);
+    const response = await stationFetch('/api/v1/characters/save', {
+      method: 'POST',
+      body: JSON.stringify({
+        pin,
+        character_alias: characterAlias.trim(),
+        character_traits: Array.from(characterTraits || DEFAULT_TRAITS),
+        parent_guidance: parentGuidance || null,
+        kid_id: kidId || null,
+        persona_age_years: personaAgeYears || null,
+      }),
+    });
+    if (!response.ok) throw new Error(await responseErrorMessage(response, 'Could not save character'));
   };
 
   window.plushpalDeleteCharacter = async (pin, characterAlias, kidId) => {
-    const state = await requirePin(pin);
-    state.characters = state.characters.filter((character) =>
-      character.alias !== characterAlias ||
-      (kidId && character.kid_id !== kidId));
-    state.history = state.history.filter((turn) => turn.character_alias !== characterAlias);
-    saveState(state);
+    const response = await stationFetch('/api/v1/characters/delete', {
+      method: 'POST',
+      body: JSON.stringify({
+        pin,
+        character_alias: characterAlias,
+        kid_id: kidId || null,
+      }),
+    });
+    if (!response.ok) throw new Error(await responseErrorMessage(response, 'Could not delete character'));
   };
 
   const pickFile = ({accept, maxBytes}) => new Promise((resolve, reject) => {
@@ -560,19 +834,24 @@ Current child message: ${safeText}`;
   };
 
   window.plushpalSaveCharacterPhoto = async (pin, characterAlias, photoBase64, photoMime) => {
-    const state = await requirePin(pin);
-    state.characters = state.characters.map((character) =>
-      character.alias === characterAlias
-        ? {...character, photo_base64: photoBase64, photo_mime: photoMime || null}
-        : character);
-    saveState(state);
+    const response = await stationFetch('/api/v1/characters/photo', {
+      method: 'POST',
+      body: JSON.stringify({
+        pin,
+        character_alias: characterAlias,
+        photo_base64: photoBase64,
+        photo_mime: photoMime || null,
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(await responseErrorMessage(response, 'Could not save character photo'));
+    }
   };
 
   window.plushpalVoiceStatus = async (characterAlias) =>
     JSON.stringify(await voiceStatusFor(characterAlias));
 
   window.plushpalEnrollVoice = async (pin, adultAuthorized, characterAlias) => {
-    await requirePin(pin);
     const file = await pickFile({
       accept:
         '.m4a,.mp4,.aac,.wav,.mp3,.ogg,.webm,' +
@@ -604,7 +883,6 @@ Current child message: ${safeText}`;
   };
 
   window.plushpalPreviewVoice = async (pin, characterAlias) => {
-    await requirePin(pin);
     await playWavResponse(await stationFetch('/api/v1/voice/preview', {
       method: 'POST',
       body: JSON.stringify({
@@ -616,7 +894,6 @@ Current child message: ${safeText}`;
   };
 
   window.plushpalApproveVoice = async (pin, characterAlias) => {
-    await requirePin(pin);
     const response = await stationFetch('/api/v1/voice/approve', {
       method: 'POST',
       body: JSON.stringify({pin, character_alias: characterAlias || null}),
@@ -625,7 +902,6 @@ Current child message: ${safeText}`;
   };
 
   window.plushpalDeleteVoice = async (pin, characterAlias) => {
-    await requirePin(pin);
     const response = await stationFetch('/api/v1/voice/delete', {
       method: 'POST',
       body: JSON.stringify({pin, character_alias: characterAlias || null}),

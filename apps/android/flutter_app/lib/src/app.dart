@@ -440,7 +440,6 @@ class _PlushPalRootState extends State<PlushPalRoot>
     dispatch(const TalkStarted());
     try {
       final transcript = await widget.platform.listen();
-      if (!mounted) return;
       if (transcript.trim().isEmpty) {
         dispatch(const ConversationFailed());
         setState(
@@ -451,14 +450,33 @@ class _PlushPalRootState extends State<PlushPalRoot>
       await beginLocalTurn(transcript, startListening: false);
     } catch (error) {
       if (!mounted) return;
-      dispatch(const ConversationFailed());
-      final speechMessage =
-          error is PlatformException &&
-              error.message != null &&
-              error.message!.trim().isNotEmpty
-          ? error.message!.trim()
-          : 'I did not catch that yet. Try again and pause a little after you finish, or type a message.';
-      setState(() => message = speechMessage);
+      try {
+        setState(
+          () => message =
+              'On-device listening had trouble, so I’m trying PlushBuddy Hub.',
+        );
+        final wavBytes = await widget.platform.recordSpeechWav();
+        final transcript = await widget.backend.transcribeSpeech(wavBytes);
+        if (!mounted) return;
+        if (transcript.trim().isEmpty) {
+          dispatch(const ConversationFailed());
+          setState(
+            () => message = 'I did not hear a question. Please try again.',
+          );
+          return;
+        }
+        await beginLocalTurn(transcript, startListening: false);
+      } catch (_) {
+        if (!mounted) return;
+        dispatch(const ConversationFailed());
+        final speechMessage =
+            error is PlatformException &&
+                error.message != null &&
+                error.message!.trim().isNotEmpty
+            ? error.message!.trim()
+            : 'I did not catch that yet. Try again and pause a little after you finish, or type a message.';
+        setState(() => message = speechMessage);
+      }
     }
   }
 
@@ -726,6 +744,7 @@ class _PlushPalRootState extends State<PlushPalRoot>
     if (submitted != true || !mounted) return;
     try {
       await widget.backend.configureApiKey(
+        pin: parentPin.text,
         provider: provider,
         apiKey: controller.text,
       );
@@ -1025,6 +1044,54 @@ class _PlushPalRootState extends State<PlushPalRoot>
     } catch (error) {
       if (mounted) {
         showActionMessage(userFacingError(error, fallback: 'Deletion failed.'));
+      }
+    }
+  }
+
+  Future<void> exportEncryptedBackup() async {
+    final pin = await requestParentPin('Export encrypted backup');
+    if (pin == null) return;
+    try {
+      final backup = await widget.backend.exportBackup(pin);
+      await Clipboard.setData(ClipboardData(text: backup.backupBase64));
+      showActionMessage(
+        'Encrypted backup copied to clipboard. Keep it private; it can restore this Hub with the parent PIN.',
+      );
+    } catch (error) {
+      if (mounted) {
+        showActionMessage(
+          userFacingError(error, fallback: 'Backup export failed.'),
+        );
+      }
+    }
+  }
+
+  Future<void> importEncryptedBackup() async {
+    final confirmed = await confirmAction(
+      title: 'Import encrypted backup?',
+      message:
+          'This replaces the current Hub data with the encrypted backup from your clipboard. Make sure you exported a backup you trust.',
+      confirmLabel: 'Import backup',
+      destructive: true,
+    );
+    if (!confirmed) return;
+    final pin = await requestParentPin('Import encrypted backup');
+    if (pin == null) return;
+    try {
+      final clipboard = await Clipboard.getData('text/plain');
+      final backupBase64 = clipboard?.text?.trim() ?? '';
+      if (backupBase64.isEmpty) {
+        showActionMessage('Clipboard does not contain an encrypted backup.');
+        return;
+      }
+      await widget.backend.importBackup(pin: pin, backupBase64: backupBase64);
+      await assessDevice();
+      showActionMessage('Encrypted backup imported.');
+    } catch (error) {
+      if (mounted) {
+        showActionMessage(
+          userFacingError(error, fallback: 'Backup import failed.'),
+        );
       }
     }
   }
@@ -1354,6 +1421,8 @@ class _PlushPalRootState extends State<PlushPalRoot>
             reasoningProvider: reasoningProvider,
             stationPaired: stationPaired,
             stationBaseUrl: stationBaseUrl,
+            loadPairedClients: loadPairedClients,
+            revokePairedClient: revokePairedClient,
             voiceEnrolled: voiceEnrolled,
             voiceApproved: voiceApproved,
             voicePreviewed: voicePreviewed,
@@ -1379,6 +1448,8 @@ class _PlushPalRootState extends State<PlushPalRoot>
             deleteCurrentCharacter: deleteCurrentCharacter,
             reviewSavedHistory: reviewSavedHistory,
             deleteAllConversations: deleteAllConversations,
+            exportEncryptedBackup: exportEncryptedBackup,
+            importEncryptedBackup: importEncryptedBackup,
             deleteAllLocalData: deleteAllLocalData,
           ),
         ),
@@ -1387,6 +1458,39 @@ class _PlushPalRootState extends State<PlushPalRoot>
       unlockedParentPin = null;
     }
     if (mounted) unawaited(assessDevice());
+  }
+
+  Future<List<PairedClientInfo>> loadPairedClients() async {
+    final pin = await requestParentPin('Review paired devices');
+    if (pin == null) return const [];
+    return widget.backend.pairedClients(pin);
+  }
+
+  Future<void> revokePairedClient(PairedClientInfo client) async {
+    if (client.revokedAt != null) return;
+    final confirmed = await confirmAction(
+      title: 'Forget this device?',
+      message:
+          'This removes ${client.label ?? client.platform} from the Magic Voice Box. The device will need to pair again before it can use buddy voices.',
+      confirmLabel: 'Forget device',
+      destructive: true,
+    );
+    if (!confirmed) return;
+    final pin = await requestParentPin('Forget paired device');
+    if (pin == null) return;
+    try {
+      await widget.backend.revokePairedClient(
+        pin: pin,
+        clientId: client.clientId,
+      );
+      if (!mounted) return;
+      showActionMessage('Device was removed from the Magic Voice Box.');
+    } catch (error) {
+      if (!mounted) return;
+      showActionMessage(
+        userFacingError(error, fallback: 'Could not remove this device.'),
+      );
+    }
   }
 
   Future<List<CharacterConfiguration>> refreshCharactersForSettings() async {
@@ -3070,6 +3174,8 @@ class SettingsMenuScreen extends StatelessWidget {
     required this.reasoningProvider,
     required this.stationPaired,
     required this.stationBaseUrl,
+    required this.loadPairedClients,
+    required this.revokePairedClient,
     required this.voiceEnrolled,
     required this.voiceApproved,
     required this.voicePreviewed,
@@ -3095,6 +3201,8 @@ class SettingsMenuScreen extends StatelessWidget {
     required this.deleteCurrentCharacter,
     required this.reviewSavedHistory,
     required this.deleteAllConversations,
+    required this.exportEncryptedBackup,
+    required this.importEncryptedBackup,
     required this.deleteAllLocalData,
     super.key,
   });
@@ -3107,6 +3215,8 @@ class SettingsMenuScreen extends StatelessWidget {
   final ReasoningProviderStatus reasoningProvider;
   final bool stationPaired;
   final String? stationBaseUrl;
+  final Future<List<PairedClientInfo>> Function() loadPairedClients;
+  final Future<void> Function(PairedClientInfo client) revokePairedClient;
   final bool voiceEnrolled;
   final bool voiceApproved;
   final bool voicePreviewed;
@@ -3132,6 +3242,8 @@ class SettingsMenuScreen extends StatelessWidget {
   final Future<bool> Function() deleteCurrentCharacter;
   final Future<void> Function() reviewSavedHistory;
   final Future<void> Function() deleteAllConversations;
+  final Future<void> Function() exportEncryptedBackup;
+  final Future<void> Function() importEncryptedBackup;
   final Future<void> Function() deleteAllLocalData;
 
   void _push(BuildContext context, Widget screen) {
@@ -3191,6 +3303,8 @@ class SettingsMenuScreen extends StatelessWidget {
                     stationBaseUrl: stationBaseUrl,
                     pairWithStation: pairWithStation,
                     clearStationPairing: clearStationPairing,
+                    loadPairedClients: loadPairedClients,
+                    revokePairedClient: revokePairedClient,
                   ),
                 ),
               ),
@@ -3242,6 +3356,20 @@ class SettingsMenuScreen extends StatelessWidget {
           _SettingsGroup(
             title: 'Privacy & cleanup',
             children: [
+              _SettingsTile(
+                icon: Icons.ios_share,
+                title: 'Export encrypted backup',
+                subtitle:
+                    'Copy an encrypted backup of kids, buddies, settings, history, and voices.',
+                onTap: exportEncryptedBackup,
+              ),
+              _SettingsTile(
+                icon: Icons.restore,
+                title: 'Import encrypted backup',
+                subtitle:
+                    'Restore a backup from clipboard. Requires the parent PIN used for export.',
+                onTap: importEncryptedBackup,
+              ),
               _SettingsTile(
                 icon: Icons.delete_sweep,
                 title: 'Clear all conversations',
@@ -3327,12 +3455,16 @@ class _MacStationSettingsScreen extends StatelessWidget {
     required this.stationBaseUrl,
     required this.pairWithStation,
     required this.clearStationPairing,
+    required this.loadPairedClients,
+    required this.revokePairedClient,
   });
 
   final bool stationPaired;
   final String? stationBaseUrl;
   final Future<void> Function() pairWithStation;
   final Future<void> Function() clearStationPairing;
+  final Future<List<PairedClientInfo>> Function() loadPairedClients;
+  final Future<void> Function(PairedClientInfo client) revokePairedClient;
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -3369,7 +3501,201 @@ class _MacStationSettingsScreen extends StatelessWidget {
               ),
           ],
         ),
+        _SettingsGroup(
+          title: 'Paired clients',
+          children: [
+            _SettingsTile(
+              icon: Icons.devices_other,
+              title: 'Manage paired devices',
+              subtitle:
+                  'Review phones, apps, and browsers allowed to use this Magic Voice Box.',
+              trailing: const Icon(Icons.chevron_right),
+              onTap: stationPaired
+                  ? () => Navigator.of(context).push<void>(
+                      MaterialPageRoute(
+                        builder: (_) => _PairedClientsSettingsScreen(
+                          loadPairedClients: loadPairedClients,
+                          revokePairedClient: revokePairedClient,
+                        ),
+                      ),
+                    )
+                  : null,
+            ),
+          ],
+        ),
       ],
+    ),
+  );
+}
+
+class _PairedClientsSettingsScreen extends StatefulWidget {
+  const _PairedClientsSettingsScreen({
+    required this.loadPairedClients,
+    required this.revokePairedClient,
+  });
+
+  final Future<List<PairedClientInfo>> Function() loadPairedClients;
+  final Future<void> Function(PairedClientInfo client) revokePairedClient;
+
+  @override
+  State<_PairedClientsSettingsScreen> createState() =>
+      _PairedClientsSettingsScreenState();
+}
+
+class _PairedClientsSettingsScreenState
+    extends State<_PairedClientsSettingsScreen> {
+  late Future<List<PairedClientInfo>> _clientsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _clientsFuture = widget.loadPairedClients();
+  }
+
+  void _reload() {
+    setState(() => _clientsFuture = widget.loadPairedClients());
+  }
+
+  Future<void> _revoke(PairedClientInfo client) async {
+    await widget.revokePairedClient(client);
+    if (mounted) _reload();
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(
+      title: const Text('Paired devices'),
+      actions: [
+        IconButton(
+          tooltip: 'Refresh',
+          onPressed: _reload,
+          icon: const Icon(Icons.refresh),
+        ),
+      ],
+    ),
+    body: FutureBuilder<List<PairedClientInfo>>(
+      future: _clientsFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (snapshot.hasError) {
+          return _SettingsEmptyState(
+            icon: Icons.error_outline,
+            title: 'Could not load paired devices',
+            subtitle: 'Check the Magic Voice Box, then try again.',
+            actionLabel: 'Try again',
+            onAction: _reload,
+          );
+        }
+        final clients = snapshot.data ?? const <PairedClientInfo>[];
+        if (clients.isEmpty) {
+          return _SettingsEmptyState(
+            icon: Icons.devices_other,
+            title: 'No paired devices yet',
+            subtitle:
+                'Pair this phone, a Mac app, or a browser from the Magic Voice Box.',
+            actionLabel: 'Refresh',
+            onAction: _reload,
+          );
+        }
+        final active = clients.where((client) => client.revokedAt == null);
+        final revoked = clients.where((client) => client.revokedAt != null);
+        return ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            _SettingsGroup(
+              title: 'Allowed now',
+              children: active.isEmpty
+                  ? const [
+                      _SettingsTile(
+                        icon: Icons.info_outline,
+                        title: 'No active devices',
+                        subtitle: 'Pair a client to use buddy voices.',
+                      ),
+                    ]
+                  : active
+                        .map(
+                          (client) => _PairedClientTile(
+                            client: client,
+                            onRevoke: () => _revoke(client),
+                          ),
+                        )
+                        .toList(),
+            ),
+            if (revoked.isNotEmpty)
+              _SettingsGroup(
+                title: 'Forgotten',
+                children: revoked
+                    .map((client) => _PairedClientTile(client: client))
+                    .toList(),
+              ),
+          ],
+        );
+      },
+    ),
+  );
+}
+
+class _PairedClientTile extends StatelessWidget {
+  const _PairedClientTile({required this.client, this.onRevoke});
+
+  final PairedClientInfo client;
+  final Future<void> Function()? onRevoke;
+
+  @override
+  Widget build(BuildContext context) {
+    final isRevoked = client.revokedAt != null;
+    final label = client.label?.trim();
+    final title = label == null || label.isEmpty ? client.platform : label;
+    final subtitleParts = <String>[client.platform];
+    final lastSeenIp = client.lastSeenIp;
+    if (lastSeenIp != null && lastSeenIp.isNotEmpty) {
+      subtitleParts.add('last IP $lastSeenIp');
+    }
+    subtitleParts.add(isRevoked ? 'forgotten' : 'allowed');
+    return _SettingsTile(
+      icon: isRevoked ? Icons.block : Icons.devices,
+      title: title,
+      subtitle: subtitleParts.join(' • '),
+      trailing: isRevoked
+          ? const Icon(Icons.block, color: Colors.grey)
+          : TextButton(onPressed: onRevoke, child: const Text('Forget')),
+    );
+  }
+}
+
+class _SettingsEmptyState extends StatelessWidget {
+  const _SettingsEmptyState({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.actionLabel,
+    required this.onAction,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final String actionLabel;
+  final VoidCallback onAction;
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 56, color: Theme.of(context).colorScheme.primary),
+          const SizedBox(height: 16),
+          Text(title, style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 8),
+          Text(subtitle, textAlign: TextAlign.center),
+          const SizedBox(height: 16),
+          FilledButton.tonal(onPressed: onAction, child: Text(actionLabel)),
+        ],
+      ),
     ),
   );
 }
@@ -4383,29 +4709,49 @@ class _RuntimeModeBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     final normalized = runtimeMode.toLowerCase();
     final isDemo = normalized == 'demo' || normalized == 'mock';
-    if (!isDemo) return const SizedBox.shrink();
+    final isCloud = normalized == 'cloud_llm' || normalized == 'cloud';
+    final isLocalFirst = normalized == 'privacy_local_first';
+    if (!isDemo && !isCloud && !isLocalFirst) return const SizedBox.shrink();
     final colorScheme = Theme.of(context).colorScheme;
+    final (title, body, icon, color) = isDemo
+        ? (
+            'Demo mode',
+            'Synthetic voice and pretend responses only. No Gemini/OpenAI calls, no real voice cloning quality.',
+            Icons.science,
+            const Color(0xfffff7cc),
+          )
+        : isLocalFirst
+        ? (
+            'Privacy local-first mode',
+            'The Hub avoids cloud LLM calls and uses local models when installed. If local reasoning is not ready, configure Cloud LLM mode in Station.',
+            Icons.lock,
+            const Color(0xffe8f5e9),
+          )
+        : (
+            'Cloud LLM mode',
+            'Gemini/OpenAI answers run through the Hub with redaction and child-safety guardrails. Voice, profiles, audio, and history stay local.',
+            Icons.cloud_done,
+            const Color(0xffe3f2fd),
+          );
     return Card(
-      color: const Color(0xfffff7cc),
+      color: color,
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(Icons.science, color: colorScheme.primary),
+            Icon(icon, color: colorScheme.primary),
             const SizedBox(width: 12),
-            const Expanded(
+            Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Demo mode',
-                    style: TextStyle(fontWeight: FontWeight.w800),
+                    title,
+                    style: const TextStyle(fontWeight: FontWeight.w800),
                   ),
-                  SizedBox(height: 2),
-                  Text(
-                    'Synthetic voice and pretend responses only. No Gemini/OpenAI calls, no real voice cloning quality.',
-                  ),
+                  const SizedBox(height: 2),
+                  Text(body),
                 ],
               ),
             ),

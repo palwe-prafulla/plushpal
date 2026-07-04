@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.Build
 import android.os.StatFs
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
@@ -19,6 +20,8 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import android.media.AudioFormat
+import android.media.AudioRecord
 import java.nio.charset.StandardCharsets
 import java.security.KeyStore
 import java.security.MessageDigest
@@ -35,6 +38,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaPlayer
+import android.media.MediaRecorder
 import android.provider.OpenableColumns
 import java.io.ByteArrayOutputStream
 import android.util.Base64
@@ -43,6 +47,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import kotlin.math.abs
 
 class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, TextToSpeech.OnInitListener {
     companion object {
@@ -70,6 +75,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, TextToS
     private var pendingImagePickResult: MethodChannel.Result? = null
     private var pendingMicrophonePermissionResult: MethodChannel.Result? = null
     private var wavPlayer: MediaPlayer? = null
+    private val speechRecording = AtomicBoolean(false)
     private val modelInstalling = AtomicBoolean(false)
     private val geminiContextLock = Any()
     private val geminiContext = ArrayList<ConversationContextTurn>()
@@ -206,6 +212,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, TextToS
             "kids" -> kids(result)
             "saveKid" -> saveKid(call, result)
             "deleteKid" -> deleteKid(call, result)
+            "stationClientId" -> result.success(stationClientId())
             "stationPairingStatus" -> stationPairingStatus(result)
             "saveStationPairing" -> saveStationPairing(call, result)
             "clearStationPairing" -> clearStationPairing(result)
@@ -214,9 +221,11 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, TextToS
             "ensureMicrophonePermission" -> ensureMicrophonePermission(result)
             "playWavBytes" -> playWavBytes(call, result)
             "listen" -> listen(result)
+            "recordSpeechWav" -> recordSpeechWav(result)
             "speak" -> speak(call, result)
             "cancelSpeech" -> {
                 speechRecognizer?.cancel()
+                speechRecording.set(false)
                 textToSpeech?.stop()
                 wavPlayer?.stop()
                 wavPlayer?.release()
@@ -1344,11 +1353,13 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, TextToS
         }.getOrElse { JSONObject() }
         val baseUrl = config.optString("baseUrl").takeIf(String::isNotEmpty)
         val cookie = config.optString("cookie").takeIf(String::isNotEmpty)
+        val clientId = config.optString("clientId").takeIf(String::isNotEmpty) ?: stationClientId()
         result.success(
             mapOf(
                 "paired" to (baseUrl != null && cookie != null),
                 "baseUrl" to baseUrl,
                 "cookie" to cookie,
+                "clientId" to clientId,
             ),
         )
     }
@@ -1356,25 +1367,37 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, TextToS
     private fun saveStationPairing(call: MethodCall, result: MethodChannel.Result) {
         val baseUrl = call.argument<String>("baseUrl")?.trim().orEmpty().trimEnd('/')
         val cookie = call.argument<String>("cookie")?.trim().orEmpty()
-        if (!saveStationPairingConfig(baseUrl, cookie)) {
+        val clientId = call.argument<String>("clientId")?.trim().orEmpty().ifEmpty { stationClientId() }
+        if (!saveStationPairingConfig(baseUrl, cookie, clientId)) {
             result.error("invalid_pairing", "Invalid Mac Station pairing data", null)
             return
         }
         result.success(null)
     }
 
-    private fun saveStationPairingConfig(baseUrl: String, cookie: String): Boolean {
+    private fun saveStationPairingConfig(baseUrl: String, cookie: String, clientId: String): Boolean {
         if (!baseUrl.matches(Regex("^http://[^/]+:[0-9]+$")) ||
             !cookie.startsWith("pp_session=") ||
-            cookie.length > 512
+            cookie.length > 512 ||
+            !clientId.matches(Regex("^android-[a-f0-9-]{36}$"))
         ) {
             return false
         }
         val config = JSONObject()
             .put("baseUrl", baseUrl)
             .put("cookie", cookie)
+            .put("clientId", clientId)
         writeEncryptedValue("station-pairing-v1", config.toString())
         return true
+    }
+
+    private fun stationClientId(): String {
+        readEncryptedValue("station-client-id-v1")?.let { existing ->
+            if (existing.matches(Regex("^android-[a-f0-9-]{36}$"))) return existing
+        }
+        val generated = "android-${UUID.randomUUID()}"
+        writeEncryptedValue("station-client-id-v1", generated)
+        return generated
     }
 
     private fun handleDebugSavePairingIntent(intent: Intent?) {
@@ -1382,7 +1405,10 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, TextToS
         if (!debugBuild || intent?.action != debugSavePairingAction) return
         val baseUrl = intent.getStringExtra("baseUrl")?.trim().orEmpty().trimEnd('/')
         val cookie = intent.getStringExtra("cookie")?.trim().orEmpty()
-        if (saveStationPairingConfig(baseUrl, cookie)) {
+        val clientId = intent.getStringExtra("clientId")?.trim()
+            ?.takeIf { it.matches(Regex("^android-[a-f0-9-]{36}$")) }
+            ?: stationClientId()
+        if (saveStationPairingConfig(baseUrl, cookie, clientId)) {
             Log.i(logTag, "Debug Mac Station pairing saved for $baseUrl")
         } else {
             Log.w(logTag, "Debug Mac Station pairing rejected")
@@ -1691,14 +1717,20 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, TextToS
             result.error("microphone_permission", "Microphone permission is required", null)
             return
         }
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            result.error("speech_unavailable", "Speech recognition is unavailable", null)
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+            !SpeechRecognizer.isOnDeviceRecognitionAvailable(this)
+        ) {
+            result.error(
+                "speech_on_device_unavailable",
+                "On-device speech recognition is unavailable on this phone. Type a message or use a phone with offline speech recognition.",
+                null,
+            )
             return
         }
         speechRecognizer?.cancel()
         speechRecognizer?.destroy()
         speechRecognizer = null
-        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this).also { recognizer ->
+        speechRecognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(this).also { recognizer ->
             val completed = AtomicBoolean(false)
             var latestPartialTranscript = ""
             fun bestTranscript(bundle: Bundle?): String =
@@ -1758,12 +1790,137 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, TextToS
                 putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
                 putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 6_000L)
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 6_000L)
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 3_500L)
                 putExtra(RecognizerIntent.EXTRA_PROMPT, "Talk to PlushPal")
             })
         }
+    }
+
+    private fun recordSpeechWav(result: MethodChannel.Result) {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            result.error("microphone_permission", "Microphone permission is required", null)
+            return
+        }
+        if (!speechRecording.compareAndSet(false, true)) {
+            result.error("speech_busy", "Speech recording is already active", null)
+            return
+        }
+        Thread {
+            val sampleRate = 16_000
+            val channelConfig = AudioFormat.CHANNEL_IN_MONO
+            val audioFormat = AudioFormat.ENCODING_PCM_16BIT
+            val minBuffer = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
+            if (minBuffer <= 0) {
+                speechRecording.set(false)
+                runOnUiThread {
+                    result.error("speech_recording_unavailable", "Microphone recording is unavailable", null)
+                }
+                return@Thread
+            }
+            val bufferSize = maxOf(minBuffer, sampleRate / 2)
+            val recorder = AudioRecord(
+                MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                sampleRate,
+                channelConfig,
+                audioFormat,
+                bufferSize,
+            )
+            if (recorder.state != AudioRecord.STATE_INITIALIZED) {
+                recorder.release()
+                speechRecording.set(false)
+                runOnUiThread {
+                    result.error("speech_recording_unavailable", "Microphone recording is unavailable", null)
+                }
+                return@Thread
+            }
+            val pcm = ByteArrayOutputStream()
+            val samples = ShortArray(bufferSize / 2)
+            val startedAt = System.currentTimeMillis()
+            var voiceStarted = false
+            var lastVoiceAt = startedAt
+            try {
+                recorder.startRecording()
+                while (speechRecording.get()) {
+                    val read = recorder.read(samples, 0, samples.size)
+                    if (read <= 0) continue
+                    var peak = 0
+                    for (i in 0 until read) {
+                        val sample = samples[i].toInt()
+                        peak = maxOf(peak, abs(sample))
+                        pcm.write(sample and 0xff)
+                        pcm.write((sample shr 8) and 0xff)
+                    }
+                    val now = System.currentTimeMillis()
+                    if (peak > 900) {
+                        voiceStarted = true
+                        lastVoiceAt = now
+                    }
+                    val elapsed = now - startedAt
+                    if (elapsed >= 10_000L) break
+                    if (voiceStarted && elapsed >= 1_200L && now - lastVoiceAt >= 1_800L) break
+                    if (!voiceStarted && elapsed >= 5_000L) break
+                }
+                val wav = wavFromPcm(pcm.toByteArray(), sampleRate)
+                speechRecording.set(false)
+                runOnUiThread {
+                    if (wav.size <= 44) {
+                        result.error("speech_no_audio", "I did not hear speech yet. Try again after the beep.", null)
+                    } else {
+                        result.success(wav)
+                    }
+                }
+            } catch (error: Exception) {
+                speechRecording.set(false)
+                runOnUiThread {
+                    result.error("speech_recording_failed", "Microphone recording failed", null)
+                }
+            } finally {
+                try {
+                    recorder.stop()
+                } catch (_: Exception) {
+                }
+                recorder.release()
+            }
+        }.start()
+    }
+
+    private fun wavFromPcm(pcm: ByteArray, sampleRate: Int): ByteArray {
+        val output = ByteArrayOutputStream()
+        val dataSize = pcm.size
+        val byteRate = sampleRate * 2
+        fun writeAscii(value: String) {
+            output.write(value.toByteArray(StandardCharsets.US_ASCII))
+        }
+        fun writeIntLe(value: Int) {
+            output.write(value and 0xff)
+            output.write((value shr 8) and 0xff)
+            output.write((value shr 16) and 0xff)
+            output.write((value shr 24) and 0xff)
+        }
+        fun writeShortLe(value: Int) {
+            output.write(value and 0xff)
+            output.write((value shr 8) and 0xff)
+        }
+        writeAscii("RIFF")
+        writeIntLe(36 + dataSize)
+        writeAscii("WAVE")
+        writeAscii("fmt ")
+        writeIntLe(16)
+        writeShortLe(1)
+        writeShortLe(1)
+        writeIntLe(sampleRate)
+        writeIntLe(byteRate)
+        writeShortLe(2)
+        writeShortLe(16)
+        writeAscii("data")
+        writeIntLe(dataSize)
+        output.write(pcm)
+        return output.toByteArray()
     }
 
     private fun speechRecognizerMessage(error: Int): String = when (error) {
@@ -1773,13 +1930,13 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, TextToS
             "Microphone permission is required. Please enable it in Android settings."
         SpeechRecognizer.ERROR_NETWORK,
         SpeechRecognizer.ERROR_NETWORK_TIMEOUT ->
-            "Speech recognition needs a working network connection on this phone."
+            "Offline speech recognition is not ready on this phone. Try typing, or install the phone's offline speech language pack."
         SpeechRecognizer.ERROR_NO_MATCH ->
             "I heard you, but could not turn it into words. Try speaking a little closer to the phone."
         SpeechRecognizer.ERROR_RECOGNIZER_BUSY ->
             "The microphone is still warming up. Please wait a second and try again."
         SpeechRecognizer.ERROR_SERVER ->
-            "Android speech recognition is having trouble right now. Please try again."
+            "Offline speech recognition is having trouble right now. Try typing or try again."
         SpeechRecognizer.ERROR_SPEECH_TIMEOUT ->
             "I did not hear speech yet. Try again and start talking after the beep."
         else -> "I did not catch that yet. Try again, or type a message."

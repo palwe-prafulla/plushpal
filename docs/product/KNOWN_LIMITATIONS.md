@@ -1,17 +1,22 @@
 # Known limitations
 
-Last updated: 2026-07-02
+Last updated: 2026-07-03
 
-PlushBuddy is public and buildable, but it is still an MVP/prototype. The Hub
-architecture described in the current system design is the vNext target and is
-not fully implemented in the prerelease yet.
+PlushBuddy is public and buildable, but it is still an MVP/prototype. The core
+Hub-backed architecture is implemented for paired product usage, including a
+paired-device registry and parent-gated revocation. The Hub now packages a
+local Whisper STT fallback endpoint, and Android/iPhone can record bounded
+local WAV fallback clips for that endpoint. Local browser/Mac WebKit clients
+can also record bounded WAV fallback clips for Hub STT when browser microphone
+capture is available. Per-client encrypted Hub data stores are implemented on
+top of stable client identity. Fully local LLM mode is still in progress.
 
 ## Architecture limitations
 
-- The current prerelease still contains legacy client-owned state/reasoning
-  paths.
-- The target design moves durable state, provider calls, guardrails, and
-  business logic into PlushBuddy Hub.
+- Paired product usage routes durable state, provider calls, guardrails, and
+  business logic through PlushBuddy Hub.
+- Some unpaired/demo native paths still contain local fallback state/reasoning
+  for development and testing.
 - Remote browser clients are intentionally out of scope. Browser support is
   local-only on the same machine running the Hub.
 - Windows/Linux Hub launchers are future work.
@@ -22,8 +27,9 @@ not fully implemented in the prerelease yet.
 - Android is the primary tested external native client.
 - The iPhone app builds and launches in simulator, but physical-device install
   requires Apple signing/provisioning.
-- Mac native client support exists, but the Hub migration must make it a thin
-  voice-first client.
+- Mac native client support exists through the same shared Flutter client stack;
+  microphone capture depends on macOS/WebKit microphone permission and browser
+  audio APIs.
 - Windows packaging is not the current validated product path.
 
 ## Voice/model limitations
@@ -40,11 +46,16 @@ not fully implemented in the prerelease yet.
 
 ## STT/reasoning limitations
 
-- Platform default STT APIs are not automatically local-only. The target design
-  requires verified on-device STT or Hub local STT fallback.
-- Hub local STT fallback is not yet fully productized.
+- Android/iPhone STT paths enforce on-device recognition when available.
+- Local browser/Mac WebKit clients use bounded microphone capture and the Hub
+  local STT endpoint when mic APIs are available; typed chat remains the
+  fallback if mic capture is blocked.
+- Hub local STT fallback is packaged through a Python/Transformers
+  `openai/whisper-base` wrapper and health-checked by the Station launcher;
+  it is still heavier than the future `whisper.cpp` runtime target.
 - Fully local mode requires a local LLM runtime and model recommendation flow.
-- Cloud LLM mode still requires a parent-provided Gemini/OpenAI key.
+- Cloud LLM mode requires a parent-provided Gemini/OpenAI key, stored by the
+  Hub and never returned to clients.
 - Prompt guardrails reduce risk but are not a complete safety system.
 
 ## Developer/clone limitations

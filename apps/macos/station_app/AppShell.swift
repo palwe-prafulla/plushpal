@@ -9,7 +9,7 @@ private enum StartupState {
     case preparingVoiceRuntime
     case startingHost
     case loadingApp
-    case stationReady(URL)
+    case stationReady(URL, conversationReady: Bool)
     case ready
     case failed(String)
 }
@@ -29,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var storageStatusLabel: NSTextField!
     private var reasoningStatusLabel: NSTextField!
     private var voiceStatusLabel: NSTextField!
+    private var sttStatusLabel: NSTextField!
     private var hostStatusLabel: NSTextField!
     private var browserStatusLabel: NSTextField!
     private var retryButton: NSButton!
@@ -36,6 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var openBrowserButton: NSButton!
     private var pairAndroidButton: NSButton!
     private var openInAppButton: NSButton!
+    private var runtimeModeButton: NSButton!
     private var configureGeminiButton: NSButton!
     private var copyDiagnosticsButton: NSButton!
     private var openLogsButton: NSButton!
@@ -53,6 +55,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var parsedHostUrlText: String?
     private var lanPairingUrl: URL?
     private var isTerminating = false
+    private var healthWaitGeneration = 0
+    private let healthMaxAttempts = 900
     private let logQueue = DispatchQueue(label: "com.plushpal.app-shell.logs")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -157,9 +161,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         storageStatusLabel = NSTextField(labelWithString: "○ App storage: preparing")
         reasoningStatusLabel = NSTextField(labelWithString: "○ Reasoning engine: waiting")
         voiceStatusLabel = NSTextField(labelWithString: "○ Voice engine: waiting")
+        sttStatusLabel = NSTextField(labelWithString: "○ Speech-to-text fallback: checking")
         hostStatusLabel = NSTextField(labelWithString: "○ Local service: waiting")
         browserStatusLabel = NSTextField(labelWithString: "○ Browser UI / Android pairing: waiting")
-        for label in [storageStatusLabel, reasoningStatusLabel, voiceStatusLabel, hostStatusLabel, browserStatusLabel] {
+        for label in [storageStatusLabel, reasoningStatusLabel, voiceStatusLabel, sttStatusLabel, hostStatusLabel, browserStatusLabel] {
             label?.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
             label?.textColor = .secondaryLabelColor
             label?.alignment = .left
@@ -169,6 +174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             storageStatusLabel,
             reasoningStatusLabel,
             voiceStatusLabel,
+            sttStatusLabel,
             hostStatusLabel,
             browserStatusLabel,
         ])
@@ -203,6 +209,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         openInAppButton.isHidden = true
         openInAppButton.translatesAutoresizingMaskIntoConstraints = false
 
+        runtimeModeButton = NSButton(title: "Runtime mode", target: self, action: #selector(configureRuntimeMode))
+        runtimeModeButton.bezelStyle = .rounded
+        runtimeModeButton.isHidden = true
+        runtimeModeButton.translatesAutoresizingMaskIntoConstraints = false
+
         configureGeminiButton = NSButton(title: "Configure Gemini key", target: self, action: #selector(configureGeminiKey))
         configureGeminiButton.bezelStyle = .rounded
         configureGeminiButton.isHidden = true
@@ -227,6 +238,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             openBrowserButton,
             pairAndroidButton,
             openInAppButton,
+            runtimeModeButton,
             configureGeminiButton,
             retryButton,
             quitButton,
@@ -289,6 +301,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             openBrowserButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 190),
             pairAndroidButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 180),
             openInAppButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 130),
+            runtimeModeButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 130),
             configureGeminiButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 170),
             copyDiagnosticsButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 150),
             openLogsButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 120),
@@ -316,6 +329,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             storage: "● App storage: ready in \(applicationSupportDirectory().path)",
             reasoning: "○ Reasoning engine: verifying local model or Gemini key",
             voice: "○ Voice engine: verifying LuxTTS",
+            stt: "○ Speech-to-text fallback: checking",
             host: "○ Local service: waiting",
             browser: "○ Browser UI / Android pairing: waiting"
         )
@@ -327,6 +341,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 storage: nil,
                 reasoning: "○ Reasoning engine: waiting for host health",
                 voice: runtime == nil ? "△ Voice engine: skipped for development" : "● Voice engine: \(runtime!.engine) ready",
+                stt: nil,
                 host: "○ Local service: waiting",
                 browser: "○ Browser UI / Android pairing: waiting"
             )
@@ -335,14 +350,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 storage: nil,
                 reasoning: "○ Reasoning engine: waiting",
                 voice: "✕ Voice engine: setup failed",
+                stt: nil,
                 host: "○ Local service: waiting",
                 browser: "○ Browser UI / Android pairing: waiting"
             )
             update(.failed(failure.message))
             return
         }
+        let sttRuntime = prepareSpeechToTextRuntime()
+        updateServiceStatuses(
+            storage: nil,
+            reasoning: nil,
+            voice: nil,
+            stt: sttRuntime == nil ? "△ Speech-to-text fallback: not bundled; native on-device STT required" : "● Speech-to-text fallback: local Whisper ready",
+            host: "○ Local service: waiting",
+            browser: nil
+        )
         update(.startingHost)
-        startHost(voiceRuntime: voiceRuntime)
+        startHost(voiceRuntime: voiceRuntime, speechToTextRuntime: sttRuntime)
     }
 
     private func prepareVoiceRuntime() -> Result<VoiceRuntime?, StartupFailure> {
@@ -564,7 +589,72 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
-    private func startHost(voiceRuntime: VoiceRuntime?) {
+    private func prepareSpeechToTextRuntime() -> SpeechToTextRuntime? {
+        guard ProcessInfo.processInfo.environment["PLUSHPAL_DISABLE_HUB_STT"] == nil else {
+            appendLog("app-shell.log", "Hub STT fallback disabled by environment")
+            return nil
+        }
+        let script = Bundle.main.resourceURL?
+            .appendingPathComponent("stt", isDirectory: true)
+            .appendingPathComponent("whisper_transcribe.py", isDirectory: false)
+        let bundledPython = Bundle.main.resourceURL?
+            .appendingPathComponent("python", isDirectory: true)
+            .appendingPathComponent("bin/python3", isDirectory: false)
+        guard let script,
+              FileManager.default.fileExists(atPath: script.path),
+              let bundledPython,
+              FileManager.default.isExecutableFile(atPath: bundledPython.path) else {
+            appendLog("app-shell.log", "Hub STT fallback is not bundled")
+            return nil
+        }
+        if isSpeechToTextRuntimeReady(python: bundledPython, script: script),
+           let command = writeSpeechToTextCommandWrapper(python: bundledPython, script: script) {
+            return SpeechToTextRuntime(command: command)
+        }
+        appendLog("app-shell.log", "Hub STT fallback script exists but healthcheck failed")
+        return nil
+    }
+
+    private func writeSpeechToTextCommandWrapper(python: URL, script: URL) -> URL? {
+        let directory = applicationSupportDirectory()
+            .appendingPathComponent("stt-runtime", isDirectory: true)
+        let command = directory.appendingPathComponent("whisper-transcribe", isDirectory: false)
+        let contents = """
+        #!/bin/sh
+        exec \(shellQuote(python.path)) \(shellQuote(script.path)) "$@"
+        """
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try contents.write(to: command, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: command.path)
+            return command
+        } catch {
+            appendLog("app-shell.log", "could not write STT wrapper: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    private func shellQuote(_ value: String) -> String {
+        "'\(value.replacingOccurrences(of: "'", with: "'\"'\"'"))'"
+    }
+
+    private func isSpeechToTextRuntimeReady(python: URL, script: URL) -> Bool {
+        let process = Process()
+        process.executableURL = python
+        process.arguments = [script.path, "--healthcheck"]
+        process.environment = mergedEnvironment(extra: [:])
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        } catch {
+            return false
+        }
+    }
+
+    private func startHost(voiceRuntime: VoiceRuntime?, speechToTextRuntime: SpeechToTextRuntime?) {
         guard let helper = Bundle.main.bundleURL
             .appendingPathComponent("Contents", isDirectory: true)
             .appendingPathComponent("MacOS", isDirectory: true)
@@ -581,6 +671,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             "PLUSHPAL_NO_BROWSER": "1",
             "PLUSHPAL_PRINT_BOOTSTRAP_URL": "1",
             "PLUSHPAL_PORT": "0",
+            "PLUSHPAL_RUNTIME_MODE": selectedRuntimeMode(),
         ]
         if let lanAddress = preferredLanIPv4Address() {
             extra["PLUSHPAL_ENABLE_LAN"] = "1"
@@ -601,6 +692,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 extra["PLUSHPAL_CHATTERBOX_SCRIPT"] = voiceRuntime.script.path
                 extra["PLUSHPAL_CHATTERBOX_ENGINE"] = "standard"
             }
+        }
+        if let speechToTextRuntime {
+            extra["PLUSHPAL_STT_COMMAND"] = speechToTextRuntime.command.path
+            extra["PLUSHPAL_STT_MODEL"] = "openai/whisper-base"
+            extra["PLUSHPAL_STT_DEVICE"] = "auto"
         }
         process.environment = mergedEnvironment(extra: extra)
 
@@ -643,6 +739,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     @objc private func retryStartup() {
+        if let existingHostUrl = hostUrl, hostProcess?.isRunning == true {
+            appendLog("app-shell.log", "retryStartup resumes existing host \(existingHostUrl.absoluteString)")
+            update(.startingHost)
+            updateServiceStatuses(
+                storage: nil,
+                reasoning: "○ Reasoning engine: checking existing Hub",
+                voice: "○ Voice engine: checking existing Hub",
+                stt: "○ Speech-to-text fallback: checking existing Hub",
+                host: "○ Local service: resuming health checks",
+                browser: "○ Browser UI / Android pairing: waiting"
+            )
+            waitForStationHealth(existingHostUrl)
+            return
+        }
         installProcess?.terminate()
         hostProcess?.terminate()
         installProcess = nil
@@ -905,6 +1015,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
+    @objc private func configureRuntimeMode() {
+        let current = selectedRuntimeMode()
+        let alert = NSAlert()
+        alert.messageText = "Choose PlushBuddy runtime mode"
+        alert.informativeText = """
+        Cloud LLM mode uses Gemini/OpenAI for answers after Hub redaction and keeps voice, storage, profiles, and audio local.
+
+        Privacy local-first mode avoids cloud LLM calls and uses local models when installed. It is more private, but needs more memory and may be less capable until local model setup is complete.
+
+        Current mode: \(runtimeModeDisplayName(current))
+        """
+        alert.addButton(withTitle: "Cloud LLM")
+        alert.addButton(withTitle: "Privacy local-first")
+        alert.addButton(withTitle: "Cancel")
+        let choice = alert.runModal()
+        let next: String?
+        switch choice {
+        case .alertFirstButtonReturn:
+            next = "cloud_llm"
+        case .alertSecondButtonReturn:
+            next = "privacy_local_first"
+        default:
+            next = nil
+        }
+        guard let next, next != current else { return }
+        UserDefaults.standard.set(next, forKey: "PlushBuddyRuntimeMode")
+        appendLog("app-shell.log", "runtime mode changed to \(next)")
+        retryStartup()
+    }
+
+    private func selectedRuntimeMode() -> String {
+        if let override = ProcessInfo.processInfo.environment["PLUSHPAL_RUNTIME_MODE"],
+           !override.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return override
+        }
+        if let stored = UserDefaults.standard.string(forKey: "PlushBuddyRuntimeMode"),
+           ["cloud_llm", "privacy_local_first"].contains(stored) {
+            return stored
+        }
+        return "cloud_llm"
+    }
+
+    private func runtimeModeDisplayName(_ mode: String) -> String {
+        switch mode {
+        case "privacy_local_first":
+            return "Privacy local-first"
+        case "cloud_llm":
+            return "Cloud LLM"
+        default:
+            return mode
+        }
+    }
+
     private func saveGeminiKeyToKeychain(_ key: String) throws {
         let data = Data(key.utf8)
         guard data.count >= 16 else {
@@ -961,6 +1124,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                             storage: nil,
                             reasoning: nil,
                             voice: nil,
+                            stt: nil,
                             host: "○ Local service: health check pending",
                             browser: "○ Browser UI / Android pairing: waiting for health"
                         )
@@ -1001,42 +1165,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             update(.failed("The local PlushPal service returned an invalid health-check URL."))
             return
         }
+        healthWaitGeneration += 1
+        let generation = healthWaitGeneration
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
-            for attempt in 1...120 {
-                if self.isStationHealthReady(healthUrl) {
+            for attempt in 1...self.healthMaxAttempts {
+                guard generation == self.healthWaitGeneration else { return }
+                if let health = self.stationHealthSnapshot(healthUrl),
+                   self.isStationCoreReady(health) {
+                    let conversationReady = self.isConversationEngineReady(health)
                     self.appendLog("app-shell.log", "station health ready \(healthUrl.absoluteString)")
                     DispatchQueue.main.async { [weak self] in
                         self?.updateServiceStatuses(
                             storage: nil,
-                            reasoning: "● Reasoning engine: ready",
+                            reasoning: self?.reasoningStatusLine(from: health),
                             voice: "● Voice engine: ready",
+                            stt: self?.sttStatusLine(from: health),
                             host: "● Local service: healthy",
                             browser: "● Browser UI / Android pairing: ready"
                         )
-                        self?.update(.stationReady(hostUrl))
+                        self?.update(.stationReady(hostUrl, conversationReady: conversationReady))
                     }
                     return
                 }
                 DispatchQueue.main.async { [weak self] in
                     self?.updateServiceStatuses(
                         storage: nil,
-                        reasoning: "○ Reasoning engine: waiting for health check",
-                        voice: "○ Voice engine: waiting for health check",
-                        host: "○ Local service: health check attempt \(attempt)/120",
+                        reasoning: "○ Reasoning engine: checking key/model",
+                        voice: "○ Voice engine: loading LuxTTS on GPU",
+                        stt: "○ Speech-to-text fallback: loading Whisper",
+                        host: "○ Local service: warming up \(attempt)/\(self?.healthMaxAttempts ?? 900)",
                         browser: "○ Browser UI / Android pairing: waiting"
                     )
                 }
                 Thread.sleep(forTimeInterval: 1.0)
             }
-            self.updateServiceStatuses(
-                storage: nil,
-                reasoning: "✕ Reasoning engine: health check did not pass",
-                voice: "✕ Voice engine: health check did not pass",
-                host: "✕ Local service: health check timed out",
-                browser: "○ Browser UI / Android pairing: waiting"
-            )
-            self.update(.failed("PlushPal started the local service, but required health checks did not pass within 2 minutes. Click Retry setup to try again."))
+            DispatchQueue.main.async { [weak self] in
+                self?.updateServiceStatuses(
+                    storage: nil,
+                    reasoning: "△ Reasoning engine: not ready yet",
+                    voice: "△ Voice engine: still loading or unavailable",
+                    stt: "△ Speech-to-text fallback: still loading or unavailable",
+                    host: "✕ Local service: health check timed out",
+                    browser: "○ Browser UI / Android pairing: waiting"
+                )
+                self?.update(.failed("PlushBuddy Hub is still not fully healthy after 15 minutes. If logs show model loading, click Retry setup to resume health checks without restarting. If it is stuck, use Reset voice runtime."))
+            }
         }
     }
 
@@ -1049,12 +1223,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         return components.url
     }
 
-    private func isStationHealthReady(_ healthUrl: URL) -> Bool {
+    private func stationHealthSnapshot(_ healthUrl: URL) -> [String: Any]? {
         var request = URLRequest(url: healthUrl)
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.timeoutInterval = 5
         let semaphore = DispatchSemaphore(value: 0)
-        var ready = false
+        var snapshot: [String: Any]?
         URLSession.shared.dataTask(with: request) { data, response, _ in
             defer { semaphore.signal() }
             guard
@@ -1065,14 +1239,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             else {
                 return
             }
-            ready =
-                json["local_service_ready"] as? Bool == true &&
-                json["conversation_engine_ready"] as? Bool == true &&
-                json["voice_engine_ready"] as? Bool == true &&
-                json["browser_ui_ready"] as? Bool == true
+            snapshot = json
         }.resume()
         _ = semaphore.wait(timeout: .now() + 6)
-        return ready
+        return snapshot
+    }
+
+    private func isStationCoreReady(_ health: [String: Any]) -> Bool {
+        health["local_service_ready"] as? Bool == true &&
+            health["voice_engine_ready"] as? Bool == true &&
+            health["browser_ui_ready"] as? Bool == true
+    }
+
+    private func isConversationEngineReady(_ health: [String: Any]) -> Bool {
+        health["conversation_engine_ready"] as? Bool == true
+    }
+
+    private func reasoningStatusLine(from health: [String: Any]) -> String {
+        if isConversationEngineReady(health) {
+            return "● Reasoning engine: ready"
+        }
+        return "△ AI Brain: configure Gemini/OpenAI or install local model before conversation"
+    }
+
+    private func sttStatusLine(from health: [String: Any]) -> String {
+        if health["speech_to_text_ready"] as? Bool == true {
+            return "● Speech-to-text fallback: local Whisper ready"
+        }
+        return "△ Speech-to-text fallback: unavailable; native on-device STT required"
     }
 
     private func hostDiagnosticTail() -> String {
@@ -1264,6 +1458,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.openBrowserButton.isHidden = true
                 self.pairAndroidButton.isHidden = true
                 self.openInAppButton.isHidden = true
+                self.runtimeModeButton.isHidden = true
                 self.configureGeminiButton.isHidden = true
                 self.copyDiagnosticsButton.isHidden = true
                 self.openLogsButton.isHidden = true
@@ -1277,6 +1472,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.openBrowserButton.isHidden = true
                 self.pairAndroidButton.isHidden = true
                 self.openInAppButton.isHidden = true
+                self.runtimeModeButton.isHidden = true
                 self.configureGeminiButton.isHidden = true
                 self.copyDiagnosticsButton.isHidden = true
                 self.openLogsButton.isHidden = true
@@ -1290,14 +1486,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.openBrowserButton.isHidden = true
                 self.pairAndroidButton.isHidden = true
                 self.openInAppButton.isHidden = true
+                self.runtimeModeButton.isHidden = true
                 self.configureGeminiButton.isHidden = true
                 self.copyDiagnosticsButton.isHidden = true
                 self.openLogsButton.isHidden = true
                 self.resetVoiceRuntimeButton.isHidden = true
-            case .stationReady(let url):
+            case .stationReady(let url, let conversationReady):
                 self.progress.stopAnimation(nil)
                 self.titleLabel.stringValue = "PlushBuddy Station is ready"
-                self.detailLabel.stringValue = "All required local services are healthy. Open PlushBuddy on this Mac, in a browser, or scan the Android pairing QR."
+                self.detailLabel.stringValue = conversationReady
+                    ? "All required local services are healthy. Open PlushBuddy on this Mac, in a browser, or scan the Android pairing QR."
+                    : "Voice, storage, and pairing are ready. Configure Gemini/OpenAI or install a local model before starting real conversations."
                 self.splashView.isHidden = false
                 self.webView.isHidden = true
                 self.retryButton.isHidden = false
@@ -1305,7 +1504,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.openBrowserButton.isHidden = false
                 self.pairAndroidButton.isHidden = false
                 self.openInAppButton.isHidden = false
-                self.configureGeminiButton.isHidden = true
+                self.runtimeModeButton.isHidden = false
+                self.configureGeminiButton.isHidden = conversationReady
                 self.copyDiagnosticsButton.isHidden = false
                 self.openLogsButton.isHidden = false
                 self.resetVoiceRuntimeButton.isHidden = false
@@ -1320,6 +1520,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.openBrowserButton.isHidden = true
                 self.pairAndroidButton.isHidden = true
                 self.openInAppButton.isHidden = true
+                self.runtimeModeButton.isHidden = true
                 self.configureGeminiButton.isHidden = true
                 self.copyDiagnosticsButton.isHidden = true
                 self.openLogsButton.isHidden = true
@@ -1335,6 +1536,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.openBrowserButton.isHidden = true
                 self.pairAndroidButton.isHidden = true
                 self.openInAppButton.isHidden = true
+                self.runtimeModeButton.isHidden = false
                 self.configureGeminiButton.isHidden = true
                 self.copyDiagnosticsButton.isHidden = false
                 self.openLogsButton.isHidden = false
@@ -1347,6 +1549,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         storage: String?,
         reasoning: String?,
         voice: String?,
+        stt: String?,
         host: String?,
         browser: String?
     ) {
@@ -1355,6 +1558,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             if let storage { self.storageStatusLabel.stringValue = storage }
             if let reasoning { self.reasoningStatusLabel.stringValue = reasoning }
             if let voice { self.voiceStatusLabel.stringValue = voice }
+            if let stt { self.sttStatusLabel.stringValue = stt }
             if let host { self.hostStatusLabel.stringValue = host }
             if let browser { self.browserStatusLabel.stringValue = browser }
         }
@@ -1419,6 +1623,10 @@ private struct VoiceRuntime {
     let engine: String
     let python: URL
     let script: URL
+}
+
+private struct SpeechToTextRuntime {
+    let command: URL
 }
 
 let application = NSApplication.shared

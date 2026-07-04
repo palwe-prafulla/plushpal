@@ -6,8 +6,8 @@ This guide explains where the current Android, iPhone, browser, Mac client, and
 Hub/MacStation MVP code lives and how the directories relate to each product
 surface.
 
-Architecture note: **PlushBuddy Hub** is the target/user-facing name for the
-local private backend. Several current paths and commands still use
+Architecture note: **PlushBuddy Hub** is the user-facing name for the local
+private backend. Several current paths and commands still use
 `macstation` because that was the original implementation name. Treat
 `MacStation` below as the current code-path name for the Hub until the code is
 renamed.
@@ -131,7 +131,7 @@ apps/android/flutter_app/
 | `apps/android/flutter_app/lib/src/app.dart` | Main UI, app state, onboarding, settings, child mode, kid/character flows |
 | `apps/android/flutter_app/lib/src/backend/backend_client.dart` | Abstract app/backend interface |
 | `apps/android/flutter_app/lib/src/backend/backend_client_stub.dart` | Android MethodChannel client and Hub/MacStation HTTP client |
-| `apps/android/flutter_app/lib/src/backend/backend_client_web.dart` | Browser backend wrapper; vNext should talk to local Hub APIs instead of owning durable state |
+| `apps/android/flutter_app/lib/src/backend/backend_client_web.dart` | Browser backend wrapper for the Hub-backed web client |
 | `apps/android/flutter_app/lib/src/domain/app_state.dart` | App state machine and reducer |
 | `apps/android/flutter_app/lib/src/platform/platform_bridge.dart` | Device/platform contract for speech, secrets, profile |
 | `apps/android/flutter_app/android/app/src/main/kotlin/.../MainActivity.kt` | Android native implementation |
@@ -283,6 +283,9 @@ POST /api/v1/voice/speak
 GET  /api/v1/characters
 POST /api/v1/characters/save
 POST /api/v1/characters/delete
+POST /api/v1/paired-clients
+POST /api/v1/paired-clients/revoke
+POST /api/v1/stt/transcribe
 POST /api/v1/history/list
 POST /api/v1/history/delete
 GET  /api/v1/events
@@ -387,19 +390,18 @@ apps/station/macstation_host/assets/flutter_web/
 
 That embedded web bundle is then served by the Rust desktop host.
 
-Target runtime ownership:
+Runtime ownership:
 
 - Hub owns parent/kid/character/history/provider settings in SQLCipher;
 - local browser stores only session/bootstrap identity;
-- local browser does not call Gemini/OpenAI directly in the Hub target;
+- local browser does not call Gemini/OpenAI directly;
 - local browser calls Hub APIs for bootstrap, setup, profiles, conversation,
   and `/api/v1/voice/*`;
 - Hub CSP should allow same-origin client calls and block unrelated network
   surfaces.
 
-Current prerelease note: parts of the web backend still reflect the older
-client-owned-state implementation. Those paths should be migrated behind Hub
-APIs before treating the browser client as production-ready.
+Current note: older helper functions may remain in the web backend for
+development fallback paths, but product calls go through Hub APIs.
 
 ### What to edit for browser UI
 
@@ -649,8 +651,8 @@ If something gets weird, these can often be deleted/rebuilt, but do not treat th
 | Change Android home/settings/child UI | `apps/android/flutter_app/lib/src/app.dart` |
 | Change Android navigation/state rules | `apps/android/flutter_app/lib/src/domain/app_state.dart` |
 | Change Android encrypted storage | `apps/android/flutter_app/android/app/src/main/kotlin/.../MainActivity.kt` |
-| Change Gemini/OpenAI prompt | `MainActivity.kt` → `buildReasoningPrompt` |
-| Change Gemini/OpenAI API call | `MainActivity.kt` → `generateWithGemini` / `generateWithOpenAI` |
+| Change Gemini/OpenAI prompt | `apps/station/macstation_host/src/lib.rs` → Hub conversation engines |
+| Change Gemini/OpenAI API call | `apps/station/macstation_host/src/lib.rs` → `GeminiConversationEngine` / `OpenAiConversationEngine` |
 | Change mic/STT behavior | `MainActivity.kt` → `listen` |
 | Change voice upload from Android | `backend_client_stub.dart` + `MainActivity.kt` picker |
 | Change Station HTTP voice API | `apps/station/macstation_host/src/lib.rs` |

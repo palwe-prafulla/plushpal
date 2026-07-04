@@ -19,6 +19,9 @@ external JSPromise<JSString> _beginLocalTurn(
   JSNumber? characterPlayAgeYears,
 );
 
+@JS('plushpalTranscribeSpeech')
+external JSPromise<JSString> _transcribeSpeech(JSString wavBase64);
+
 @JS('plushpalCancelTurn')
 external JSPromise<JSAny?> _cancelTurn();
 
@@ -49,7 +52,11 @@ external JSPromise<JSAny?> _configureParentPin(
 external JSPromise<JSString> _reasoningProviderStatus();
 
 @JS('plushpalConfigureApiKey')
-external JSPromise<JSAny?> _configureApiKey(JSString provider, JSString apiKey);
+external JSPromise<JSAny?> _configureApiKey(
+  JSString pin,
+  JSString provider,
+  JSString apiKey,
+);
 
 @JS('plushpalKids')
 external JSPromise<JSString> _kids();
@@ -67,11 +74,23 @@ external JSPromise<JSAny?> _saveKid(
 @JS('plushpalDeleteKid')
 external JSPromise<JSAny?> _deleteKid(JSString pin, JSString kidId);
 
+@JS('plushpalPairedClients')
+external JSPromise<JSString> _pairedClients(JSString pin);
+
+@JS('plushpalRevokePairedClient')
+external JSPromise<JSAny?> _revokePairedClient(JSString pin, JSString clientId);
+
 @JS('plushpalAuthorizeParentPin')
 external JSPromise<JSBoolean> _authorizeParentPin(JSString pin);
 
 @JS('plushpalDeleteAllLocalData')
 external JSPromise<JSAny?> _deleteAllLocalData(JSString pin);
+
+@JS('plushpalExportBackup')
+external JSPromise<JSString> _exportBackup(JSString pin);
+
+@JS('plushpalImportBackup')
+external JSPromise<JSAny?> _importBackup(JSString pin, JSString backupBase64);
 
 @JS('plushpalHistory')
 external JSPromise<JSString> _history(JSString pin);
@@ -165,6 +184,33 @@ class WebBackendClient implements BackendClient {
   Future<void> clearStationPairing() async {}
 
   @override
+  Future<List<PairedClientInfo>> pairedClients(String pin) async {
+    final rows =
+        jsonDecode((await _pairedClients(pin.toJS).toDart).toDart)
+            as List<Object?>;
+    return rows.map((item) {
+      final row = item! as Map<String, Object?>;
+      return PairedClientInfo(
+        clientId: row['client_id']! as String,
+        platform: row['platform']! as String,
+        label: row['label'] as String?,
+        createdAt: row['created_at']! as int,
+        lastSeenAt: row['last_seen_at']! as int,
+        lastSeenIp: row['last_seen_ip'] as String?,
+        revokedAt: row['revoked_at'] as int?,
+      );
+    }).toList();
+  }
+
+  @override
+  Future<void> revokePairedClient({
+    required String pin,
+    required String clientId,
+  }) async {
+    await _revokePairedClient(pin.toJS, clientId.toJS).toDart;
+  }
+
+  @override
   Future<ReasoningProviderStatus> reasoningProviderStatus() async {
     final decoded =
         jsonDecode((await _reasoningProviderStatus().toDart).toDart)
@@ -178,15 +224,16 @@ class WebBackendClient implements BackendClient {
 
   @override
   Future<void> configureApiKey({
+    required String pin,
     required String provider,
     required String apiKey,
   }) async {
-    await _configureApiKey(provider.toJS, apiKey.toJS).toDart;
+    await _configureApiKey(pin.toJS, provider.toJS, apiKey.toJS).toDart;
   }
 
   @override
   Future<void> configureGeminiApiKey(String apiKey) =>
-      configureApiKey(provider: 'gemini', apiKey: apiKey);
+      configureApiKey(pin: '', provider: 'gemini', apiKey: apiKey);
 
   @override
   Future<List<KidProfile>> kids() async {
@@ -250,6 +297,7 @@ class WebBackendClient implements BackendClient {
               .cast<String>(),
       parentGuidance: decoded['parent_guidance'] as String?,
       retentionDays: decoded['retention_days'] as int?,
+      speechToTextReady: decoded['speech_to_text_ready'] as bool? ?? false,
     );
   }
 
@@ -279,6 +327,14 @@ class WebBackendClient implements BackendClient {
       speech: decoded['speech']! as String,
       suggestTrustedAdult: decoded['suggest_trusted_adult']! as bool,
     );
+  }
+
+  @override
+  Future<String> transcribeSpeech(Uint8List wavBytes) async {
+    if (wavBytes.isEmpty || wavBytes.length > 12 * 1_048_576) {
+      throw StateError('Recorded speech audio is invalid.');
+    }
+    return (await _transcribeSpeech(base64Encode(wavBytes).toJS).toDart).toDart;
   }
 
   @override
@@ -329,6 +385,25 @@ class WebBackendClient implements BackendClient {
   @override
   Future<void> deleteAllLocalData(String pin) async {
     await _deleteAllLocalData(pin.toJS).toDart;
+  }
+
+  @override
+  Future<HubBackup> exportBackup(String pin) async {
+    final decoded =
+        jsonDecode((await _exportBackup(pin.toJS).toDart).toDart)
+            as Map<String, Object?>;
+    return HubBackup(
+      backupBase64: decoded['backup_base64']! as String,
+      exportedAt: decoded['exported_at']! as int,
+    );
+  }
+
+  @override
+  Future<void> importBackup({
+    required String pin,
+    required String backupBase64,
+  }) async {
+    await _importBackup(pin.toJS, backupBase64.toJS).toDart;
   }
 
   @override

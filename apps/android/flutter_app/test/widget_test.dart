@@ -7,6 +7,53 @@ import 'package:plushpal_ui/src/app.dart';
 import 'package:plushpal_ui/src/backend/backend_client.dart';
 import 'package:plushpal_ui/src/platform/platform_bridge.dart';
 
+const _fixtureWav = <int>[
+  82,
+  73,
+  70,
+  70,
+  36,
+  0,
+  0,
+  0,
+  87,
+  65,
+  86,
+  69,
+  102,
+  109,
+  116,
+  32,
+  16,
+  0,
+  0,
+  0,
+  1,
+  0,
+  1,
+  0,
+  128,
+  62,
+  0,
+  0,
+  0,
+  125,
+  0,
+  0,
+  2,
+  0,
+  16,
+  0,
+  100,
+  97,
+  116,
+  97,
+  0,
+  0,
+  0,
+  0,
+];
+
 class FakeBackend implements BackendClient {
   FakeBackend({
     this.modelReady = true,
@@ -49,6 +96,8 @@ class FakeBackend implements BackendClient {
   final savedKids = <KidProfile>[];
   final additionalCharacters = <CharacterConfiguration>[];
   final characterVoices = <String, VoiceProfileStatus>{};
+  String sttTranscript = 'Fallback transcript from Hub';
+  Uint8List? transcribedWavBytes;
 
   @override
   Future<StationPairingStatus> stationPairingStatus() async =>
@@ -67,6 +116,33 @@ class FakeBackend implements BackendClient {
   }
 
   @override
+  Future<List<PairedClientInfo>> pairedClients(String pin) async {
+    if (configuredPin != null && pin != configuredPin) {
+      throw StateError('unauthorized');
+    }
+    return const [
+      PairedClientInfo(
+        clientId: 'android-fixture',
+        platform: 'Android',
+        label: 'Test phone',
+        createdAt: 100,
+        lastSeenAt: 200,
+        lastSeenIp: '192.168.1.42',
+      ),
+    ];
+  }
+
+  @override
+  Future<void> revokePairedClient({
+    required String pin,
+    required String clientId,
+  }) async {
+    if (configuredPin != null && pin != configuredPin) {
+      throw StateError('unauthorized');
+    }
+  }
+
+  @override
   Future<ReasoningProviderStatus> reasoningProviderStatus() async =>
       ReasoningProviderStatus(
         provider: 'gemini',
@@ -76,6 +152,7 @@ class FakeBackend implements BackendClient {
 
   @override
   Future<void> configureApiKey({
+    required String pin,
     required String provider,
     required String apiKey,
   }) async {
@@ -148,6 +225,12 @@ class FakeBackend implements BackendClient {
   }
 
   @override
+  Future<String> transcribeSpeech(Uint8List wavBytes) async {
+    transcribedWavBytes = wavBytes;
+    return sttTranscript;
+  }
+
+  @override
   Future<void> cancelTurn() async {}
 
   @override
@@ -194,6 +277,25 @@ class FakeBackend implements BackendClient {
     if (pin != configuredPin) throw StateError('unauthorized');
     configuredPin = null;
     localDataDeleted = true;
+  }
+
+  @override
+  Future<HubBackup> exportBackup(String pin) async {
+    if (pin != configuredPin) throw StateError('unauthorized');
+    return const HubBackup(
+      backupBase64: 'encrypted-widget-backup',
+      exportedAt: 1234,
+    );
+  }
+
+  @override
+  Future<void> importBackup({
+    required String pin,
+    required String backupBase64,
+  }) async {
+    if (pin != configuredPin || backupBase64.isEmpty) {
+      throw StateError('unauthorized');
+    }
   }
 
   @override
@@ -512,10 +614,17 @@ Future<void> completeBasicOnboarding(
 }
 
 class FakePlatform implements PlatformBridge {
-  FakePlatform({this.transcript = 'Why is the sky blue?', this.listenError});
+  FakePlatform({
+    this.transcript = 'Why is the sky blue?',
+    this.listenError,
+    this.recordError,
+    Uint8List? recordedWavBytes,
+  }) : recordedWavBytes = recordedWavBytes ?? Uint8List.fromList(_fixtureWav);
 
   final String transcript;
   final PlatformException? listenError;
+  final PlatformException? recordError;
+  final Uint8List recordedWavBytes;
   String? spokenText;
 
   @override
@@ -544,6 +653,15 @@ class FakePlatform implements PlatformBridge {
       throw error;
     }
     return transcript;
+  }
+
+  @override
+  Future<Uint8List> recordSpeechWav() async {
+    final error = recordError;
+    if (error != null) {
+      throw error;
+    }
+    return recordedWavBytes;
   }
 
   @override
@@ -637,6 +755,26 @@ void main() {
     expect(find.text('Tap to talk'), findsOneWidget);
   });
 
+  testWidgets('spoken child question falls back to Hub STT', (tester) async {
+    final backend = FakeBackend()..sttTranscript = 'What makes thunder loud?';
+    final platform = FakePlatform(
+      listenError: PlatformException(
+        code: 'speech_on_device_unavailable',
+        message: 'On-device speech recognition is unavailable.',
+      ),
+    );
+    await tester.pumpWidget(PlushPalApp(backend: backend, platform: platform));
+    await completeBasicOnboarding(tester);
+    await tapVisible(tester, 'Start Playing');
+
+    await tester.tap(find.byIcon(Icons.mic));
+    await tester.pumpAndSettle();
+
+    expect(backend.transcribedWavBytes, isNotNull);
+    expect(backend.receivedText, 'What makes thunder loud?');
+    expect(find.text('Tap to talk'), findsOneWidget);
+  });
+
   testWidgets('spoken child question failure shows speech error message', (
     tester,
   ) async {
@@ -646,6 +784,10 @@ void main() {
         code: 'speech_error',
         message:
             'I did not hear speech yet. Try again and start talking after the beep.',
+      ),
+      recordError: PlatformException(
+        code: 'speech_recording_failed',
+        message: 'Microphone recording failed',
       ),
     );
     await tester.pumpWidget(PlushPalApp(backend: backend, platform: platform));

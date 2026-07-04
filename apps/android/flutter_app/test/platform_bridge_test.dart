@@ -21,6 +21,7 @@ void main() {
             },
             'storeSecret' => 'opaque-reference',
             'listen' => 'hello teddy',
+            'recordSpeechWav' => Uint8List.fromList([1, 2, 3, 4]),
             _ => null,
           };
         });
@@ -38,11 +39,13 @@ void main() {
       expect(profile.platform, 'test');
       expect(profile.logicalProcessors, 8);
       expect(await bridge.listen(), 'hello teddy');
+      expect(await bridge.recordSpeechWav(), [1, 2, 3, 4]);
       await bridge.speak('hello');
       await bridge.cancelSpeech();
       expect(calls.map((call) => call.method), [
         'deviceProfile',
         'listen',
+        'recordSpeechWav',
         'speak',
         'cancelSpeech',
       ]);

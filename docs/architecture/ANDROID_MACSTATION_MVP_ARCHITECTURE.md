@@ -2,15 +2,16 @@
 
 Last updated: 2026-07-02
 
-This document explains how the current Android + Hub/MacStation MVP should evolve
-into the **PlushBuddy Hub** architecture.
+This document explains the Android/iPhone/Mac/browser + Hub implementation and
+the remaining migration from legacy MacStation naming into the **PlushBuddy
+Hub** product architecture.
 
-For the canonical target design, see [`SYSTEM_DESIGN.md`](SYSTEM_DESIGN.md).
+For the canonical design, see [`SYSTEM_DESIGN.md`](SYSTEM_DESIGN.md).
 For code locations, see [`CODEBASE_DIRECTORY_GUIDE.md`](CODEBASE_DIRECTORY_GUIDE.md).
 
 ## 1. Naming
 
-The public product name should move from **MacStation** to **PlushBuddy Hub**.
+The public product name is **PlushBuddy Hub**.
 
 Implementation names can migrate gradually:
 
@@ -25,26 +26,17 @@ The first Hub platform is macOS. Later platforms are Windows and Linux.
 
 ## 2. Architecture shift
 
-Current prerelease behavior:
+Implemented Hub behavior:
 
-- Android/iPhone/browser/Mac clients own some parent/kid/character/history
-  state.
-- Some clients call Gemini/OpenAI directly.
-- MacStation primarily owns voice enrollment and LuxTTS synthesis.
-
-Target Hub behavior:
-
-- Hub owns all durable family state.
+- Hub owns durable family state in SQLCipher.
 - Hub owns business logic, guardrails, redaction, provider calls, and model
   orchestration.
-- Clients become UI shells with mic capture, local STT when verified, playback,
-  and Hub pairing/session state.
+- Hub owns voice enrollment, voice approval, and LuxTTS synthesis.
+- Paired clients are UI shells with mic capture, local STT when verified,
+  playback, stable client identity, and Hub pairing/session state.
 
 ```text
-Current:
-  Client storage + client reasoning + Station voice
-
-Target:
+Current Hub-backed product path:
   Thin clients + Hub backend/storage/reasoning/voice
 ```
 
@@ -121,7 +113,7 @@ Cons:
 | Capability | Target implementation |
 |---|---|
 | Voice cloning/TTS | LuxTTS |
-| Hub STT fallback | `whisper.cpp` + Whisper model, model tier by memory |
+| Hub STT fallback | Packaged Python/Transformers wrapper for `openai/whisper-base`; `whisper.cpp` remains the future lean-runtime target |
 | Local LLM | `llama.cpp` + GGUF model, model tier by memory |
 | Cloud LLM | Gemini/OpenAI from Hub only |
 | Storage | SQLCipher in Hub |
@@ -138,12 +130,15 @@ Required behavior:
 - iPhone/Mac: set `requiresOnDeviceRecognition = true` and require
   `supportsOnDeviceRecognition`.
 - Windows future: use only verified device/in-process speech recognition.
-- If verified on-device STT is unavailable, send bounded audio to Hub local STT.
+- If verified Android/iPhone on-device STT is unavailable or fails, record a
+  bounded local WAV and send it to Hub local STT.
 - If Hub STT is unavailable, voice input is unavailable and typing is fallback.
 
 ## 7. Hub database ownership
 
-The Hub owns one encrypted SQLCipher database per Hub installation.
+The Hub owns encrypted SQLCipher storage. A root Hub database stores pairing,
+revocation, runtime registry, migrations, and Hub-level metadata. Stable paired
+clients get isolated encrypted scoped stores for family data.
 
 Target database:
 
@@ -151,10 +146,16 @@ Target database:
 ~/Library/Application Support/PlushPal/plushbuddy-hub.sqlcipher
 ```
 
-The Hub DB owns:
+The root Hub DB owns:
+
+- runtime mode;
+- paired clients;
+- audit events;
+- schema migrations.
+
+Each per-client store owns:
 
 - parent settings;
-- runtime mode;
 - provider keys or secure references;
 - kids;
 - characters;
@@ -163,8 +164,6 @@ The Hub DB owns:
 - encrypted voice reference pointers;
 - conversation sessions;
 - conversation turns;
-- paired clients;
-- audit events.
 
 External clients should not create separate durable profile/history databases.
 They store only Hub pairing/session credentials.
@@ -216,21 +215,14 @@ Target API groups:
 The clients call these APIs for every durable action. Parent PIN and session
 authorization are enforced by the Hub.
 
-## 10. Migration plan
+## 10. Remaining migration plan
 
-1. Add Hub-backed kids/characters/history/provider APIs.
-2. Update Flutter client to use Hub APIs for local browser/Mac first.
-3. Move cloud reasoning from client native bridges into Hub.
-4. Add runtime-mode setup with privacy local-first and cloud LLM choices.
-5. Add stable client identity and device revocation.
-6. Migrate Android/iPhone clients to thin-client mode.
-7. Enforce verified local STT before transcript submission.
-8. Add Hub STT fallback.
-9. Add local LLM runtime and model recommendation.
-10. Rename user-facing MacStation strings to PlushBuddy Hub.
+1. Broaden Mac/WebKit microphone QA for the implemented Hub STT fallback.
+2. Add local LLM runtime and model recommendation.
+3. Polish the two-choice runtime setup screen.
+4. Rename remaining internal MacStation strings/paths to PlushBuddy Hub.
 
 ## 11. Current compatibility note
 
-Until the migration is complete, some code/docs/tests may still use MacStation
-or client-owned storage terminology. Those are implementation details from the
-current prerelease, not the target architecture.
+Some code/tests still use MacStation as an implementation path name. That is now
+legacy naming; the product architecture is PlushBuddy Hub.

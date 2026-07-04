@@ -1,6 +1,7 @@
 PUBLIC_ROOT ?= $(HOME)/Downloads/PlushPal
 ARTIFACTS_DIR ?= $(PUBLIC_ROOT)/artifacts
 BUILD_DIR ?= $(PUBLIC_ROOT)/build
+PACKAGE_CARGO_TARGET_DIR ?= $(BUILD_DIR)/cargo-target-local
 
 .PHONY: doctor format lint test native flutter desktop android-rust android-apk ios-simulator ios-device package-macos build-all build-product public-artifacts release-bundle publish-release public-clean public-repo-check test-product-layout verify-release-local check setup-chatterbox-voice setup-luxtts-voice run-demo run-mac-demo run-mac-luxtts
 
@@ -37,7 +38,7 @@ desktop: flutter
 package-macos:
 	PLUSHPAL_ARTIFACTS_DIR="$(ARTIFACTS_DIR)" \
 	PLUSHPAL_BUILD_DIR="$(BUILD_DIR)" \
-	CARGO_TARGET_DIR="$(BUILD_DIR)/cargo-target" \
+	CARGO_TARGET_DIR="$(PACKAGE_CARGO_TARGET_DIR)" \
 	sh packaging/macos/package.sh
 
 android-apk: android-rust

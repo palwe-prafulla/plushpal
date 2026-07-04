@@ -27,6 +27,7 @@ class LocalModelReadiness {
     this.characterTraits = const [],
     this.parentGuidance,
     this.retentionDays,
+    this.speechToTextReady = false,
   });
 
   final String modelId;
@@ -41,6 +42,7 @@ class LocalModelReadiness {
   final List<String> characterTraits;
   final String? parentGuidance;
   final int? retentionDays;
+  final bool speechToTextReady;
 }
 
 class KidProfile {
@@ -140,12 +142,45 @@ class StationPairingStatus {
   final String? baseUrl;
 }
 
+class PairedClientInfo {
+  const PairedClientInfo({
+    required this.clientId,
+    required this.platform,
+    required this.createdAt,
+    required this.lastSeenAt,
+    this.label,
+    this.lastSeenIp,
+    this.revokedAt,
+  });
+
+  final String clientId;
+  final String platform;
+  final String? label;
+  final int createdAt;
+  final int lastSeenAt;
+  final String? lastSeenIp;
+  final int? revokedAt;
+}
+
+class HubBackup {
+  const HubBackup({required this.backupBase64, required this.exportedAt});
+
+  final String backupBase64;
+  final int exportedAt;
+}
+
 abstract interface class BackendClient {
   Future<StationPairingStatus> stationPairingStatus();
   Future<void> pairStation(String pairingUrl);
   Future<void> clearStationPairing();
+  Future<List<PairedClientInfo>> pairedClients(String pin);
+  Future<void> revokePairedClient({
+    required String pin,
+    required String clientId,
+  });
   Future<ReasoningProviderStatus> reasoningProviderStatus();
   Future<void> configureApiKey({
+    required String pin,
     required String provider,
     required String apiKey,
   });
@@ -171,6 +206,7 @@ abstract interface class BackendClient {
     int? childAgeMonths,
     int? characterPlayAgeYears,
   });
+  Future<String> transcribeSpeech(Uint8List wavBytes);
   Future<void> cancelTurn();
   Future<void> endSession();
   Future<void> installLocalModel();
@@ -186,6 +222,11 @@ abstract interface class BackendClient {
   });
   Future<bool> authorizeParentPin(String pin);
   Future<void> deleteAllLocalData(String pin);
+  Future<HubBackup> exportBackup(String pin);
+  Future<void> importBackup({
+    required String pin,
+    required String backupBase64,
+  });
   Future<List<ConversationHistoryEntry>> history(String pin);
   Future<List<ConversationHistoryEntry>> scopedHistory(
     String pin, {

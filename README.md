@@ -7,11 +7,11 @@ sample of how each toy should sound, approve the cloned voice, and then let a
 child talk to that toy through an Android app, iPhone app, Mac app, or local
 browser UI.
 
-The vNext architecture centers on **PlushBuddy Hub**: a local private backend
+The current architecture centers on **PlushBuddy Hub**: a local private backend
 that runs first on macOS. The Hub owns encrypted storage, child-safety
-guardrails, reasoning orchestration, local STT fallback, and LuxTTS voice
-synthesis. Native clients are thin UI clients for mic capture, local STT when
-available, and playback.
+guardrails, reasoning orchestration, provider API keys, kid/character data,
+conversation history, and LuxTTS voice synthesis. Native clients are thin UI
+clients for mic capture, local STT when available, and playback.
 
 > This is a prototype/product-engineering project, not a hosted service. It is
 > designed to be cloned, built locally, studied, and extended.
@@ -58,26 +58,28 @@ available, and playback.
 
 ## Architecture at a glance
 
-PlushBuddy is moving toward a local-Hub architecture:
+PlushBuddy uses a local-Hub architecture:
 
 - **PlushBuddy Hub**: the local backend. It owns SQLCipher encrypted storage,
   runtime mode, provider keys, kid/character data, conversation history,
-  guardrails, local/cloud reasoning, local STT fallback, and LuxTTS.
+  guardrails, local/cloud reasoning, packaged local STT fallback, and LuxTTS.
 - **Android app**: external voice-first native client paired to the Hub.
 - **iPhone app**: external voice-first native client paired to the Hub.
 - **Mac app**: native client that can run on the Hub Mac or another Mac.
 - **Local browser**: same-machine browser UI for the computer running the Hub.
   Remote browser clients are not supported for now.
 
-The current prerelease still contains legacy MacStation/client-owned-state
-paths. The documented target is to make the Hub the single backend and make all
-clients thin UI clients.
+Android/iPhone/Mac/browser clients now route parent setup, kids, characters,
+provider keys, history, voice enrollment, and conversation turns through the
+Hub. Native client code still keeps local fallback/demo paths for development,
+but paired product usage treats the Hub as the backend.
 
 ```mermaid
 flowchart TB
     Clients["Android / iPhone / Mac app / local browser"] --> Hub["PlushBuddy Hub<br/>local private backend"]
-    Hub --> DB["SQLCipher encrypted DB"]
-    Hub --> STT["Local STT fallback<br/>Whisper/whisper.cpp"]
+    Hub --> Registry["Root SQLCipher DB<br/>pairing + revocation registry"]
+    Hub --> ClientDB["Per-client SQLCipher stores<br/>kids, characters, keys, history, voices"]
+    Hub --> STT["Local STT fallback<br/>packaged Whisper"]
     Hub --> LLM["Local LLM or Gemini/OpenAI"]
     Hub --> TTS["LuxTTS toy voice"]
     TTS --> Clients
@@ -185,18 +187,18 @@ Start here:
 
 PlushBuddy is released under the [MIT License](LICENSE).
 
-## Current prerelease versus vNext Hub target
+## Current prerelease and Hub architecture
 
 The current `v0.1.0-dev.1` prerelease is buildable and demonstrates the product
 flow with Android, iPhone simulator, Mac client, local browser, and the macOS
 Station/Hub voice runtime.
 
-The vNext architecture moves the product to this stricter backend model:
+The implementation has moved to this stricter backend model:
 
 - Hub owns durable data, encrypted storage, provider keys, guardrails,
   redaction, local/cloud reasoning, voice profiles, and conversation history.
 - Android/iPhone/Mac/future Windows clients are thin voice-first UI clients.
-- Clients store only pairing/session identity.
+- Clients store only stable pairing/client identity and session data.
 - Local browser is supported only on the same machine running the Hub.
 - Remote browser clients are intentionally out of scope.
 
@@ -226,29 +228,32 @@ The vNext architecture moves the product to this stricter backend model:
 ### Child conversation
 
 1. Child speaks to a native client.
-2. Client uses verified on-device STT if available.
-3. If local STT is unavailable, client sends bounded audio to Hub local STT.
-4. Client sends transcript to Hub.
-5. Hub loads kid/character/history/settings from SQLCipher.
-6. Hub applies guardrails and redaction.
-7. Hub uses either local LLM or Gemini/OpenAI depending on mode.
-8. Hub stores the turn.
-9. Hub synthesizes the response with LuxTTS.
-10. Client plays the generated toy voice.
+2. Native Android/iPhone clients use verified on-device STT if available.
+3. If native STT is unavailable or fails, Android/iPhone record a bounded local
+   WAV and send it to the paired Hub’s packaged local Whisper STT endpoint.
+4. Local browser/Mac WebKit clients use bounded microphone capture and the same
+   Hub STT endpoint when browser mic APIs are available.
+5. Client sends transcript to Hub.
+6. Hub loads kid/character/history/settings from SQLCipher.
+7. Hub applies guardrails and redaction.
+8. Hub uses either local LLM or Gemini/OpenAI depending on mode.
+9. Hub stores the turn.
+10. Hub synthesizes the response with LuxTTS.
+11. Client plays the generated toy voice.
 
 ## Technology stack
 
 | Layer | Technology |
 |---|---|
 | Shared UI | Flutter / Dart |
-| Android native client | Kotlin, verified on-device STT target, WAV playback, file picker, QR pairing |
-| iOS native client | Swift, on-device Speech target, AVAudio playback, file picker, QR pairing |
+| Android native client | Kotlin, verified on-device STT target, bounded WAV fallback capture, WAV playback, file picker, QR pairing |
+| iOS native client | Swift, on-device Speech target, bounded WAV fallback capture, AVAudio playback, file picker, QR pairing |
 | Mac client | Swift AppKit client shell |
-| Local browser | Flutter web served only on the Hub machine |
+| Local browser | Flutter web served only on the Hub machine, with bounded mic capture to Hub STT when browser APIs allow it |
 | Hub launcher | Swift AppKit first; Windows/Linux launchers later |
 | Hub backend | Rust, Axum, Tokio |
 | Hub database | SQLCipher via Rust `rusqlite` |
-| Hub STT fallback | Target: `whisper.cpp` + Whisper model |
+| Hub STT fallback | Packaged Python/Transformers wrapper for `openai/whisper-base`; `whisper.cpp` is the future lean-runtime target |
 | Local LLM | Target: `llama.cpp` + GGUF model tier by memory |
 | Voice model | LuxTTS through `tools/voice/luxtts_worker.py` |
 | Cloud LLM mode | Gemini/OpenAI called from Hub after redaction |
@@ -426,7 +431,7 @@ Expected artifacts, depending on installed platform toolchains:
 ~/Downloads/PlushPal/artifacts/ios/PlushBuddy-iPhoneOS-unsigned.app
 ```
 
-### Build Hub/MacStation and Mac client only
+### Build Hub and Mac client only
 
 ```sh
 make package-macos
@@ -449,7 +454,7 @@ make build-all
 
 This builds:
 
-- Hub/MacStation app;
+- Hub app;
 - Mac client app;
 - Android debug APK;
 - iPhone simulator app;
@@ -553,7 +558,7 @@ Hub setup should offer only two parent-facing modes:
 
 - Parent PIN gates parent settings.
 - Hub stores durable app state in SQLCipher.
-- Clients store only Hub pairing/session identity in the vNext target.
+- Clients store only stable Hub pairing/client identity and session data.
 - Local browser/Mac attach and Android/iPhone/Mac QR pairing both use a bootstrap token exchanged for a Hub session.
 - Hub validates Host/Origin and bounds request sizes.
 - Voice samples are not sent to cloud LLMs.
@@ -571,17 +576,17 @@ and writes logs under `~/Downloads/PlushPal/test-results`.
 
 Latest local verification, June 25, 2026:
 
-- public artifact build passed with Hub/MacStation, Mac client, Android APK,
+- public artifact build passed with Hub, Mac client, Android APK,
   iPhone simulator app, and unsigned iPhone device app under
   `~/Downloads/PlushPal/artifacts`;
 - local quality gate passed: Rust workspace tests, Flutter analysis/tests, web
   Node tests, and product layout check;
-- Hub/MacStation API smoke passed;
+- Hub API smoke passed;
 - full LuxTTS E2E passed with Sheru/Jenna/Buddy M4A samples: enroll, approve,
   verify unique profile IDs, and synthesize WAV;
-- packaged Hub/MacStation launched and reached readiness;
-- browser client rendered through packaged Hub/MacStation;
-- packaged Mac client attached to packaged Hub/MacStation;
+- packaged Hub launched and reached readiness;
+- browser client rendered through packaged Hub;
+- packaged Mac client attached to packaged Hub;
 - Android real-device install/launch and Station pairing passed on a connected
   Pixel 10 Pro;
 - iPhone simulator install/launch passed.
@@ -608,10 +613,10 @@ qa/automation/android_station_pairing_smoke.sh
 # iPhone simulator install/launch smoke
 qa/automation/ios_simulator_smoke.sh
 
-# Hub/MacStation API smoke
+# Hub API smoke
 qa/automation/macstation_api_smoke.py
 
-# Hub/MacStation M4A enrollment and profile-isolation smoke.
+# Hub M4A enrollment and profile-isolation smoke.
 # Use your own private local samples outside the repo.
 qa/automation/macstation_api_smoke.py \
   --sample Sheru="$HOME/Downloads/PlushPal/private/audio-samples/Sheru.m4a" \
@@ -634,7 +639,7 @@ qa/automation/macstation_api_smoke.py \
   --sample Jenna="$HOME/Downloads/PlushPal/private/audio-samples/Jenna.m4a" \
   --sample Buddy="$HOME/Downloads/PlushPal/private/audio-samples/Buddy.m4a"
 
-# Live Gemini reasoning through current Hub/MacStation command/WebSocket flow.
+# Live Gemini reasoning through current Hub command/WebSocket flow.
 # Pass PLUSHPAL_GEMINI_API_KEY in the environment. Do not commit keys.
 qa/automation/macstation_live_reasoning_smoke.mjs
 ```
@@ -644,11 +649,14 @@ Generated evidence is written under `~/Downloads/PlushPal/test-results` by defau
 ## Known limitations
 
 - Physical iPhone testing still needs Apple signing/provisioning.
-- Browser/Mac client microphone support is not complete; typed chat is the current web/Mac path.
+- Browser/Mac mic capture uses browser/WebKit audio APIs and the Hub STT
+  fallback; typed chat remains available when mic capture is blocked.
 - LuxTTS quality is good for the current samples, but latency remains a product concern.
 - Hub host machine must remain awake/reachable while clients use it.
-- Hub migration must remove durable browser/client-owned family state.
-- No production account sync or cloud backup yet.
+- Hub owns durable browser/mobile family state; remaining client-local paths are
+  development fallback paths for unpaired/demo operation.
+- No production account sync or cloud backup yet. Local encrypted Hub
+  backup/export/import is available from Parent Settings.
 - Windows is not currently verified.
 - App Store / Play Store privacy labels, notarization, and managed distribution are not done.
 
@@ -661,14 +669,12 @@ hardening work beyond the current `v0.1.0-dev.1` release:
 
 1. Run physical iPhone E2E with QR pairing, microphone, local-network
    permission, M4A upload, preview, approval, and child conversation.
-2. Migrate durable kids/characters/history/provider settings into Hub SQLCipher.
-3. Add verified local-only STT on Android/iPhone/Mac plus Hub STT fallback.
-4. Add local LLM runtime and the two-mode setup screen.
-5. Add visible latency metrics for STT, LLM, Hub queue, LuxTTS synthesis,
+2. Broaden Mac/WebKit microphone QA and optimize Hub STT runtime packaging.
+3. Add local LLM runtime and the two-mode setup screen.
+4. Extend visible latency metrics for STT, LLM, Hub queue, LuxTTS synthesis,
    WAV transfer, and playback.
-6. Add export/import or backup/restore for Hub SQLCipher data.
-7. Add production signing/notarization for Hub and the Mac client.
-8. Add managed CI/CD release pipelines for Android, iPhone, and Mac. The repo
+6. Add production signing/notarization for Hub and the Mac client.
+7. Add managed CI/CD release pipelines for Android, iPhone, and Mac. The repo
    already has local build/release scripts and the current GitHub prerelease
    artifacts; this milestone is about repeatable hosted release automation,
    signing, and store-ready outputs.
