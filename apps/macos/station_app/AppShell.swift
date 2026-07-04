@@ -99,17 +99,29 @@ final class PlushBuddyLogoView: NSView {
         gradient?.draw(in: path, angle: -35)
         NSGraphicsContext.current?.restoreGraphicsState()
 
-        let heartText = "♥" as NSString
-        let heartFont = NSFont.systemFont(ofSize: side * 0.50, weight: .heavy)
-        let heartAttributes: [NSAttributedString.Key: Any] = [
-            .font: heartFont,
-            .foregroundColor: NSColor.white,
-        ]
-        let heartSize = heartText.size(withAttributes: heartAttributes)
-        heartText.draw(
-            at: NSPoint(x: rect.midX - heartSize.width / 2, y: rect.midY - heartSize.height / 2 - side * 0.02),
-            withAttributes: heartAttributes
+        let bearColor = NSColor(calibratedRed: 1.0, green: 0.96, blue: 0.84, alpha: 1.0)
+        let muzzleColor = NSColor.white.withAlphaComponent(0.96)
+        let featureColor = NSColor(calibratedRed: 0.16, green: 0.10, blue: 0.22, alpha: 1.0)
+        bearColor.setFill()
+        NSBezierPath(ovalIn: NSRect(x: rect.midX - side * 0.30, y: rect.midY - side * 0.34, width: side * 0.22, height: side * 0.22)).fill()
+        NSBezierPath(ovalIn: NSRect(x: rect.midX + side * 0.08, y: rect.midY - side * 0.34, width: side * 0.22, height: side * 0.22)).fill()
+        NSBezierPath(ovalIn: NSRect(x: rect.midX - side * 0.27, y: rect.midY - side * 0.22, width: side * 0.54, height: side * 0.50)).fill()
+        muzzleColor.setFill()
+        NSBezierPath(ovalIn: NSRect(x: rect.midX - side * 0.18, y: rect.midY + side * 0.01, width: side * 0.36, height: side * 0.22)).fill()
+        featureColor.setFill()
+        NSBezierPath(ovalIn: NSRect(x: rect.midX - side * 0.12, y: rect.midY - side * 0.06, width: side * 0.055, height: side * 0.055)).fill()
+        NSBezierPath(ovalIn: NSRect(x: rect.midX + side * 0.065, y: rect.midY - side * 0.06, width: side * 0.055, height: side * 0.055)).fill()
+        NSBezierPath(ovalIn: NSRect(x: rect.midX - side * 0.055, y: rect.midY + side * 0.045, width: side * 0.11, height: side * 0.075)).fill()
+        let smile = NSBezierPath()
+        smile.lineWidth = max(2, side * 0.026)
+        smile.move(to: NSPoint(x: rect.midX - side * 0.08, y: rect.midY + side * 0.14))
+        smile.curve(
+            to: NSPoint(x: rect.midX + side * 0.08, y: rect.midY + side * 0.14),
+            controlPoint1: NSPoint(x: rect.midX - side * 0.04, y: rect.midY + side * 0.20),
+            controlPoint2: NSPoint(x: rect.midX + side * 0.04, y: rect.midY + side * 0.20)
         )
+        featureColor.setStroke()
+        smile.stroke()
 
         let badgeRect = NSRect(
             x: rect.maxX - side * 0.34,
@@ -294,6 +306,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         progress = NSProgressIndicator()
         progress.style = .spinning
         progress.controlSize = .regular
+        progress.isDisplayedWhenStopped = false
         progress.startAnimation(nil)
         progress.translatesAutoresizingMaskIntoConstraints = false
 
@@ -2093,6 +2106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             case .preparingVoiceRuntime:
                 self.titleLabel.stringValue = "Preparing PlushBuddy Hub"
                 self.detailLabel.stringValue = "Checking app storage, local voice support, and cached downloads. First launch can take a few minutes; later launches reuse what is already installed."
+                self.progress.isHidden = false
                 self.progress.startAnimation(nil)
                 self.retryButton.isHidden = true
                 self.quitButton.isHidden = true
@@ -2109,6 +2123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             case .startingHost:
                 self.titleLabel.stringValue = "Starting Hub service"
                 self.detailLabel.stringValue = "Starting the local PlushBuddy Hub service. Client options will appear after health checks pass."
+                self.progress.isHidden = false
                 self.progress.startAnimation(nil)
                 self.retryButton.isHidden = true
                 self.quitButton.isHidden = true
@@ -2125,6 +2140,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             case .loadingApp:
                 self.titleLabel.stringValue = "Loading PlushBuddy Hub"
                 self.detailLabel.stringValue = "Almost ready…"
+                self.progress.isHidden = false
                 self.progress.startAnimation(nil)
                 self.retryButton.isHidden = true
                 self.quitButton.isHidden = true
@@ -2140,6 +2156,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.resetVoiceRuntimeButton.isHidden = true
             case .stationReady(let url, let conversationReady):
                 self.progress.stopAnimation(nil)
+                self.progress.isHidden = true
                 self.titleLabel.stringValue = "PlushBuddy Hub is ready"
                 self.detailLabel.stringValue = conversationReady
                     ? "All required local services are healthy. Set parent controls, connect a phone, or open a local client."
@@ -2162,6 +2179,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.persistStationClientUrl(url)
             case .ready:
                 self.progress.stopAnimation(nil)
+                self.progress.isHidden = true
                 self.splashScrollView.isHidden = true
                 self.webView.isHidden = false
                 self.retryButton.isHidden = true
@@ -2178,6 +2196,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.resetVoiceRuntimeButton.isHidden = true
             case .failed(let message):
                 self.progress.stopAnimation(nil)
+                self.progress.isHidden = true
                 self.titleLabel.stringValue = "PlushBuddy Hub needs setup"
                 self.detailLabel.stringValue = message
                 self.splashScrollView.isHidden = false

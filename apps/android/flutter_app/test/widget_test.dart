@@ -693,6 +693,22 @@ void main() {
     expect(find.text('Tap to talk'), findsOneWidget);
   });
 
+  testWidgets('PlushBuddy logo renders the shared teddy mark', (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(home: Scaffold(body: PlushBuddyLogo())),
+    );
+
+    expect(find.byType(PlushBuddyLogo), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(PlushBuddyLogo),
+        matching: find.byType(CustomPaint),
+      ),
+      findsAtLeastNWidgets(1),
+    );
+    expect(find.byIcon(Icons.favorite), findsNothing);
+  });
+
   testWidgets('child screen hides transcripts and exposes large talk state', (
     tester,
   ) async {

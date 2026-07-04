@@ -4628,7 +4628,10 @@ class PlushBuddyLogo extends StatelessWidget {
         child: Stack(
           alignment: Alignment.center,
           children: [
-            Icon(Icons.favorite, size: size * 0.62, color: Colors.white),
+            CustomPaint(
+              size: Size.square(size * 0.64),
+              painter: const _PlushBuddyTeddyPainter(),
+            ),
             Positioned(
               right: size * 0.16,
               bottom: size * 0.14,
@@ -4652,6 +4655,87 @@ class PlushBuddyLogo extends StatelessWidget {
       ),
     );
   }
+}
+
+class _PlushBuddyTeddyPainter extends CustomPainter {
+  const _PlushBuddyTeddyPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final side = size.shortestSide;
+    final center = Offset(size.width / 2, size.height / 2);
+    final bearPaint = Paint()
+      ..color = const Color(0xfffff5d6)
+      ..style = PaintingStyle.fill;
+    final muzzlePaint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.96)
+      ..style = PaintingStyle.fill;
+    final featurePaint = Paint()
+      ..color = const Color(0xff281a38)
+      ..style = PaintingStyle.fill;
+    final strokePaint = Paint()
+      ..color = const Color(0xff281a38)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = side * 0.045
+      ..strokeCap = StrokeCap.round;
+
+    canvas.drawCircle(
+      center.translate(-side * 0.28, -side * 0.25),
+      side * 0.17,
+      bearPaint,
+    );
+    canvas.drawCircle(
+      center.translate(side * 0.28, -side * 0.25),
+      side * 0.17,
+      bearPaint,
+    );
+    canvas.drawOval(
+      Rect.fromCenter(
+        center: center.translate(0, side * 0.02),
+        width: side * 0.78,
+        height: side * 0.72,
+      ),
+      bearPaint,
+    );
+    canvas.drawOval(
+      Rect.fromCenter(
+        center: center.translate(0, side * 0.17),
+        width: side * 0.48,
+        height: side * 0.28,
+      ),
+      muzzlePaint,
+    );
+    canvas.drawCircle(
+      center.translate(-side * 0.17, -side * 0.04),
+      side * 0.045,
+      featurePaint,
+    );
+    canvas.drawCircle(
+      center.translate(side * 0.17, -side * 0.04),
+      side * 0.045,
+      featurePaint,
+    );
+    canvas.drawOval(
+      Rect.fromCenter(
+        center: center.translate(0, side * 0.13),
+        width: side * 0.16,
+        height: side * 0.11,
+      ),
+      featurePaint,
+    );
+    final smilePath = Path()
+      ..moveTo(center.dx - side * 0.12, center.dy + side * 0.25)
+      ..quadraticBezierTo(
+        center.dx,
+        center.dy + side * 0.34,
+        center.dx + side * 0.12,
+        center.dy + side * 0.25,
+      );
+    canvas.drawPath(smilePath, strokePaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 class HistoryScreen extends StatelessWidget {

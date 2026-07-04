@@ -13,6 +13,7 @@ apps/macos/client_app/AppShell.swift
 packaging/macos/package.sh
 packaging/macos/StationInfo.plist.in
 packaging/macos/ClientInfo.plist.in
+tools/branding/generate_plushbuddy_icons.py
 "
 
 for path in $required_paths; do
@@ -32,6 +33,9 @@ grep -q 'PlushBuddyLogoView' apps/macos/station_app/AppShell.swift
 grep -q 'NSScrollView' apps/macos/station_app/AppShell.swift
 grep -q 'hasVerticalScroller = true' apps/macos/station_app/AppShell.swift
 grep -q 'Theme: ' apps/macos/station_app/AppShell.swift
+grep -q 'PlushBuddyTeddyPainter' apps/android/flutter_app/lib/src/app.dart
+grep -q 'IOS_ICONSET' tools/branding/generate_plushbuddy_icons.py
+grep -q 'STATION_WEB_ICONS' tools/branding/generate_plushbuddy_icons.py
 
 sh -n packaging/macos/package.sh
 swiftc -typecheck -framework AppKit -framework WebKit apps/macos/client_app/AppShell.swift

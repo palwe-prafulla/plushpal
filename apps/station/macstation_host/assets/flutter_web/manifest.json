@@ -1,11 +1,11 @@
 {
-    "name": "plushpal_ui",
-    "short_name": "plushpal_ui",
+    "name": "PlushBuddy",
+    "short_name": "PlushBuddy",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#FFFBF2",
+    "theme_color": "#8B5CF6",
+    "description": "A playful parent-guided AI buddy app with local voice support.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
