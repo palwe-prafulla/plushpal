@@ -61,6 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
+        configureMainMenu()
         buildWindow()
         NSApp.activate(ignoringOtherApps: true)
 
@@ -214,7 +215,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         runtimeModeButton.isHidden = true
         runtimeModeButton.translatesAutoresizingMaskIntoConstraints = false
 
-        configureGeminiButton = NSButton(title: "Configure Gemini key", target: self, action: #selector(configureGeminiKey))
+        configureGeminiButton = NSButton(title: "Configure Cloud LLM key", target: self, action: #selector(configureCloudLlmKey))
         configureGeminiButton.bezelStyle = .rounded
         configureGeminiButton.isHidden = true
         configureGeminiButton.translatesAutoresizingMaskIntoConstraints = false
@@ -690,6 +691,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             "PLUSHPAL_PRINT_BOOTSTRAP_URL": "1",
             "PLUSHPAL_PORT": "0",
             "PLUSHPAL_RUNTIME_MODE": selectedRuntimeMode(),
+            "PLUSHPAL_CLOUD_LLM_PROVIDER": selectedCloudLlmProvider(),
+            "PLUSHPAL_ENABLE_MAC_KEYCHAIN_PROVIDER": "1",
         ]
         if let lanAddress = preferredLanIPv4Address() {
             extra["PLUSHPAL_ENABLE_LAN"] = "1"
@@ -1011,25 +1014,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
-    @objc private func configureGeminiKey() {
+    private func configureMainMenu() {
+        let mainMenu = NSMenu()
+        let appMenuItem = NSMenuItem()
+        let appMenu = NSMenu()
+        appMenu.addItem(withTitle: "Quit PlushBuddy Station", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenuItem.submenu = appMenu
+        mainMenu.addItem(appMenuItem)
+
+        let editMenuItem = NSMenuItem()
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        editMenu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        editMenu.addItem(NSMenuItem.separator())
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenuItem.submenu = editMenu
+        mainMenu.addItem(editMenuItem)
+        NSApp.mainMenu = mainMenu
+    }
+
+    @objc private func configureCloudLlmKey() {
+        let providerPopup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 520, height: 26), pullsDown: false)
+        providerPopup.addItems(withTitles: ["Gemini", "OpenAI"])
+        providerPopup.selectItem(withTitle: cloudLlmProviderDisplayName(selectedCloudLlmProvider()))
+
         let input = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 520, height: 24))
-        input.placeholderString = "Paste Gemini API key"
+        input.placeholderString = "Paste provider API key"
+
+        let stack = NSStackView(views: [
+            NSTextField(labelWithString: "Provider"),
+            providerPopup,
+            NSTextField(labelWithString: "API key"),
+            input,
+        ])
+        stack.orientation = .vertical
+        stack.spacing = 8
+        stack.alignment = .leading
+        stack.setFrameSize(NSSize(width: 520, height: 100))
+
         let alert = NSAlert()
-        alert.messageText = "Configure Gemini"
-        alert.informativeText = "The key is stored only on this Mac in the macOS Keychain. The local service restarts after saving."
-        alert.accessoryView = input
+        alert.messageText = "Configure Cloud LLM key"
+        alert.informativeText = "Choose Gemini or OpenAI. The key is stored only on this Mac in the macOS Keychain. The local service restarts after saving."
+        alert.accessoryView = stack
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
+        DispatchQueue.main.async {
+            alert.window.makeFirstResponder(input)
+        }
         guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let provider = cloudLlmProviderValue(providerPopup.selectedItem?.title)
         let key = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { return }
         do {
-            try saveGeminiKeyToKeychain(key)
-            removeLegacyGeminiKeyFile()
-            appendLog("app-shell.log", "Gemini key saved to macOS Keychain")
+            try saveCloudLlmKeyToKeychain(provider: provider, key: key)
+            UserDefaults.standard.set(provider, forKey: "PlushBuddyCloudLlmProvider")
+            if provider == "gemini" {
+                removeLegacyGeminiKeyFile()
+            }
+            appendLog("app-shell.log", "\(cloudLlmProviderDisplayName(provider)) key saved to macOS Keychain")
             retryStartup()
         } catch {
-            update(.failed("Could not save Gemini key: \(error.localizedDescription)"))
+            update(.failed("Could not save Cloud LLM key: \(error.localizedDescription)"))
         }
     }
 
@@ -1086,19 +1134,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
-    private func saveGeminiKeyToKeychain(_ key: String) throws {
+    private func selectedCloudLlmProvider() -> String {
+        if let override = ProcessInfo.processInfo.environment["PLUSHPAL_CLOUD_LLM_PROVIDER"] {
+            let normalized = cloudLlmProviderValue(override)
+            if ["gemini", "openai"].contains(normalized) {
+                return normalized
+            }
+        }
+        if let stored = UserDefaults.standard.string(forKey: "PlushBuddyCloudLlmProvider") {
+            let normalized = cloudLlmProviderValue(stored)
+            if ["gemini", "openai"].contains(normalized) {
+                return normalized
+            }
+        }
+        return "gemini"
+    }
+
+    private func cloudLlmProviderValue(_ value: String?) -> String {
+        switch value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "openai", "open ai":
+            return "openai"
+        default:
+            return "gemini"
+        }
+    }
+
+    private func cloudLlmProviderDisplayName(_ provider: String) -> String {
+        provider == "openai" ? "OpenAI" : "Gemini"
+    }
+
+    private func cloudLlmKeyRef(provider: String) -> String {
+        switch provider {
+        case "openai":
+            return "plushpal-openai-api-key-v1"
+        default:
+            return "plushpal-gemini-api-key-v1"
+        }
+    }
+
+    private func saveCloudLlmKeyToKeychain(provider: String, key: String) throws {
         let data = Data(key.utf8)
         guard data.count >= 16 else {
             throw NSError(
                 domain: "PlushPalKeychain",
                 code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "Gemini API key looks too short."]
+                userInfo: [NSLocalizedDescriptionKey: "\(cloudLlmProviderDisplayName(provider)) API key looks too short."]
             )
         }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: "com.plushpal.local",
-            kSecAttrAccount as String: "plushpal-gemini-api-key-v1",
+            kSecAttrAccount as String: cloudLlmKeyRef(provider: provider),
         ]
         SecItemDelete(query as CFDictionary)
         var item = query
@@ -1109,7 +1195,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             throw NSError(
                 domain: NSOSStatusErrorDomain,
                 code: Int(status),
-                userInfo: [NSLocalizedDescriptionKey: "Keychain rejected the Gemini key."]
+                userInfo: [NSLocalizedDescriptionKey: "Keychain rejected the \(cloudLlmProviderDisplayName(provider)) key."]
             )
         }
     }

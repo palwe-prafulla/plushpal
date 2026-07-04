@@ -341,9 +341,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else if !runtime_mode.suppress_cloud_and_local_model() {
             let mut loaded_conversation = false;
             if runtime_mode.prefers_cloud() && runtime_mode.cloud_allowed() {
-                if let Some((provider, api_key)) = saved_cloud_provider.clone().or_else(|| {
-                    gemini_api_key(&data_directory).map(|key| ("gemini".to_owned(), key))
-                }) {
+                if let Some((provider, api_key)) = saved_cloud_provider
+                    .clone()
+                    .or_else(|| cloud_provider_api_key(&data_directory))
+                {
                     match provider.as_str() {
                         "openai" => {
                             let model = env::var("PLUSHPAL_OPENAI_MODEL")
@@ -401,9 +402,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             if !loaded_conversation && !runtime_mode.prefers_cloud() && runtime_mode.cloud_allowed()
             {
-                if let Some((provider, api_key)) = saved_cloud_provider.clone().or_else(|| {
-                    gemini_api_key(&data_directory).map(|key| ("gemini".to_owned(), key))
-                }) {
+                if let Some((provider, api_key)) = saved_cloud_provider
+                    .clone()
+                    .or_else(|| cloud_provider_api_key(&data_directory))
+                {
                     match provider.as_str() {
                         "openai" => {
                             let model = env::var("PLUSHPAL_OPENAI_MODEL")
@@ -464,22 +466,53 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[cfg(feature = "native-runtime")]
-fn gemini_api_key(data_directory: &PathBuf) -> Option<String> {
-    if let Ok(value) = env::var("PLUSHPAL_GEMINI_API_KEY") {
+fn cloud_provider_api_key(data_directory: &PathBuf) -> Option<(String, String)> {
+    let provider = env::var("PLUSHPAL_CLOUD_LLM_PROVIDER")
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| matches!(value.as_str(), "gemini" | "openai"))
+        .unwrap_or_else(|| "gemini".to_owned());
+    match provider.as_str() {
+        "openai" => provider_api_key(
+            "openai",
+            "PLUSHPAL_OPENAI_API_KEY",
+            "plushpal-openai-api-key-v1",
+            data_directory,
+        )
+        .map(|key| ("openai".to_owned(), key)),
+        _ => provider_api_key(
+            "gemini",
+            "PLUSHPAL_GEMINI_API_KEY",
+            "plushpal-gemini-api-key-v1",
+            data_directory,
+        )
+        .map(|key| ("gemini".to_owned(), key)),
+    }
+}
+
+#[cfg(feature = "native-runtime")]
+fn provider_api_key(
+    provider: &str,
+    env_name: &str,
+    key_ref: &str,
+    data_directory: &PathBuf,
+) -> Option<String> {
+    if let Ok(value) = env::var(env_name) {
         let trimmed = value.trim();
         if !trimmed.is_empty() {
             return Some(trimmed.to_owned());
         }
     }
-    if !env_flag_enabled("PLUSHPAL_ENABLE_MAC_KEYCHAIN_GEMINI") {
+    if !env_flag_enabled("PLUSHPAL_ENABLE_MAC_KEYCHAIN_PROVIDER")
+        && !(provider == "gemini" && env_flag_enabled("PLUSHPAL_ENABLE_MAC_KEYCHAIN_GEMINI"))
+    {
         return None;
     }
-    const GEMINI_API_KEY_REF: &str = "plushpal-gemini-api-key-v1";
     use plushpal_encrypted_storage::{KeyVault, SecretRef};
     use plushpal_platform_key_vault::PlatformKeyVault;
 
     let vault = PlatformKeyVault;
-    let secret_ref = SecretRef(GEMINI_API_KEY_REF.to_owned());
+    let secret_ref = SecretRef(key_ref.to_owned());
     if let Some(secret) = vault.load(&secret_ref) {
         if let Ok(value) = std::str::from_utf8(secret.expose()) {
             let trimmed = value.trim();
@@ -489,7 +522,11 @@ fn gemini_api_key(data_directory: &PathBuf) -> Option<String> {
         }
     }
 
-    migrate_legacy_gemini_api_key(data_directory, GEMINI_API_KEY_REF)
+    if provider == "gemini" {
+        migrate_legacy_gemini_api_key(data_directory, key_ref)
+    } else {
+        None
+    }
 }
 
 #[cfg(feature = "native-runtime")]
