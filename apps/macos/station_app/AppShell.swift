@@ -157,6 +157,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var detailLabel: NSTextField!
     private var progress: NSProgressIndicator!
     private var serviceStatusStack: NSStackView!
+    private var setupPanel: NSStackView!
     private var storageStatusIcon: NSImageView!
     private var reasoningStatusIcon: NSImageView!
     private var voiceStatusIcon: NSImageView!
@@ -307,7 +308,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         detailLabel.font = .systemFont(ofSize: 15, weight: .regular)
         detailLabel.textColor = .secondaryLabelColor
         detailLabel.alignment = .center
-        detailLabel.maximumNumberOfLines = 10
+        detailLabel.maximumNumberOfLines = 0
+        detailLabel.lineBreakMode = .byWordWrapping
+        detailLabel.cell?.wraps = true
+        detailLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         detailLabel.translatesAutoresizingMaskIntoConstraints = false
 
         progress = NSProgressIndicator()
@@ -503,7 +507,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             serviceStatusStack,
         ])
 
-        let setupPanel = verticalPanel([
+        setupPanel = verticalPanel([
             sectionTitle("Setup checklist"),
             helperText("Do these once, in order. The parent PIN protects sensitive settings such as Cloud AI model keys."),
             parentSetupButton,
@@ -2654,6 +2658,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             guard let self else { return }
             switch state {
             case .preparingVoiceRuntime:
+                self.setupPanel.isHidden = true
                 self.titleLabel.stringValue = "Preparing PlushBuddy Hub"
                 self.detailLabel.stringValue = "Checking app storage, local voice support, and cached downloads. First launch can take a few minutes; later launches reuse what is already installed."
                 self.progress.isHidden = false
@@ -2672,6 +2677,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.openLogsButton.isHidden = true
                 self.resetVoiceRuntimeButton.isHidden = true
             case .startingHost:
+                self.setupPanel.isHidden = true
                 self.titleLabel.stringValue = "Starting Hub service"
                 self.detailLabel.stringValue = "Starting the local PlushBuddy Hub service. Client options will appear after health checks pass."
                 self.progress.isHidden = false
@@ -2690,6 +2696,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.openLogsButton.isHidden = true
                 self.resetVoiceRuntimeButton.isHidden = true
             case .loadingApp:
+                self.setupPanel.isHidden = true
                 self.titleLabel.stringValue = "Loading PlushBuddy Hub"
                 self.detailLabel.stringValue = "Almost ready…"
                 self.progress.isHidden = false
@@ -2708,6 +2715,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.openLogsButton.isHidden = true
                 self.resetVoiceRuntimeButton.isHidden = true
             case .stationReady(let url, let conversationReady):
+                self.setupPanel.isHidden = false
                 self.progress.stopAnimation(nil)
                 self.progress.isHidden = true
                 self.refreshChecklistButtons(conversationReady: conversationReady)
@@ -2733,6 +2741,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.hostUrl = url
                 self.persistStationClientUrl(url)
             case .ready:
+                self.setupPanel.isHidden = true
                 self.progress.stopAnimation(nil)
                 self.progress.isHidden = true
                 self.splashScrollView.isHidden = true
@@ -2751,6 +2760,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.openLogsButton.isHidden = true
                 self.resetVoiceRuntimeButton.isHidden = true
             case .failed(let message):
+                self.setupPanel.isHidden = true
                 self.progress.stopAnimation(nil)
                 self.progress.isHidden = true
                 self.titleLabel.stringValue = "PlushBuddy Hub needs setup"
