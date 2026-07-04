@@ -74,8 +74,42 @@ class ChildAgeDetails {
   };
 }
 
+DateTime? parseBirthdateInput(String value) {
+  final trimmed = value.trim();
+  if (trimmed.isEmpty) return null;
+  final iso = DateTime.tryParse(trimmed);
+  if (iso != null) return DateTime(iso.year, iso.month, iso.day);
+  final usMatch = RegExp(r'^(\d{1,2})/(\d{1,2})/(\d{4})$').firstMatch(trimmed);
+  if (usMatch == null) return null;
+  final month = int.tryParse(usMatch.group(1)!);
+  final day = int.tryParse(usMatch.group(2)!);
+  final year = int.tryParse(usMatch.group(3)!);
+  if (month == null || day == null || year == null) return null;
+  final parsed = DateTime(year, month, day);
+  if (parsed.year != year || parsed.month != month || parsed.day != day) {
+    return null;
+  }
+  return parsed;
+}
+
+String birthdateToIso(String value) {
+  final parsed = parseBirthdateInput(value);
+  if (parsed == null) return value.trim();
+  final month = parsed.month.toString().padLeft(2, '0');
+  final day = parsed.day.toString().padLeft(2, '0');
+  return '${parsed.year}-$month-$day';
+}
+
+String birthdateToUsDisplay(String value) {
+  final parsed = parseBirthdateInput(value);
+  if (parsed == null) return value;
+  final month = parsed.month.toString().padLeft(2, '0');
+  final day = parsed.day.toString().padLeft(2, '0');
+  return '$month/$day/${parsed.year}';
+}
+
 ChildAgeDetails? childAgeFromBirthdate(String birthdateIso) {
-  final birthdate = DateTime.tryParse(birthdateIso);
+  final birthdate = parseBirthdateInput(birthdateIso);
   if (birthdate == null) return null;
   final today = DateTime.now();
   if (birthdate.isAfter(today)) return null;
@@ -236,7 +270,7 @@ class _PlushPalRootState extends State<PlushPalRoot>
   String? selectedKidId;
   List<CharacterConfiguration> characters = const [];
   final childInput = TextEditingController();
-  final kidName = TextEditingController(text: 'Inaaya');
+  final kidName = TextEditingController();
   final kidBirthdate = TextEditingController();
   final characterName = TextEditingController(text: 'Teddy');
   final parentGuidance = TextEditingController();
@@ -424,7 +458,7 @@ class _PlushPalRootState extends State<PlushPalRoot>
         () => message = userFacingError(
           error,
           fallback:
-              'I could not think of an answer. Check the reasoning API key and internet connection, then try again.',
+              'I could not think of an answer. Check the LLM setup in PlushBuddy Hub and try again.',
         ),
       );
       dispatch(const ConversationFailed());
@@ -668,6 +702,10 @@ class _PlushPalRootState extends State<PlushPalRoot>
       final activeAge = activeKid == null
           ? null
           : childAgeFromBirthdate(activeKid.birthdateIso);
+      if (activeKid != null && state.step == AppStep.onboarding) {
+        kidName.text = activeKid.name;
+        kidBirthdate.text = birthdateToUsDisplay(activeKid.birthdateIso);
+      }
       if (readiness.parentConfigured &&
           state.step == AppStep.onboarding &&
           (activeAge != null || readiness.ageBand != null) &&
@@ -706,15 +744,13 @@ class _PlushPalRootState extends State<PlushPalRoot>
       if (!readiness.ready) {
         setState(
           () => message = stationPaired
-              ? 'The Magic Voice Box is connected. Now set up the AI Brain on $_thisClientLabel.'
-              : 'Set up the AI Brain on $_thisClientLabel, then connect the Magic Voice Box for buddy voices.',
+              ? 'The Hub is connected. Configure Cloud LLM or local reasoning in PlushBuddy Hub, then tap Check again.'
+              : 'Pair this app with PlushBuddy Hub so it can use buddy voices and conversations.',
         );
       }
     } catch (_) {
       if (!mounted) return;
-      setState(
-        () => message = 'Could not check the AI Brain or Magic Voice Box.',
-      );
+      setState(() => message = 'Could not check PlushBuddy Hub.');
     }
   }
 
@@ -877,13 +913,14 @@ class _PlushPalRootState extends State<PlushPalRoot>
     dispatch(const ChildModeExited(parentAuthorized: true));
   }
 
-  Future<void> completeOnboarding() async {
+  Future<void> completeOnboarding({bool addVoiceAfterSave = false}) async {
     final pin = parentPin.text;
     if (!RegExp(r'^\d{4,8}$').hasMatch(pin) || pin != confirmParentPin.text) {
       setState(() => message = 'Choose matching 4-8 digit parent PINs.');
       return;
     }
-    final childAge = childAgeFromBirthdate(kidBirthdate.text.trim());
+    final kidBirthdateIso = birthdateToIso(kidBirthdate.text);
+    final childAge = childAgeFromBirthdate(kidBirthdateIso);
     if (childAge != null && state.ageBand != childAge.ageBand) {
       dispatch(AgeSelected(childAge.ageBand));
     }
@@ -897,7 +934,7 @@ class _PlushPalRootState extends State<PlushPalRoot>
           message = 'Add a kid profile with name and birthdate first.';
         } else if (state.recommendation?.installed != true) {
           message =
-              'Save a reasoning API key on $_thisClientLabel before continuing to Parent Home.';
+              'Finish Cloud LLM or local reasoning setup in PlushBuddy Hub before continuing.';
         } else {
           message = 'Finish the required setup items before continuing.';
         }
@@ -912,10 +949,11 @@ class _PlushPalRootState extends State<PlushPalRoot>
     try {
       final newKidId =
           selectedKidId ?? 'kid-${DateTime.now().microsecondsSinceEpoch}';
+      final savedCharacterAlias = characterName.text.trim();
       await widget.backend.configureParentPin(
         pin: pin,
         ageBand: childAge.ageBandCode,
-        characterAlias: characterName.text.trim(),
+        characterAlias: savedCharacterAlias,
         characterTraits: selectedTraits.toList()..sort(),
         parentGuidance: parentGuidance.text.trim().isEmpty
             ? null
@@ -927,12 +965,12 @@ class _PlushPalRootState extends State<PlushPalRoot>
         pin: pin,
         kidId: newKidId,
         name: kidName.text.trim(),
-        birthdateIso: kidBirthdate.text.trim(),
+        birthdateIso: kidBirthdateIso,
       );
       selectedKidId = newKidId;
       await widget.backend.saveCharacter(
         pin: pin,
-        characterAlias: characterName.text.trim(),
+        characterAlias: savedCharacterAlias,
         characterTraits: selectedTraits.toList()..sort(),
         parentGuidance: parentGuidance.text.trim().isEmpty
             ? null
@@ -942,11 +980,19 @@ class _PlushPalRootState extends State<PlushPalRoot>
       );
       if (!mounted) return;
       dispatch(AgeSelected(childAge.ageBand));
-      dispatch(CharacterNamed(characterName.text));
+      dispatch(CharacterNamed(savedCharacterAlias));
       dispatch(const OnboardingCompleted());
+      await assessDevice();
+      if (addVoiceAfterSave && mounted) {
+        unlockedParentPin = pin;
+        try {
+          await enrollVoice(characterAlias: savedCharacterAlias);
+        } finally {
+          unlockedParentPin = null;
+        }
+      }
       parentPin.clear();
       confirmParentPin.clear();
-      await assessDevice();
     } catch (error) {
       if (mounted) {
         setState(
@@ -1605,7 +1651,9 @@ class _PlushPalRootState extends State<PlushPalRoot>
 
   Future<void> addOrEditKid([KidProfile? existing]) async {
     final name = TextEditingController(text: existing?.name ?? '');
-    final birthdate = TextEditingController(text: existing?.birthdateIso ?? '');
+    final birthdate = TextEditingController(
+      text: existing == null ? '' : birthdateToUsDisplay(existing.birthdateIso),
+    );
     final portalPin = unlockedParentPin;
     final pin = TextEditingController();
     final submitted = await showDialog<bool>(
@@ -1634,7 +1682,7 @@ class _PlushPalRootState extends State<PlushPalRoot>
                   border: OutlineInputBorder(),
                   labelText: 'Birthdate',
                   helperText:
-                      'Use YYYY-MM-DD. Age guardrails are derived from this.',
+                      'Use MM/DD/YYYY. Age guardrails are derived from this.',
                 ),
               ),
               if (portalPin == null) ...[
@@ -1663,9 +1711,10 @@ class _PlushPalRootState extends State<PlushPalRoot>
       ),
     );
     if (submitted != true || !mounted) return;
-    final age = childAgeFromBirthdate(birthdate.text.trim());
+    final birthdateIso = birthdateToIso(birthdate.text);
+    final age = childAgeFromBirthdate(birthdateIso);
     if (age == null) {
-      setState(() => message = 'Enter a valid birthdate as YYYY-MM-DD.');
+      setState(() => message = 'Enter a valid birthdate as MM/DD/YYYY.');
       return;
     }
     final pinText = portalPin ?? pin.text;
@@ -1680,7 +1729,7 @@ class _PlushPalRootState extends State<PlushPalRoot>
         pin: pinText,
         kidId: kidId,
         name: name.text.trim(),
-        birthdateIso: birthdate.text.trim(),
+        birthdateIso: birthdateIso,
       );
       selectedKidId = kidId;
       await assessDevice();
@@ -1753,6 +1802,7 @@ class _PlushPalRootState extends State<PlushPalRoot>
     final pin = TextEditingController();
     final portalPin = unlockedParentPin;
     final traits = <String>{'gentle', 'curious'};
+    var addVoiceAfterSave = true;
     final submitted = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
@@ -1799,6 +1849,16 @@ class _PlushPalRootState extends State<PlushPalRoot>
                     maxLength: 160,
                     decoration: const InputDecoration(
                       labelText: 'Parent guidance (optional)',
+                    ),
+                  ),
+                  CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: addVoiceAfterSave,
+                    onChanged: (value) =>
+                        updateDialog(() => addVoiceAfterSave = value ?? true),
+                    title: const Text('Choose voice sample after saving'),
+                    subtitle: const Text(
+                      'Recommended so this buddy is ready without extra navigation.',
                     ),
                   ),
                   if (portalPin == null)
@@ -1865,9 +1925,10 @@ class _PlushPalRootState extends State<PlushPalRoot>
       if (!mounted) return;
       await assessDevice();
       if (!mounted) return;
-      selectCharacter(name.text.trim());
+      final savedAlias = name.text.trim();
+      selectCharacter(savedAlias);
       final addedVoice = characters
-          .where((character) => character.alias == name.text.trim())
+          .where((character) => character.alias == savedAlias)
           .firstOrNull
           ?.voice;
       showActionMessage(
@@ -1875,6 +1936,14 @@ class _PlushPalRootState extends State<PlushPalRoot>
             ? 'Toy buddy added with its saved voice.'
             : 'Toy buddy added. Upload a voice sample next.',
       );
+      if (addVoiceAfterSave && addedVoice?.approved != true) {
+        if (portalPin == null) unlockedParentPin = pinText;
+        try {
+          await enrollVoice(characterAlias: savedAlias);
+        } finally {
+          if (portalPin == null) unlockedParentPin = null;
+        }
+      }
     } catch (error) {
       if (mounted) {
         showActionMessage(
@@ -2268,6 +2337,8 @@ class _PlushPalRootState extends State<PlushPalRoot>
         clearStationPairing: clearStationPairing,
         configureGeminiKey: configureGeminiKey,
         assessDevice: assessDevice,
+        themePreference: widget.themePreference,
+        onThemePreferenceChanged: widget.onThemePreferenceChanged,
       ),
       AppStep.childMode => ChildModeScreen(
         state: state,
@@ -2346,7 +2417,7 @@ class OnboardingScreen extends StatelessWidget {
   final ValueChanged<int?> retentionChanged;
   final TextEditingController parentPin;
   final TextEditingController confirmParentPin;
-  final Future<void> Function() completeOnboarding;
+  final Future<void> Function({bool addVoiceAfterSave}) completeOnboarding;
   final bool stationPaired;
   final String? stationBaseUrl;
   final Future<void> Function() pairWithStation;
@@ -2419,8 +2490,8 @@ class OnboardingScreen extends StatelessWidget {
                         _StatusLine(
                           ok: state.recommendation?.installed == true,
                           label: state.recommendation?.installed == true
-                              ? 'AI Brain ready'
-                              : 'Save Gemini or OpenAI API key',
+                              ? 'Hub conversations ready'
+                              : 'Finish LLM setup in Hub',
                         ),
                         _StatusLine(
                           ok: retentionDays != null,
@@ -2511,7 +2582,7 @@ class OnboardingScreen extends StatelessWidget {
                       border: OutlineInputBorder(),
                       labelText: 'Birthdate',
                       helperText:
-                          'Use YYYY-MM-DD. PlushBuddy derives age guardrails from this.',
+                          'Use MM/DD/YYYY. PlushBuddy derives age guardrails from this.',
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -2539,72 +2610,23 @@ class OnboardingScreen extends StatelessWidget {
                 ],
               ),
               _SettingsCard(
-                icon: Icons.psychology,
-                title: 'AI Brain',
+                icon: Icons.computer,
+                title: 'PlushBuddy Hub',
                 status: state.recommendation?.installed == true
                     ? 'Ready'
-                    : 'Required',
+                    : stationPaired
+                    ? 'Needs Hub setup'
+                    : 'Not paired',
                 complete: state.recommendation?.installed == true,
                 children: [
                   Text(
-                    state.recommendation?.displayName ??
-                        'Save a Gemini or OpenAI API key for PlushBuddy.',
-                  ),
-                  const SizedBox(height: 12),
-                  if (state.recommendation == null)
-                    FilledButton.tonal(
-                      onPressed: assessDevice,
-                      child: const Text('Check AI Brain'),
-                    )
-                  else if (state.recommendation!.installed)
-                    const _StatusLine(ok: true, label: 'AI Brain is ready')
-                  else if (installingModel) ...[
-                    const LinearProgressIndicator(),
-                    const SizedBox(height: 8),
-                    OutlinedButton(
-                      onPressed: cancelModelInstall,
-                      child: const Text('Cancel model download'),
-                    ),
-                  ] else ...[
-                    const Text(
-                      'No AI Brain is ready yet. Configure Gemini or OpenAI now, or install a local model later.',
-                    ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        FilledButton.icon(
-                          onPressed: configureGeminiKey,
-                          icon: const Icon(Icons.key),
-                          label: const Text('Save API key'),
-                        ),
-                        if (modelInstallSupported)
-                          FilledButton.tonal(
-                            onPressed: installModel,
-                            child: const Text('Install local model'),
-                          ),
-                        TextButton(
-                          onPressed: assessDevice,
-                          child: const Text('Check again'),
-                        ),
-                      ],
-                    ),
-                  ],
-                ],
-              ),
-              _SettingsCard(
-                icon: Icons.computer,
-                title: 'Magic Voice Box',
-                status: stationPaired ? 'Paired' : 'Not paired',
-                complete: stationPaired,
-                children: [
-                  Text(
-                    stationPaired
-                        ? 'Connected to ${stationBaseUrl ?? 'the Magic Voice Box'}'
+                    state.recommendation?.installed == true
+                        ? 'Connected to ${stationBaseUrl ?? 'PlushBuddy Hub'} and ready for conversations.'
+                        : stationPaired
+                        ? 'Connected to Hub. Finish Cloud LLM or local reasoning setup in the Hub app, then check again here.'
                         : kIsWeb
                         ? 'Open this browser or Mac app from PlushBuddy Hub. It connects automatically.'
-                        : 'Use the Mac only for buddy voices and toy audio.',
+                        : 'Scan the QR code from PlushBuddy Hub on the Mac.',
                   ),
                   const SizedBox(height: 12),
                   Wrap(
@@ -2616,11 +2638,15 @@ class OnboardingScreen extends StatelessWidget {
                         icon: Icon(kIsWeb ? Icons.sync : Icons.qr_code_2),
                         label: Text(
                           kIsWeb
-                              ? 'Check Voice Box'
+                              ? 'Check Hub'
                               : stationPaired
-                              ? 'Reconnect Voice Box'
-                              : 'Connect Voice Box',
+                              ? 'Reconnect Hub'
+                              : 'Pair Hub',
                         ),
+                      ),
+                      TextButton(
+                        onPressed: assessDevice,
+                        child: const Text('Check again'),
                       ),
                       if (stationPaired && !kIsWeb)
                         TextButton(
@@ -2722,6 +2748,12 @@ class OnboardingScreen extends StatelessWidget {
               FilledButton(
                 onPressed: completeOnboarding,
                 child: const Text('Continue to parent home'),
+              ),
+              const SizedBox(height: 8),
+              FilledButton.tonalIcon(
+                onPressed: () => completeOnboarding(addVoiceAfterSave: true),
+                icon: const Icon(Icons.graphic_eq),
+                label: const Text('Continue and add voice sample'),
               ),
             ],
           ),
@@ -2846,6 +2878,8 @@ class ParentHomeScreen extends StatelessWidget {
     required this.clearStationPairing,
     required this.configureGeminiKey,
     required this.assessDevice,
+    required this.themePreference,
+    required this.onThemePreferenceChanged,
     super.key,
   });
   final AppState state;
@@ -2884,6 +2918,8 @@ class ParentHomeScreen extends StatelessWidget {
   final Future<void> Function() clearStationPairing;
   final Future<void> Function() configureGeminiKey;
   final Future<void> Function() assessDevice;
+  final AppThemePreference themePreference;
+  final ValueChanged<AppThemePreference> onThemePreferenceChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -2903,7 +2939,7 @@ class ParentHomeScreen extends StatelessWidget {
         : selectedKid == null
         ? 'Add your kid'
         : !reasoningReady
-        ? 'Connect the AI Brain'
+        ? 'Finish Hub setup'
         : !stationPaired
         ? 'Connect the Magic Voice Box'
         : !voiceRuntimeReady
@@ -2920,7 +2956,7 @@ class ParentHomeScreen extends StatelessWidget {
         : selectedKid == null
         ? 'Add kid'
         : !reasoningReady
-        ? 'Set up AI Brain'
+        ? 'Check Hub'
         : !stationPaired
         ? kIsWeb
               ? 'Check Voice Box'
@@ -2937,7 +2973,7 @@ class ParentHomeScreen extends StatelessWidget {
     final Future<void> Function()? setupAction = childModeReady
         ? null
         : !reasoningReady
-        ? configureGeminiKey
+        ? assessDevice
         : !stationPaired
         ? pairWithStation
         : !voiceRuntimeReady
@@ -2946,7 +2982,7 @@ class ParentHomeScreen extends StatelessWidget {
     final readinessIcon = childModeReady
         ? Icons.check_circle
         : !reasoningReady
-        ? Icons.key
+        ? Icons.sync_problem
         : !stationPaired
         ? kIsWeb
               ? Icons.sync
@@ -2974,6 +3010,18 @@ class ParentHomeScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text(appDisplayName),
         actions: [
+          IconButton(
+            tooltip: 'Theme',
+            onPressed: () => Navigator.of(context).push<void>(
+              MaterialPageRoute(
+                builder: (_) => _ThemeSettingsScreen(
+                  themePreference: themePreference,
+                  onThemePreferenceChanged: onThemePreferenceChanged,
+                ),
+              ),
+            ),
+            icon: Icon(themePreference.icon),
+          ),
           IconButton(
             tooltip: 'Parent Settings',
             onPressed: editCharacterAndPrivacy,
@@ -3163,8 +3211,8 @@ class ParentHomeScreen extends StatelessWidget {
                         _PlaySetupStep(
                           complete: reasoningReady,
                           label: reasoningReady
-                              ? 'AI Brain is ready'
-                              : 'Connect the AI Brain',
+                              ? 'Hub conversations are ready'
+                              : 'Finish Hub conversation setup',
                         ),
                         _PlaySetupStep(
                           complete: stationPaired && voiceRuntimeReady,
@@ -3360,9 +3408,7 @@ class SettingsMenuScreen extends StatelessWidget {
               _SettingsTile(
                 icon: Icons.lock,
                 title: 'Parent lock',
-                subtitle: reasoningReady
-                    ? 'PIN saved • AI Brain ready'
-                    : 'PIN saved • AI Brain needs setup',
+                subtitle: 'PIN saved • protects settings and cleanup',
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () => _push(
                   context,
@@ -3516,7 +3562,7 @@ class _ParentSetupSettingsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Parent lock & AI Brain')),
+    appBar: AppBar(title: const Text('Parent lock')),
     body: ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -3529,22 +3575,6 @@ class _ParentSetupSettingsScreen extends StatelessWidget {
               subtitle:
                   'Needed only for Parent Settings and important cleanup.',
               trailing: Icon(Icons.check_circle, color: Colors.green),
-            ),
-          ],
-        ),
-        _SettingsGroup(
-          title: 'AI Brain',
-          children: [
-            _SettingsTile(
-              icon: Icons.psychology,
-              title: '${reasoningProvider.displayName} AI Brain',
-              subtitle: reasoningReady
-                  ? 'Ready for curious questions.'
-                  : 'Save a Gemini or OpenAI API key for conversations.',
-              trailing: reasoningReady
-                  ? const Icon(Icons.check_circle, color: Colors.green)
-                  : const Icon(Icons.chevron_right),
-              onTap: configureGeminiKey,
             ),
           ],
         ),
@@ -3933,7 +3963,7 @@ class _KidsSettingsScreen extends StatelessWidget {
                 icon: Icons.child_care,
                 title: kid.name,
                 subtitle:
-                    '${childAgeFromBirthdate(kid.birthdateIso)?.label ?? kid.birthdateIso} • ${charactersForKid(kid).length}/3 buddies${selectedKid?.id == kid.id ? ' • playing now' : ''}',
+                    '${birthdateToUsDisplay(kid.birthdateIso)} • ${childAgeFromBirthdate(kid.birthdateIso)?.label ?? 'age unknown'} • ${charactersForKid(kid).length}/3 buddies${selectedKid?.id == kid.id ? ' • playing now' : ''}',
                 trailing: selectedKid?.id == kid.id
                     ? const Icon(Icons.check_circle, color: Colors.green)
                     : const Icon(Icons.chevron_right),
@@ -4078,7 +4108,7 @@ class _KidDetailSettingsScreenState extends State<_KidDetailSettingsScreen> {
               icon: Icons.cake,
               title: 'Birthdate',
               subtitle:
-                  '${widget.kid.birthdateIso} • ${childAgeFromBirthdate(widget.kid.birthdateIso)?.label ?? 'age unknown'}',
+                  '${birthdateToUsDisplay(widget.kid.birthdateIso)} • ${childAgeFromBirthdate(widget.kid.birthdateIso)?.label ?? 'age unknown'}',
               onTap: () => widget.addOrEditKid(widget.kid),
             ),
             _SettingsTile(
@@ -4572,7 +4602,9 @@ class _SettingsStatusSummary extends StatelessWidget {
           const SizedBox(height: 8),
           _StatusLine(
             ok: reasoningReady,
-            label: reasoningReady ? 'AI Brain ready' : 'AI Brain needs setup',
+            label: reasoningReady
+                ? 'Hub conversations ready'
+                : 'Hub conversations need setup',
           ),
           _StatusLine(
             ok: stationPaired,

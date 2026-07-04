@@ -587,7 +587,7 @@ Future<void> assessIfNeeded(WidgetTester tester) async {
   await tester.pumpAndSettle();
   await tester.drag(find.byType(ListView), const Offset(0, -700));
   await tester.pumpAndSettle();
-  for (final label in ['Check reasoning status', 'Check local model']) {
+  for (final label in ['Check Hub', 'Check again']) {
     if (find.text(label).evaluate().isNotEmpty) {
       await tapVisible(tester, label);
       break;
@@ -598,10 +598,16 @@ Future<void> assessIfNeeded(WidgetTester tester) async {
 
 Future<void> completeBasicOnboarding(
   WidgetTester tester, {
-  String birthdate = '2021-01-01',
+  String birthdate = '01/01/2021',
 }) async {
   await tapVisible(tester, 'Parent Settings');
   await tester.pumpAndSettle();
+  final kidNameField = find.byWidgetPredicate(
+    (widget) =>
+        widget is TextField && widget.decoration?.labelText == 'Kid name',
+  );
+  await tester.ensureVisible(kidNameField);
+  await tester.enterText(kidNameField, 'Inaaya');
   final birthdateField = find.byWidgetPredicate(
     (widget) =>
         widget is TextField && widget.decoration?.labelText == 'Birthdate',
@@ -843,8 +849,14 @@ void main() {
       (widget) =>
           widget is TextField && widget.decoration?.labelText == 'Birthdate',
     );
+    final kidNameField = find.byWidgetPredicate(
+      (widget) =>
+          widget is TextField && widget.decoration?.labelText == 'Kid name',
+    );
+    await tester.ensureVisible(kidNameField);
+    await tester.enterText(kidNameField, 'Inaaya');
     await tester.ensureVisible(birthdateField);
-    await tester.enterText(birthdateField, '2021-01-01');
+    await tester.enterText(birthdateField, '01/01/2021');
     await assessIfNeeded(tester);
 
     await enterParentPin(tester);
@@ -852,7 +864,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(
       find.text(
-        'Save a reasoning API key on this phone before continuing to Parent Home.',
+        'Finish Cloud LLM or local reasoning setup in PlushBuddy Hub before continuing.',
       ),
       findsOneWidget,
     );

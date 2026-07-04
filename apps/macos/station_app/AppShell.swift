@@ -311,7 +311,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         progress.translatesAutoresizingMaskIntoConstraints = false
 
         storageStatusLabel = NSTextField(labelWithString: "○ Secure storage: getting ready")
-        reasoningStatusLabel = NSTextField(labelWithString: "○ AI Brain: checking")
+        reasoningStatusLabel = NSTextField(labelWithString: "○ Conversations: checking")
         voiceStatusLabel = NSTextField(labelWithString: "○ Buddy voices: checking")
         sttStatusLabel = NSTextField(labelWithString: "○ Listening helper: checking")
         hostStatusLabel = NSTextField(labelWithString: "○ Hub: starting")
@@ -373,12 +373,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         themeModeButton.isHidden = true
         themeModeButton.translatesAutoresizingMaskIntoConstraints = false
 
-        parentSetupButton = NSButton(title: "1. Set or verify parent PIN", target: self, action: #selector(configureParentPin))
+        parentSetupButton = NSButton(title: "Set parent PIN", target: self, action: #selector(configureParentPin))
         parentSetupButton.bezelStyle = .rounded
         parentSetupButton.isHidden = true
         parentSetupButton.translatesAutoresizingMaskIntoConstraints = false
 
-        configureCloudLlmButton = NSButton(title: "2. Configure Cloud LLM key", target: self, action: #selector(configureCloudLlmKey))
+        configureCloudLlmButton = NSButton(title: "Configure Cloud LLM key", target: self, action: #selector(configureCloudLlmKey))
         configureCloudLlmButton.bezelStyle = .rounded
         configureCloudLlmButton.isHidden = true
         configureCloudLlmButton.translatesAutoresizingMaskIntoConstraints = false
@@ -583,8 +583,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         update(.preparingVoiceRuntime)
         setupOutput.removeAll()
         updateServiceStatuses(
-            storage: "● Secure storage: ready",
-            reasoning: "○ AI Brain: checking",
+            storage: "✓ Secure storage: ready",
+            reasoning: "○ Conversations: checking",
             voice: "○ Buddy voices: checking",
             stt: "○ Listening helper: checking",
             host: "○ Hub: starting",
@@ -596,8 +596,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             voiceRuntime = runtime
             updateServiceStatuses(
                 storage: nil,
-                reasoning: "○ AI Brain: waiting",
-                voice: runtime == nil ? "△ Buddy voices: demo mode" : "● Buddy voices: ready",
+                reasoning: "○ Conversations: waiting",
+                voice: runtime == nil ? "△ Buddy voices: demo mode" : "✓ Buddy voices: ready",
                 stt: nil,
                 host: "○ Hub: starting",
                 browser: "○ Apps: waiting"
@@ -605,7 +605,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case .failure(let failure):
             updateServiceStatuses(
                 storage: nil,
-                reasoning: "○ AI Brain: waiting",
+                reasoning: "○ Conversations: waiting",
                 voice: "✕ Buddy voices: setup failed",
                 stt: nil,
                 host: "○ Hub: waiting",
@@ -619,7 +619,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             storage: nil,
             reasoning: nil,
             voice: nil,
-            stt: sttRuntime == nil ? "△ Listening helper: phone will listen" : "● Listening helper: ready",
+            stt: sttRuntime == nil ? "△ Listening helper: phone will listen" : "✓ Listening helper: ready",
             host: "○ Hub: starting",
             browser: nil
         )
@@ -1020,7 +1020,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             update(.startingHost)
             updateServiceStatuses(
                 storage: nil,
-                reasoning: "○ AI Brain: checking",
+                reasoning: "○ Conversations: checking",
                 voice: "○ Buddy voices: checking",
                 stt: "○ Listening helper: checking",
                 host: "○ Hub: checking",
@@ -1419,6 +1419,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
         do {
             try saveParentPinToHub(pin: pin)
+            UserDefaults.standard.set(true, forKey: "PlushBuddyHubParentPinConfigured")
+            refreshChecklistButtons()
             appendLog("app-shell.log", "parent PIN configured or verified")
             showInfoAlert(title: "Parent PIN ready", message: "Hub parent settings are protected. Next, configure your Cloud LLM key if you want cloud conversation mode.")
         } catch {
@@ -1467,6 +1469,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         do {
             try saveCloudLlmKeyToHub(provider: provider, key: key, pin: pin)
             UserDefaults.standard.set(provider, forKey: "PlushBuddyCloudLlmProvider")
+            UserDefaults.standard.set(true, forKey: "PlushBuddyHubCloudLlmConfigured")
+            refreshChecklistButtons(conversationReady: true)
             removeLegacyGeminiKeyFile()
             appendLog("app-shell.log", "\(cloudLlmProviderDisplayName(provider)) key saved to encrypted Hub database")
             showInfoAlert(title: "Cloud LLM key saved", message: "\(cloudLlmProviderDisplayName(provider)) is configured for conversation mode.")
@@ -1558,6 +1562,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     private func cloudLlmProviderDisplayName(_ provider: String) -> String {
         provider == "openai" ? "OpenAI" : "Gemini"
+    }
+
+    private func refreshChecklistButtons(conversationReady: Bool? = nil) {
+        let parentPinReady = UserDefaults.standard.bool(forKey: "PlushBuddyHubParentPinConfigured")
+        let cloudReady = conversationReady == true || UserDefaults.standard.bool(forKey: "PlushBuddyHubCloudLlmConfigured")
+        parentSetupButton?.title = parentPinReady ? "✓ Parent PIN done" : "Set parent PIN"
+        configureCloudLlmButton?.title = cloudReady ? "✓ Cloud LLM key done" : "Configure Cloud LLM key"
     }
 
     private func saveParentPinToHub(pin: String) throws {
@@ -1833,10 +1844,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                         self?.updateServiceStatuses(
                             storage: nil,
                             reasoning: self?.reasoningStatusLine(from: health),
-                            voice: "● Buddy voices: ready",
+                            voice: "✓ Buddy voices: ready",
                             stt: self?.sttStatusLine(from: health),
-                            host: "● Hub: ready",
-                            browser: "● Apps: ready to connect"
+                            host: "✓ Hub: ready",
+                            browser: "✓ Apps: ready to connect"
                         )
                         self?.update(.stationReady(hostUrl, conversationReady: conversationReady))
                     }
@@ -1845,7 +1856,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 DispatchQueue.main.async { [weak self] in
                     self?.updateServiceStatuses(
                         storage: nil,
-                        reasoning: "○ AI Brain: checking",
+                        reasoning: "○ Conversations: checking",
                         voice: "○ Buddy voices: warming up",
                         stt: "○ Listening helper: warming up",
                         host: "○ Hub: waking up",
@@ -1857,7 +1868,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             DispatchQueue.main.async { [weak self] in
                 self?.updateServiceStatuses(
                     storage: nil,
-                    reasoning: "△ AI Brain: needs setup",
+                    reasoning: "△ Conversations: needs setup",
                     voice: "△ Buddy voices: still waking up",
                     stt: "△ Listening helper: unavailable",
                     host: "✕ Hub: needs attention",
@@ -1911,14 +1922,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     private func reasoningStatusLine(from health: [String: Any]) -> String {
         if isConversationEngineReady(health) {
-            return "● AI Brain: ready"
+            return "✓ Conversations: ready"
         }
-        return "△ AI Brain: add Gemini/OpenAI key or local model"
+        return "△ Conversations: configure Cloud LLM or local mode in Hub"
     }
 
     private func sttStatusLine(from health: [String: Any]) -> String {
         if health["speech_to_text_ready"] as? Bool == true {
-            return "● Listening helper: ready"
+            return "✓ Listening helper: ready"
         }
         return "△ Listening helper: phone will listen"
     }
@@ -2157,6 +2168,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             case .stationReady(let url, let conversationReady):
                 self.progress.stopAnimation(nil)
                 self.progress.isHidden = true
+                self.refreshChecklistButtons(conversationReady: conversationReady)
                 self.titleLabel.stringValue = "PlushBuddy Hub is ready"
                 self.detailLabel.stringValue = conversationReady
                     ? "All required local services are healthy. Set parent controls, connect a phone, or open a local client."
@@ -2227,12 +2239,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     ) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            if let storage { self.storageStatusLabel.stringValue = storage }
-            if let reasoning { self.reasoningStatusLabel.stringValue = reasoning }
-            if let voice { self.voiceStatusLabel.stringValue = voice }
-            if let stt { self.sttStatusLabel.stringValue = stt }
-            if let host { self.hostStatusLabel.stringValue = host }
-            if let browser { self.browserStatusLabel.stringValue = browser }
+            if let storage { self.updateStatusLabel(self.storageStatusLabel, text: storage) }
+            if let reasoning { self.updateStatusLabel(self.reasoningStatusLabel, text: reasoning) }
+            if let voice { self.updateStatusLabel(self.voiceStatusLabel, text: voice) }
+            if let stt { self.updateStatusLabel(self.sttStatusLabel, text: stt) }
+            if let host { self.updateStatusLabel(self.hostStatusLabel, text: host) }
+            if let browser { self.updateStatusLabel(self.browserStatusLabel, text: browser) }
+        }
+    }
+
+    private func updateStatusLabel(_ label: NSTextField, text: String) {
+        label.stringValue = text
+        if text.hasPrefix("✓") {
+            label.textColor = NSColor(calibratedRed: 0.08, green: 0.55, blue: 0.24, alpha: 1.0)
+        } else if text.hasPrefix("△") {
+            label.textColor = NSColor(calibratedRed: 0.82, green: 0.48, blue: 0.00, alpha: 1.0)
+        } else if text.hasPrefix("✕") {
+            label.textColor = NSColor.systemRed
+        } else {
+            label.textColor = .secondaryLabelColor
         }
     }
 
