@@ -343,7 +343,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if runtime_mode.prefers_cloud() && runtime_mode.cloud_allowed() {
                 if let Some((provider, api_key)) = saved_cloud_provider
                     .clone()
-                    .or_else(|| cloud_provider_api_key(&data_directory))
+                    .or_else(cloud_provider_api_key)
                 {
                     match provider.as_str() {
                         "openai" => {
@@ -404,7 +404,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             {
                 if let Some((provider, api_key)) = saved_cloud_provider
                     .clone()
-                    .or_else(|| cloud_provider_api_key(&data_directory))
+                    .or_else(cloud_provider_api_key)
                 {
                     match provider.as_str() {
                         "openai" => {
@@ -466,105 +466,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[cfg(feature = "native-runtime")]
-fn cloud_provider_api_key(data_directory: &PathBuf) -> Option<(String, String)> {
+fn cloud_provider_api_key() -> Option<(String, String)> {
     let provider = env::var("PLUSHPAL_CLOUD_LLM_PROVIDER")
         .ok()
         .map(|value| value.trim().to_ascii_lowercase())
         .filter(|value| matches!(value.as_str(), "gemini" | "openai"))
         .unwrap_or_else(|| "gemini".to_owned());
     match provider.as_str() {
-        "openai" => provider_api_key(
-            "openai",
-            "PLUSHPAL_OPENAI_API_KEY",
-            "plushpal-openai-api-key-v1",
-            data_directory,
-        )
-        .map(|key| ("openai".to_owned(), key)),
-        _ => provider_api_key(
-            "gemini",
-            "PLUSHPAL_GEMINI_API_KEY",
-            "plushpal-gemini-api-key-v1",
-            data_directory,
-        )
-        .map(|key| ("gemini".to_owned(), key)),
+        "openai" => {
+            provider_api_key("PLUSHPAL_OPENAI_API_KEY").map(|key| ("openai".to_owned(), key))
+        }
+        _ => provider_api_key("PLUSHPAL_GEMINI_API_KEY").map(|key| ("gemini".to_owned(), key)),
     }
 }
 
 #[cfg(feature = "native-runtime")]
-fn provider_api_key(
-    provider: &str,
-    env_name: &str,
-    key_ref: &str,
-    data_directory: &PathBuf,
-) -> Option<String> {
+fn provider_api_key(env_name: &str) -> Option<String> {
     if let Ok(value) = env::var(env_name) {
         let trimmed = value.trim();
         if !trimmed.is_empty() {
             return Some(trimmed.to_owned());
         }
     }
-    if !env_flag_enabled("PLUSHPAL_ENABLE_MAC_KEYCHAIN_PROVIDER")
-        && !(provider == "gemini" && env_flag_enabled("PLUSHPAL_ENABLE_MAC_KEYCHAIN_GEMINI"))
-    {
-        return None;
-    }
-    use plushpal_encrypted_storage::{KeyVault, SecretRef};
-    use plushpal_platform_key_vault::PlatformKeyVault;
-
-    let vault = PlatformKeyVault;
-    let secret_ref = SecretRef(key_ref.to_owned());
-    if let Some(secret) = vault.load(&secret_ref) {
-        if let Ok(value) = std::str::from_utf8(secret.expose()) {
-            let trimmed = value.trim();
-            if !trimmed.is_empty() {
-                return Some(trimmed.to_owned());
-            }
-        }
-    }
-
-    if provider == "gemini" {
-        migrate_legacy_gemini_api_key(data_directory, key_ref)
-    } else {
-        None
-    }
-}
-
-#[cfg(feature = "native-runtime")]
-fn env_flag_enabled(name: &str) -> bool {
-    env::var(name)
-        .map(|value| {
-            matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(false)
-}
-
-#[cfg(feature = "native-runtime")]
-fn migrate_legacy_gemini_api_key(data_directory: &PathBuf, key_ref: &str) -> Option<String> {
-    use plushpal_platform_key_vault::PlatformKeyVault;
-
-    let key_path = data_directory.join("secrets/gemini_api_key");
-    let value = std::fs::read_to_string(&key_path).ok()?;
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        let _ = std::fs::remove_file(&key_path);
-        return None;
-    }
-    let mut vault = PlatformKeyVault;
-    if vault
-        .store_secret(key_ref, trimmed.as_bytes().to_vec())
-        .is_ok()
-    {
-        let _ = std::fs::remove_file(&key_path);
-        if let Some(parent) = key_path.parent() {
-            let _ = std::fs::remove_dir(parent);
-        }
-        Some(trimmed.to_owned())
-    } else {
-        None
-    }
+    None
 }
 
 #[cfg(feature = "native-runtime")]

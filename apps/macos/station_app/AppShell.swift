@@ -328,7 +328,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         setupOutput.removeAll()
         updateServiceStatuses(
             storage: "● App storage: ready in \(applicationSupportDirectory().path)",
-            reasoning: "○ Reasoning engine: verifying local model or Gemini key",
+            reasoning: "○ Reasoning engine: verifying local model or Cloud LLM key",
             voice: "○ Voice engine: verifying LuxTTS",
             stt: "○ Speech-to-text fallback: checking",
             host: "○ Local service: waiting",
@@ -692,7 +692,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             "PLUSHPAL_PORT": "0",
             "PLUSHPAL_RUNTIME_MODE": selectedRuntimeMode(),
             "PLUSHPAL_CLOUD_LLM_PROVIDER": selectedCloudLlmProvider(),
-            "PLUSHPAL_ENABLE_MAC_KEYCHAIN_PROVIDER": "1",
         ]
         if let lanAddress = preferredLanIPv4Address() {
             extra["PLUSHPAL_ENABLE_LAN"] = "1"
@@ -1043,21 +1042,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
         let input = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 520, height: 24))
         input.placeholderString = "Paste provider API key"
+        let pinInput = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 180, height: 24))
+        pinInput.placeholderString = "Parent PIN"
 
         let stack = NSStackView(views: [
             NSTextField(labelWithString: "Provider"),
             providerPopup,
             NSTextField(labelWithString: "API key"),
             input,
+            NSTextField(labelWithString: "Parent PIN"),
+            pinInput,
         ])
         stack.orientation = .vertical
         stack.spacing = 8
         stack.alignment = .leading
-        stack.setFrameSize(NSSize(width: 520, height: 100))
+        stack.setFrameSize(NSSize(width: 520, height: 150))
 
         let alert = NSAlert()
         alert.messageText = "Configure Cloud LLM key"
-        alert.informativeText = "Choose Gemini or OpenAI. The key is stored only on this Mac in the macOS Keychain. The local service restarts after saving."
+        alert.informativeText = "Choose Gemini or OpenAI. The key is stored in the Hub encrypted SQLCipher database and used only by the local Hub."
         alert.accessoryView = stack
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
@@ -1067,15 +1070,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let provider = cloudLlmProviderValue(providerPopup.selectedItem?.title)
         let key = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pin = pinInput.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { return }
+        guard !pin.isEmpty else { return }
         do {
-            try saveCloudLlmKeyToKeychain(provider: provider, key: key)
+            try saveCloudLlmKeyToHub(provider: provider, key: key, pin: pin)
             UserDefaults.standard.set(provider, forKey: "PlushBuddyCloudLlmProvider")
-            if provider == "gemini" {
-                removeLegacyGeminiKeyFile()
+            removeLegacyGeminiKeyFile()
+            appendLog("app-shell.log", "\(cloudLlmProviderDisplayName(provider)) key saved to encrypted Hub database")
+            if let hostUrl {
+                waitForStationHealth(hostUrl)
             }
-            appendLog("app-shell.log", "\(cloudLlmProviderDisplayName(provider)) key saved to macOS Keychain")
-            retryStartup()
         } catch {
             update(.failed("Could not save Cloud LLM key: \(error.localizedDescription)"))
         }
@@ -1163,41 +1168,138 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         provider == "openai" ? "OpenAI" : "Gemini"
     }
 
-    private func cloudLlmKeyRef(provider: String) -> String {
-        switch provider {
-        case "openai":
-            return "plushpal-openai-api-key-v1"
-        default:
-            return "plushpal-gemini-api-key-v1"
-        }
-    }
-
-    private func saveCloudLlmKeyToKeychain(provider: String, key: String) throws {
-        let data = Data(key.utf8)
-        guard data.count >= 16 else {
+    private func saveCloudLlmKeyToHub(provider: String, key: String, pin: String) throws {
+        guard key.utf8.count >= 16 else {
             throw NSError(
-                domain: "PlushPalKeychain",
+                domain: "PlushBuddyStation",
                 code: 1,
                 userInfo: [NSLocalizedDescriptionKey: "\(cloudLlmProviderDisplayName(provider)) API key looks too short."]
             )
         }
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "com.plushpal.local",
-            kSecAttrAccount as String: cloudLlmKeyRef(provider: provider),
-        ]
-        SecItemDelete(query as CFDictionary)
-        var item = query
-        item[kSecValueData as String] = data
-        item[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-        let status = SecItemAdd(item as CFDictionary, nil)
-        guard status == errSecSuccess else {
+        let cookie = try stationSessionCookie()
+        let endpoint = try stationApiUrl(path: "/api/v1/provider/api-key")
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 20
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(cookie, forHTTPHeaderField: "Cookie")
+        request.setValue(try stationOrigin(), forHTTPHeaderField: "Origin")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "pin": pin,
+            "provider": provider,
+            "api_key": key,
+        ])
+
+        let result = blockingHttpStatus(request)
+        guard (200..<300).contains(result.statusCode) else {
+            let message: String
+            switch result.statusCode {
+            case 401:
+                message = "Parent PIN was incorrect or the Station session expired."
+            case 400:
+                message = "The selected provider or API key was rejected."
+            case 501:
+                message = "Encrypted Hub storage is not available."
+            default:
+                message = "Hub returned HTTP \(result.statusCode)."
+            }
             throw NSError(
-                domain: NSOSStatusErrorDomain,
-                code: Int(status),
-                userInfo: [NSLocalizedDescriptionKey: "Keychain rejected the \(cloudLlmProviderDisplayName(provider)) key."]
+                domain: "PlushBuddyStation",
+                code: result.statusCode,
+                userInfo: [NSLocalizedDescriptionKey: message]
             )
         }
+    }
+
+    private func stationApiUrl(path: String) throws -> URL {
+        guard let hostUrl else {
+            throw NSError(
+                domain: "PlushBuddyStation",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Hub is not running yet."]
+            )
+        }
+        var components = URLComponents()
+        components.scheme = hostUrl.scheme
+        components.host = hostUrl.host
+        components.port = hostUrl.port
+        components.path = path
+        guard let url = components.url else {
+            throw NSError(
+                domain: "PlushBuddyStation",
+                code: 3,
+                userInfo: [NSLocalizedDescriptionKey: "Hub URL is invalid."]
+            )
+        }
+        return url
+    }
+
+    private func stationOrigin() throws -> String {
+        guard let hostUrl,
+              let scheme = hostUrl.scheme,
+              let host = hostUrl.host else {
+            throw NSError(
+                domain: "PlushBuddyStation",
+                code: 5,
+                userInfo: [NSLocalizedDescriptionKey: "Hub origin is invalid."]
+            )
+        }
+        if let port = hostUrl.port {
+            return "\(scheme)://\(host):\(port)"
+        }
+        return "\(scheme)://\(host)"
+    }
+
+    private func stationSessionCookie() throws -> String {
+        guard let hostUrl,
+              let fragment = hostUrl.fragment,
+              let token = fragment
+                  .split(separator: "&")
+                  .compactMap({ part -> String? in
+                      let pieces = part.split(separator: "=", maxSplits: 1).map(String.init)
+                      return pieces.count == 2 && pieces[0] == "bootstrap" ? pieces[1] : nil
+                  })
+                  .first,
+              !token.isEmpty else {
+            throw NSError(
+                domain: "PlushBuddyStation",
+                code: 4,
+                userInfo: [NSLocalizedDescriptionKey: "Station pairing session is missing. Restart Station and try again."]
+            )
+        }
+        let endpoint = try stationApiUrl(path: "/api/v1/bootstrap")
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 10
+        request.setValue(token, forHTTPHeaderField: "x-plushpal-bootstrap")
+        request.setValue(try stationOrigin(), forHTTPHeaderField: "Origin")
+        let result = blockingHttpStatus(request)
+        guard (200..<300).contains(result.statusCode),
+              let setCookie = result.headers["Set-Cookie"] as? String,
+              let cookie = setCookie.split(separator: ";").first.map(String.init),
+              cookie.hasPrefix("pp_session=") else {
+            throw NSError(
+                domain: "PlushBuddyStation",
+                code: result.statusCode,
+                userInfo: [NSLocalizedDescriptionKey: "Could not open an authenticated Hub session. Restart Station and try again."]
+            )
+        }
+        return cookie
+    }
+
+    private func blockingHttpStatus(_ request: URLRequest) -> (statusCode: Int, headers: [AnyHashable: Any]) {
+        let semaphore = DispatchSemaphore(value: 0)
+        var statusCode = 0
+        var headers: [AnyHashable: Any] = [:]
+        URLSession.shared.dataTask(with: request) { _, response, _ in
+            if let response = response as? HTTPURLResponse {
+                statusCode = response.statusCode
+                headers = response.allHeaderFields
+            }
+            semaphore.signal()
+        }.resume()
+        _ = semaphore.wait(timeout: .now() + 30)
+        return (statusCode, headers)
     }
 
     private func removeLegacyGeminiKeyFile() {
@@ -1600,7 +1702,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.titleLabel.stringValue = "PlushBuddy Station is ready"
                 self.detailLabel.stringValue = conversationReady
                     ? "All required local services are healthy. Open PlushBuddy on this Mac, in a browser, or scan the Android pairing QR."
-                    : "Voice, storage, and pairing are ready. Configure Gemini/OpenAI or install a local model before starting real conversations."
+                    : "Voice, storage, and pairing are ready. Configure a Cloud LLM key or install a local model before starting real conversations."
                 self.splashView.isHidden = false
                 self.webView.isHidden = true
                 self.retryButton.isHidden = false
