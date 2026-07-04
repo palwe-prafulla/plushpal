@@ -27,6 +27,11 @@ grep -q 'PlushBuddy.app' packaging/macos/package.sh
 grep -q 'apps/macos/station_app/AppShell.swift' packaging/macos/package.sh
 grep -q 'apps/macos/client_app/AppShell.swift' packaging/macos/package.sh
 grep -q 'Contents/Resources/PlushBuddy.app' packaging/macos/package.sh
+grep -q 'PlushBuddyHubBackgroundView' apps/macos/station_app/AppShell.swift
+grep -q 'PlushBuddyLogoView' apps/macos/station_app/AppShell.swift
+grep -q 'NSScrollView' apps/macos/station_app/AppShell.swift
+grep -q 'hasVerticalScroller = true' apps/macos/station_app/AppShell.swift
+grep -q 'Theme: ' apps/macos/station_app/AppShell.swift
 
 sh -n packaging/macos/package.sh
 swiftc -typecheck -framework AppKit -framework WebKit apps/macos/client_app/AppShell.swift

@@ -18,10 +18,129 @@ private struct StartupFailure: Error {
     let message: String
 }
 
+class FlippedContentView: NSView {
+    override var isFlipped: Bool { true }
+}
+
+final class PlushBuddyHubBackgroundView: FlippedContentView {
+    private var isDarkTheme = false
+
+    func updateTheme(isDark: Bool) {
+        isDarkTheme = isDark
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let background = isDarkTheme
+            ? NSColor(calibratedRed: 0.09, green: 0.07, blue: 0.12, alpha: 1.0)
+            : NSColor(calibratedRed: 1.00, green: 0.98, blue: 0.95, alpha: 1.0)
+        background.setFill()
+        bounds.fill()
+
+        let blobs: [(NSColor, NSRect)] = [
+            (
+                NSColor(calibratedRed: 1.00, green: 0.55, blue: 0.82, alpha: isDarkTheme ? 0.20 : 0.30),
+                NSRect(x: bounds.minX - 120, y: bounds.minY - 110, width: 360, height: 360)
+            ),
+            (
+                NSColor(calibratedRed: 0.55, green: 0.36, blue: 0.96, alpha: isDarkTheme ? 0.24 : 0.22),
+                NSRect(x: bounds.maxX - 300, y: bounds.minY - 90, width: 390, height: 390)
+            ),
+            (
+                NSColor(calibratedRed: 0.22, green: 0.74, blue: 0.97, alpha: isDarkTheme ? 0.18 : 0.24),
+                NSRect(x: bounds.maxX - 250, y: bounds.maxY - 250, width: 330, height: 330)
+            ),
+            (
+                NSColor(calibratedRed: 1.00, green: 0.86, blue: 0.28, alpha: isDarkTheme ? 0.11 : 0.20),
+                NSRect(x: bounds.minX + 90, y: bounds.maxY - 210, width: 260, height: 260)
+            ),
+        ]
+
+        for (color, rect) in blobs {
+            color.setFill()
+            NSBezierPath(ovalIn: rect).fill()
+        }
+    }
+}
+
+final class PlushBuddyLogoView: NSView {
+    private var shadowColor = NSColor(calibratedRed: 0.55, green: 0.36, blue: 0.96, alpha: 0.25)
+
+    override var isFlipped: Bool { true }
+
+    func updateShadow(isDark: Bool) {
+        shadowColor = isDark
+            ? NSColor(calibratedRed: 1.0, green: 0.55, blue: 0.82, alpha: 0.20)
+            : NSColor(calibratedRed: 0.55, green: 0.36, blue: 0.96, alpha: 0.25)
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        let side = min(bounds.width, bounds.height)
+        let rect = NSRect(
+            x: bounds.midX - side / 2,
+            y: bounds.midY - side / 2,
+            width: side,
+            height: side
+        ).insetBy(dx: 3, dy: 3)
+        NSGraphicsContext.current?.saveGraphicsState()
+        let shadow = NSShadow()
+        shadow.shadowColor = shadowColor
+        shadow.shadowBlurRadius = 24
+        shadow.shadowOffset = NSSize(width: 0, height: -10)
+        shadow.set()
+        let path = NSBezierPath(roundedRect: rect, xRadius: side * 0.26, yRadius: side * 0.26)
+        let gradient = NSGradient(colors: [
+            NSColor(calibratedRed: 1.0, green: 0.55, blue: 0.82, alpha: 1.0),
+            NSColor(calibratedRed: 0.55, green: 0.36, blue: 0.96, alpha: 1.0),
+            NSColor(calibratedRed: 0.22, green: 0.74, blue: 0.97, alpha: 1.0),
+        ])
+        gradient?.draw(in: path, angle: -35)
+        NSGraphicsContext.current?.restoreGraphicsState()
+
+        let heartText = "♥" as NSString
+        let heartFont = NSFont.systemFont(ofSize: side * 0.50, weight: .heavy)
+        let heartAttributes: [NSAttributedString.Key: Any] = [
+            .font: heartFont,
+            .foregroundColor: NSColor.white,
+        ]
+        let heartSize = heartText.size(withAttributes: heartAttributes)
+        heartText.draw(
+            at: NSPoint(x: rect.midX - heartSize.width / 2, y: rect.midY - heartSize.height / 2 - side * 0.02),
+            withAttributes: heartAttributes
+        )
+
+        let badgeRect = NSRect(
+            x: rect.maxX - side * 0.34,
+            y: rect.maxY - side * 0.34,
+            width: side * 0.28,
+            height: side * 0.28
+        )
+        NSColor.white.setFill()
+        NSBezierPath(ovalIn: badgeRect).fill()
+        NSColor(calibratedRed: 0.22, green: 0.74, blue: 0.97, alpha: 1.0).setFill()
+        NSBezierPath(ovalIn: badgeRect.insetBy(dx: 4, dy: 4)).fill()
+        let sparkleText = "✦" as NSString
+        let sparkleFont = NSFont.systemFont(ofSize: side * 0.16, weight: .black)
+        let sparkleAttributes: [NSAttributedString.Key: Any] = [
+            .font: sparkleFont,
+            .foregroundColor: NSColor.white,
+        ]
+        let sparkleSize = sparkleText.size(withAttributes: sparkleAttributes)
+        sparkleText.draw(
+            at: NSPoint(x: badgeRect.midX - sparkleSize.width / 2, y: badgeRect.midY - sparkleSize.height / 2),
+            withAttributes: sparkleAttributes
+        )
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
     private var window: NSWindow!
     private var webView: WKWebView!
+    private var splashScrollView: NSScrollView!
     private var splashView: NSView!
+    private var logoView: PlushBuddyLogoView!
     private var titleLabel: NSTextField!
     private var detailLabel: NSTextField!
     private var progress: NSProgressIndicator!
@@ -144,12 +263,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         webView.translatesAutoresizingMaskIntoConstraints = false
         webView.isHidden = true
 
-        splashView = NSView()
+        splashScrollView = NSScrollView()
+        splashScrollView.translatesAutoresizingMaskIntoConstraints = false
+        splashScrollView.drawsBackground = false
+        splashScrollView.hasVerticalScroller = true
+        splashScrollView.hasHorizontalScroller = false
+        splashScrollView.autohidesScrollers = true
+        splashScrollView.horizontalScrollElasticity = .none
+        splashScrollView.borderType = .noBorder
+
+        splashView = PlushBuddyHubBackgroundView()
         splashView.translatesAutoresizingMaskIntoConstraints = false
-        splashView.wantsLayer = true
+        splashScrollView.documentView = splashView
+
+        logoView = PlushBuddyLogoView(frame: NSRect(x: 0, y: 0, width: 86, height: 86))
+        logoView.translatesAutoresizingMaskIntoConstraints = false
 
         titleLabel = NSTextField(labelWithString: "Starting PlushBuddy Hub")
-        titleLabel.font = .systemFont(ofSize: 28, weight: .semibold)
+        titleLabel.font = .systemFont(ofSize: 30, weight: .bold)
         titleLabel.alignment = .center
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
 
@@ -320,16 +451,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         mainPanel.spacing = 24
         mainPanel.translatesAutoresizingMaskIntoConstraints = false
 
-        let advancedButtonStack = NSStackView(views: [
+        let advancedFirstRow = NSStackView(views: [
             runtimeModeButton,
             retryButton,
             copyDiagnosticsButton,
+        ])
+        advancedFirstRow.orientation = .horizontal
+        advancedFirstRow.alignment = .centerY
+        advancedFirstRow.distribution = .fillEqually
+        advancedFirstRow.spacing = 10
+        advancedFirstRow.translatesAutoresizingMaskIntoConstraints = false
+
+        let advancedSecondRow = NSStackView(views: [
             openLogsButton,
             resetVoiceRuntimeButton,
             quitButton,
         ])
-        advancedButtonStack.orientation = .horizontal
-        advancedButtonStack.alignment = .centerY
+        advancedSecondRow.orientation = .horizontal
+        advancedSecondRow.alignment = .centerY
+        advancedSecondRow.distribution = .fillEqually
+        advancedSecondRow.spacing = 10
+        advancedSecondRow.translatesAutoresizingMaskIntoConstraints = false
+
+        let advancedButtonStack = NSStackView(views: [
+            advancedFirstRow,
+            advancedSecondRow,
+        ])
+        advancedButtonStack.orientation = .vertical
+        advancedButtonStack.alignment = .leading
         advancedButtonStack.distribution = .fill
         advancedButtonStack.spacing = 10
         advancedButtonStack.translatesAutoresizingMaskIntoConstraints = false
@@ -340,6 +489,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             advancedButtonStack,
         ])
 
+        splashView.addSubview(logoView)
         splashView.addSubview(titleLabel)
         splashView.addSubview(detailLabel)
         splashView.addSubview(progress)
@@ -348,7 +498,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
         let content = NSView()
         content.addSubview(webView)
-        content.addSubview(splashView)
+        content.addSubview(splashScrollView)
 
         NSLayoutConstraint.activate([
             webView.leadingAnchor.constraint(equalTo: content.leadingAnchor),
@@ -356,13 +506,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             webView.topAnchor.constraint(equalTo: content.topAnchor),
             webView.bottomAnchor.constraint(equalTo: content.bottomAnchor),
 
-            splashView.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            splashView.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            splashView.topAnchor.constraint(equalTo: content.topAnchor),
-            splashView.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+            splashScrollView.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            splashScrollView.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            splashScrollView.topAnchor.constraint(equalTo: content.topAnchor),
+            splashScrollView.bottomAnchor.constraint(equalTo: content.bottomAnchor),
 
+            splashView.leadingAnchor.constraint(equalTo: splashScrollView.contentView.leadingAnchor),
+            splashView.trailingAnchor.constraint(equalTo: splashScrollView.contentView.trailingAnchor),
+            splashView.topAnchor.constraint(equalTo: splashScrollView.contentView.topAnchor),
+            splashView.widthAnchor.constraint(equalTo: splashScrollView.contentView.widthAnchor),
+            splashView.heightAnchor.constraint(greaterThanOrEqualToConstant: 900),
+
+            logoView.centerXAnchor.constraint(equalTo: splashView.centerXAnchor),
+            logoView.topAnchor.constraint(equalTo: splashView.topAnchor, constant: 72),
+            logoView.widthAnchor.constraint(equalToConstant: 86),
+            logoView.heightAnchor.constraint(equalToConstant: 86),
             progress.centerXAnchor.constraint(equalTo: splashView.centerXAnchor),
-            progress.centerYAnchor.constraint(equalTo: splashView.centerYAnchor, constant: -220),
+            progress.topAnchor.constraint(equalTo: logoView.bottomAnchor, constant: 20),
             titleLabel.leadingAnchor.constraint(equalTo: splashView.leadingAnchor, constant: 40),
             titleLabel.trailingAnchor.constraint(equalTo: splashView.trailingAnchor, constant: -40),
             titleLabel.topAnchor.constraint(equalTo: progress.bottomAnchor, constant: 24),
@@ -375,6 +535,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             advancedPanel.leadingAnchor.constraint(equalTo: splashView.leadingAnchor, constant: 72),
             advancedPanel.trailingAnchor.constraint(equalTo: splashView.trailingAnchor, constant: -72),
             advancedPanel.topAnchor.constraint(equalTo: mainPanel.bottomAnchor, constant: 18),
+            advancedPanel.bottomAnchor.constraint(lessThanOrEqualTo: splashView.bottomAnchor, constant: -72),
             serviceStatusStack.widthAnchor.constraint(lessThanOrEqualToConstant: 520),
             retryButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 120),
             quitButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 120),
@@ -397,7 +558,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             defer: false
         )
         window.title = "PlushBuddy Hub"
-        window.minSize = NSSize(width: 900, height: 640)
+        window.minSize = NSSize(width: 760, height: 520)
         window.center()
         window.contentView = content
         applyThemePreference()
@@ -1166,22 +1327,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let appearance = window?.effectiveAppearance ?? NSApp.effectiveAppearance
         let bestMatch = appearance.bestMatch(from: [.darkAqua, .aqua])
         let isDark = bestMatch == .darkAqua
-        let background = isDark
-            ? NSColor(calibratedRed: 0.09, green: 0.07, blue: 0.12, alpha: 1.0)
-            : NSColor(calibratedRed: 1.00, green: 0.98, blue: 0.95, alpha: 1.0)
-        let panelBackground = isDark
-            ? NSColor(calibratedRed: 0.14, green: 0.10, blue: 0.19, alpha: 0.96)
-            : NSColor.white.withAlphaComponent(0.92)
-        let border = isDark
-            ? NSColor(calibratedRed: 0.55, green: 0.36, blue: 0.96, alpha: 0.32)
-            : NSColor(calibratedRed: 0.55, green: 0.36, blue: 0.96, alpha: 0.22)
-        let titleColor = isDark ? NSColor.white : NSColor(calibratedRed: 0.16, green: 0.12, blue: 0.22, alpha: 1.0)
+        let panelBackgrounds: [NSColor] = isDark
+            ? [
+                NSColor(calibratedRed: 0.14, green: 0.10, blue: 0.19, alpha: 0.94),
+                NSColor(calibratedRed: 0.10, green: 0.15, blue: 0.22, alpha: 0.94),
+                NSColor(calibratedRed: 0.16, green: 0.13, blue: 0.08, alpha: 0.94),
+            ]
+            : [
+                NSColor(calibratedRed: 1.00, green: 0.96, blue: 0.99, alpha: 0.92),
+                NSColor(calibratedRed: 0.94, green: 0.98, blue: 1.00, alpha: 0.92),
+                NSColor(calibratedRed: 1.00, green: 0.98, blue: 0.84, alpha: 0.90),
+            ]
+        let panelBorders: [NSColor] = [
+            NSColor(calibratedRed: 1.0, green: 0.55, blue: 0.82, alpha: isDark ? 0.32 : 0.34),
+            NSColor(calibratedRed: 0.22, green: 0.74, blue: 0.97, alpha: isDark ? 0.34 : 0.36),
+            NSColor(calibratedRed: 0.55, green: 0.36, blue: 0.96, alpha: isDark ? 0.32 : 0.26),
+        ]
+        let titleColor = isDark ? NSColor.white : NSColor(calibratedRed: 0.14, green: 0.10, blue: 0.18, alpha: 1.0)
         let helperColor = isDark
-            ? NSColor(calibratedRed: 0.79, green: 0.74, blue: 0.86, alpha: 1.0)
-            : NSColor(calibratedRed: 0.39, green: 0.34, blue: 0.47, alpha: 1.0)
+            ? NSColor(calibratedRed: 0.82, green: 0.82, blue: 0.90, alpha: 1.0)
+            : NSColor(calibratedRed: 0.36, green: 0.33, blue: 0.42, alpha: 1.0)
         let accent = NSColor(calibratedRed: 0.55, green: 0.36, blue: 0.96, alpha: 1.0)
 
-        splashView?.layer?.backgroundColor = background.cgColor
+        (splashView as? PlushBuddyHubBackgroundView)?.updateTheme(isDark: isDark)
+        logoView?.updateShadow(isDark: isDark)
         titleLabel?.textColor = titleColor
         detailLabel?.textColor = helperColor
         for label in sectionTitleLabels {
@@ -1193,9 +1362,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         for label in [storageStatusLabel, reasoningStatusLabel, voiceStatusLabel, sttStatusLabel, hostStatusLabel, browserStatusLabel] {
             label?.textColor = helperColor
         }
-        for panel in themedPanels {
-            panel.layer?.backgroundColor = panelBackground.cgColor
-            panel.layer?.borderColor = border.cgColor
+        for (index, panel) in themedPanels.enumerated() {
+            panel.layer?.backgroundColor = panelBackgrounds[min(index, panelBackgrounds.count - 1)].cgColor
+            panel.layer?.borderColor = panelBorders[min(index, panelBorders.count - 1)].cgColor
         }
         for button in [parentSetupButton, configureCloudLlmButton, pairAndroidButton, openBrowserButton, openInAppButton, themeModeButton] {
             button?.contentTintColor = accent
@@ -1975,7 +2144,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.detailLabel.stringValue = conversationReady
                     ? "All required local services are healthy. Set parent controls, connect a phone, or open a local client."
                     : "Voice, storage, and pairing are ready. Set or verify the parent PIN, then configure a Cloud LLM key before real conversations."
-                self.splashView.isHidden = false
+                self.splashScrollView.isHidden = false
                 self.webView.isHidden = true
                 self.retryButton.isHidden = false
                 self.quitButton.isHidden = false
@@ -1993,7 +2162,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.persistStationClientUrl(url)
             case .ready:
                 self.progress.stopAnimation(nil)
-                self.splashView.isHidden = true
+                self.splashScrollView.isHidden = true
                 self.webView.isHidden = false
                 self.retryButton.isHidden = true
                 self.quitButton.isHidden = true
@@ -2011,7 +2180,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.progress.stopAnimation(nil)
                 self.titleLabel.stringValue = "PlushBuddy Hub needs setup"
                 self.detailLabel.stringValue = message
-                self.splashView.isHidden = false
+                self.splashScrollView.isHidden = false
                 self.webView.isHidden = true
                 self.retryButton.isHidden = false
                 self.quitButton.isHidden = false
