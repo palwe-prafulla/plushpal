@@ -341,9 +341,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else if !runtime_mode.suppress_cloud_and_local_model() {
             let mut loaded_conversation = false;
             if runtime_mode.prefers_cloud() && runtime_mode.cloud_allowed() {
-                if let Some((provider, api_key)) = saved_cloud_provider
-                    .clone()
-                    .or_else(cloud_provider_api_key)
+                if let Some((provider, api_key)) =
+                    saved_cloud_provider.clone().or_else(cloud_provider_api_key)
                 {
                     match provider.as_str() {
                         "openai" => {
@@ -402,9 +401,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             if !loaded_conversation && !runtime_mode.prefers_cloud() && runtime_mode.cloud_allowed()
             {
-                if let Some((provider, api_key)) = saved_cloud_provider
-                    .clone()
-                    .or_else(cloud_provider_api_key)
+                if let Some((provider, api_key)) =
+                    saved_cloud_provider.clone().or_else(cloud_provider_api_key)
                 {
                     match provider.as_str() {
                         "openai" => {
