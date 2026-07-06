@@ -829,6 +829,7 @@ version = "0.1.0"
 dependencies = [
  "plushpal-core-domain",
  "plushpal-encrypted-storage",
+ "plushpal-policy-engine",
  "plushpal-provider-api",
  "reqwest",
  "ring",
@@ -876,12 +877,15 @@ dependencies = [
  "plushpal-character-voice",
  "plushpal-core-domain",
  "plushpal-desktop-gateway",
+ "plushpal-device-capability",
  "plushpal-encrypted-storage",
  "plushpal-llama-native-ffi",
  "plushpal-local-llm-llamacpp",
  "plushpal-model-lifecycle",
  "plushpal-parent-controls",
  "plushpal-platform-key-vault",
+ "plushpal-policy-engine",
+ "plushpal-provider-api",
  "reqwest",
  "serde",
  "serde_json",
@@ -916,6 +920,7 @@ name = "plushpal-local-llm-llamacpp"
 version = "0.1.0"
 dependencies = [
  "plushpal-core-domain",
+ "plushpal-policy-engine",
  "plushpal-provider-api",
  "serde",
  "serde_json",
@@ -965,6 +970,7 @@ name = "plushpal-policy-engine"
 version = "0.1.0"
 dependencies = [
  "plushpal-core-domain",
+ "serde",
 ]
 
 [[package]]

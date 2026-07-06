@@ -1,6 +1,6 @@
 # PlushBuddy documentation publication policy
 
-Last updated: 2026-07-02
+Last updated: 2026-07-05
 
 This repository is public. Documentation in the repo should help someone clone,
 build, run, evaluate, or understand PlushBuddy without exposing private family
@@ -16,7 +16,7 @@ These documents are intended to be published:
 - `docs/architecture/SYSTEM_DESIGN.md` — canonical current system design.
 - `docs/architecture/CODEBASE_DIRECTORY_GUIDE.md` — canonical code/directory
   map.
-- `docs/architecture/ANDROID_MACSTATION_MVP_ARCHITECTURE.md` — MVP-specific
+- `docs/architecture/HUB_CLIENT_ARCHITECTURE.md` — Hub/client MVP-specific
   architecture notes.
 - `docs/product/*` — public privacy, security, and known-limitations docs.
 - `docs/release/*` — public QA plans, release checklists, traceability, and
@@ -58,7 +58,7 @@ The public docs should describe this architecture consistently:
    and SQLCipher storage.
 5. Clients own UI, mic capture, verified local STT when available, playback, and
    minimum pairing/session identity.
-6. Voice samples do not go to Gemini/OpenAI; cloud LLM mode receives only
+6. Voice samples do not go to Gemini/OpenAI; Cloud AI mode receives only
    minimized, pseudonymized text context.
 7. Build artifacts and release bundles are generated outside the repo under
    `~/Downloads/PlushPal`, and downloadable binaries are published through

@@ -243,6 +243,15 @@ abstract interface class BackendClient {
     String? kidId,
     int? personaAgeYears,
   });
+  Future<void> renameCharacter({
+    required String pin,
+    required String currentCharacterAlias,
+    required String newCharacterAlias,
+    required List<String> characterTraits,
+    required String? parentGuidance,
+    String? kidId,
+    int? personaAgeYears,
+  });
   Future<PickedCharacterPhoto> pickCharacterPhoto();
   Future<void> saveCharacterPhoto({
     required String pin,

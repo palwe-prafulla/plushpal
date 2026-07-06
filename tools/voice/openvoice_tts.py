@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small OpenVoice V1 wrapper for PlushPal voice bakeoffs."""
+"""Small OpenVoice V1 wrapper for PlushBuddy voice bakeoffs."""
 
 from __future__ import annotations
 
@@ -98,7 +98,7 @@ def main() -> int:
             tgt_se=target_se,
             output_path=str(args.output),
             tau=args.tau,
-            message="PlushPal",
+            message="PlushBuddy",
         )
     finally:
         temp_dir.cleanup()

@@ -3,6 +3,16 @@
 use std::io::Cursor;
 
 const MIN_SIGNAL_TO_NOISE_DB: f32 = 8.0;
+const APPROVED_CHARACTER_TRAITS: [&str; 7] = [
+    "cheerful",
+    "curious",
+    "gentle",
+    "patient",
+    "playful",
+    "calm",
+    "encouraging",
+];
+const MAX_PARENT_GUIDANCE_CHARS: usize = 2_000;
 pub const MIN_VOICE_SAMPLE_MILLISECONDS: u32 = 15_000;
 pub const MAX_VOICE_SAMPLE_MILLISECONDS: u32 = 180_000;
 const MAX_VOICE_SAMPLE_BYTES: usize = 24 * 1024 * 1024;
@@ -44,26 +54,17 @@ impl CharacterProfile {
         {
             return Err(ProfileError::InvalidAlias);
         }
-        if traits.len() > 5 {
+        if traits.len() > APPROVED_CHARACTER_TRAITS.len() {
             return Err(ProfileError::TooManyTraits);
         }
-        let approved = [
-            "cheerful",
-            "curious",
-            "gentle",
-            "patient",
-            "playful",
-            "calm",
-            "encouraging",
-        ];
         if traits
             .iter()
-            .any(|value| !approved.contains(&value.as_str()))
+            .any(|value| !APPROVED_CHARACTER_TRAITS.contains(&value.as_str()))
         {
             return Err(ProfileError::InvalidTrait);
         }
         if parent_guidance.as_ref().is_some_and(|value| {
-            value.chars().count() > 240
+            value.chars().count() > MAX_PARENT_GUIDANCE_CHARS
                 || ["ignore safety", "keep secrets", "ask for their address"]
                     .iter()
                     .any(|blocked| value.to_lowercase().contains(blocked))
@@ -193,11 +194,20 @@ mod tests {
     fn character_fields_are_allowlisted_and_bounded() {
         let profile = CharacterProfile::validated(
             "Teddy Bear".to_owned(),
-            vec!["gentle".to_owned(), "curious".to_owned()],
+            vec![
+                "calm".to_owned(),
+                "cheerful".to_owned(),
+                "curious".to_owned(),
+                "gentle".to_owned(),
+                "patient".to_owned(),
+                "playful".to_owned(),
+                "encouraging".to_owned(),
+            ],
             Some("Likes simple science stories.".to_owned()),
         )
         .unwrap();
         assert!(profile.enabled);
+        assert_eq!(profile.traits.len(), APPROVED_CHARACTER_TRAITS.len());
         assert_eq!(
             CharacterProfile::validated("T".to_owned(), Vec::new(), None),
             Err(ProfileError::InvalidAlias)

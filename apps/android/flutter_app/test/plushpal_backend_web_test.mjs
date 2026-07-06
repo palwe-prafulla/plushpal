@@ -22,15 +22,23 @@ function createHarness({runBootstrapScript = false} = {}) {
     characters: [],
     history: [],
   };
+  const responseHeaders = (headers = {}) => ({
+    get(name) {
+      const normalized = String(name).toLowerCase();
+      return headers[normalized] ?? headers[String(name)] ?? null;
+    },
+  });
   const jsonResponse = (body, status = 200) => ({
     ok: status >= 200 && status < 300,
     status,
+    headers: responseHeaders(),
     json: async () => body,
     text: async () => JSON.stringify(body),
   });
   const emptyResponse = (status = 204) => ({
     ok: status >= 200 && status < 300,
     status,
+    headers: responseHeaders(),
     text: async () => '',
   });
   const context = {
@@ -129,7 +137,14 @@ function createHarness({runBootstrapScript = false} = {}) {
             options.headers['X-PlushBuddy-Client-Label'],
           /^Browser on /,
         );
-        return {ok: true, status: 204, text: async () => ''};
+        return {
+          ok: true,
+          status: 204,
+          headers: responseHeaders({
+            'x-plushbuddy-hub-id': 'hub-123e4567-e89b-12d3-a456-426614174999',
+          }),
+          text: async () => '',
+        };
       }
       if (!String(url).startsWith('https://')) {
         assert.match(
@@ -137,11 +152,17 @@ function createHarness({runBootstrapScript = false} = {}) {
             options.headers?.['x-plushbuddy-client-id'],
           /^web-[a-f0-9-]{36}$/,
         );
+        assert.equal(
+          options.headers?.['X-PlushBuddy-Hub-Id'] ??
+            options.headers?.['x-plushbuddy-hub-id'],
+          'hub-123e4567-e89b-12d3-a456-426614174999',
+        );
       }
       if (String(url) === '/api/v1/status') {
         return {
           ok: true,
           status: 200,
+          headers: responseHeaders(),
           json: async () => ({
             model_ready: true,
             model_id: server.providerConfigured ? `${server.provider}-cloud` : 'hub-runtime',
@@ -243,6 +264,19 @@ function createHarness({runBootstrapScript = false} = {}) {
         ];
         return emptyResponse();
       }
+      if (String(url) === '/api/v1/characters/rename') {
+        const body = JSON.parse(options.body);
+        const existing = server.characters.find(
+          (character) => character.alias === body.current_character_alias,
+        );
+        assert.ok(existing);
+        existing.alias = body.new_character_alias;
+        existing.traits = body.character_traits;
+        existing.parent_guidance = body.parent_guidance;
+        existing.kid_id = body.kid_id;
+        existing.persona_age_years = body.persona_age_years;
+        return emptyResponse();
+      }
       if (String(url) === '/api/v1/history/list') {
         return jsonResponse(server.history);
       }
@@ -334,6 +368,20 @@ test('browser backend uses Hub APIs and does not persist app data locally', asyn
   );
   const characters = JSON.parse(await context.plushpalCharacters());
   assert.equal(characters[0].voice.approved, true);
+  await context.plushpalRenameCharacter(
+    '1234',
+    'Buddy',
+    'Sheru',
+    ['playful', 'gentle'],
+    'Sheru loves puppy sounds.',
+    kids[0].id,
+    2,
+  );
+  const renamedCharacters = JSON.parse(await context.plushpalCharacters());
+  assert.equal(renamedCharacters[0].alias, 'Sheru');
+  assert.ok(
+    requests.some((request) => request.url === '/api/v1/characters/rename'),
+  );
 
   await context.plushpalConfigureApiKey('1234', 'gemini', 'test-key');
   status = JSON.parse(await context.plushpalModelStatus());
@@ -372,7 +420,7 @@ test('browser backend uses Hub APIs and does not persist app data locally', asyn
   assert.equal(sessionStorage.get('plushbuddy-web-reasoning-session-v1'), undefined);
 });
 
-test('browser bootstrap script exchanges Station token before backend status checks', async () => {
+test('browser bootstrap script exchanges Hub token before backend status checks', async () => {
   const {context, requests} = createHarness({runBootstrapScript: true});
 
   assert.equal(await context.__plushpalStationBootstrapReady, 'ready');

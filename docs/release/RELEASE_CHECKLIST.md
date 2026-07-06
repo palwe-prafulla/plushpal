@@ -14,8 +14,9 @@ For a distribution-signed macOS build, set both `PLUSHPAL_CODESIGN_IDENTITY` and
 - [x] `.gitignore` excludes common secrets, private samples, generated voice/model artifacts, venvs, build outputs, and QA results.
 - [x] `make public-artifacts` builds from an external workspace and writes artifacts under `~/Downloads/PlushPal/artifacts`.
 - [x] Local QA writes evidence under `~/Downloads/PlushPal/test-results`.
-- [x] June 25, 2026 QA pass covers public artifact build, unit/local quality gate, Hub/MacStation, LuxTTS voice E2E, packaged Hub/MacStation, browser, Mac client, Android real device, Android pairing, and iPhone simulator launch.
-- [ ] Live Gemini/OpenAI UI conversation should be rerun before tagging a hosted release artifact, using a fresh local provider key that is not committed.
+- [x] June 25, 2026 QA pass covers public artifact build, unit/local quality gate, Hub backend, LuxTTS voice E2E, packaged Hub, browser, Mac client, Android real device, Android pairing, and iPhone simulator launch.
+- [x] July 5, 2026 local smoke verified Hub Cloud AI mode with stored Gemini key and Android child-mode typed chat through Hub/Gemini.
+- [ ] Before a hosted release tag, rerun the full voice-sample E2E in both Local AI and Cloud AI modes with private local samples.
 
 ## Build and provenance
 
@@ -27,7 +28,7 @@ For a distribution-signed macOS build, set both `PLUSHPAL_CODESIGN_IDENTITY` and
 
 ## Privacy and security
 
-- [ ] Hub-owned Gemini/OpenAI reasoning succeeds with parent-provided API key in cloud LLM mode; local-first mode performs no cloud LLM calls.
+- [ ] Hub-owned Gemini/OpenAI reasoning succeeds with parent-provided API key in Cloud AI mode; Local AI mode performs no Cloud AI calls.
 - [ ] Network capture contains only approved cloud-provider traffic plus local Hub traffic; voice samples never leave the LAN/client trust boundary.
 - [ ] API keys never appear in logs, URLs, databases, crash reports, UI state snapshots, or WebSocket events.
 - [ ] SQLCipher wrong-key, deletion, retention, and uninstall tests pass.

@@ -1,16 +1,27 @@
 # PlushBuddy Browser Client
 
-The browser app is a first-class PlushBuddy client, parallel to the Android app.
-It is served by MacStation, but it does not make MacStation the app backend.
+The browser app is a local PlushBuddy client for the same computer running
+**PlushBuddy Hub**. It uses the same shared Flutter UI as Android, iPhone, and
+the Mac client, but it is intentionally **not** a remote LAN browser product in
+the current architecture.
 
-Browser ownership:
+Current browser ownership:
 
-- parent setup, kids, characters, API key, and conversation history live in the browser;
-- Gemini/OpenAI reasoning is called directly from the browser;
-- MacStation is used only for voice profile creation, voice preview/approval, and text-to-speech WAV generation;
-- the browser session is bootstrapped from a MacStation URL containing `#bootstrap=...`, which is exchanged for a local Station session cookie.
+- durable parent setup, kids, characters, Cloud AI provider keys, conversation
+  history, voice profile metadata, and guardrails live in PlushBuddy Hub;
+- the browser stores only local bootstrap/session identity plus normal browser
+  runtime state;
+- Gemini/OpenAI reasoning is called by Hub after redaction and guardrails, not
+  directly by the browser;
+- Local AI is also run by Hub through the configured local model;
+- voice enrollment, preview/approval, and text-to-speech WAV generation are Hub
+  APIs backed by LuxTTS;
+- the browser session is opened from Hub on `localhost` and bootstrapped from a
+  Hub URL containing `#bootstrap=...`, which is exchanged for a local Hub
+  session cookie.
 
-Current browser storage note: browser data is kept in localStorage. Android uses encrypted native storage; browser-side encryption is a future hardening item.
+Remote browsers from phones or other PCs are out of scope for now. Use native
+Android/iPhone/Mac clients for other devices.
 
 The UI is built from the shared Flutter app in:
 
@@ -24,7 +35,8 @@ Flutter expects the web shell to live inside the Flutter project:
 apps/android/flutter_app/web/
 ```
 
-When the browser app is built, the generated Flutter web bundle is copied into the MacStation host:
+When the browser app is built, the generated Flutter web bundle is copied into
+the Hub host:
 
 ```text
 apps/station/macstation_host/assets/flutter_web/

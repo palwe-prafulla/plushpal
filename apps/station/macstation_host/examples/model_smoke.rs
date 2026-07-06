@@ -29,6 +29,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             character_alias: "Teddy".to_owned(),
             text: "Why is the sky blue? Please answer in two short sentences.".to_owned(),
             parent_guidance: None,
+            child_age_years: Some(6),
+            child_age_months: None,
+            character_play_age_years: Some(3),
         })
     })
     .await?
@@ -42,6 +45,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             character_alias: "Teddy".to_owned(),
             text: "Tell me a very long story with as much detail as possible.".to_owned(),
             parent_guidance: None,
+            child_age_years: Some(9),
+            child_age_months: None,
+            character_play_age_years: Some(4),
         })
     });
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;

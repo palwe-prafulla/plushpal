@@ -9,11 +9,11 @@ redistributing production builds.
 | Component | How it is used | Notes |
 |---|---|---|
 | Flutter / Dart | Shared Android, iPhone, browser UI | Managed through Flutter tooling. |
-| Rust crates | MacStation host, shared domain/provider/storage logic | Managed through Cargo. |
-| Axum / Tokio | Local MacStation HTTP/WebSocket host | Managed through Cargo. |
+| Rust crates | PlushBuddy Hub host, shared domain/provider/storage logic | Managed through Cargo. |
+| Axum / Tokio | Local PlushBuddy Hub HTTP/WebSocket host | Managed through Cargo. |
 | llama.cpp | Pinned submodule for local reasoning experiments/fallbacks | Keep upstream license files with the submodule. |
 | LuxTTS | Downloaded by public build/setup scripts for local voice synthesis | Downloaded under `~/Downloads/PlushPal/deps` or bundled into local artifacts. Review upstream license/model card before redistribution. |
-| LinaCodec / torch / torchaudio / transformers / onnxruntime / librosa and related Python packages | LuxTTS runtime dependencies | Installed into the packaged local Station runtime during macOS artifact creation. |
+| LinaCodec / torch / torchaudio / transformers / onnxruntime / librosa and related Python packages | LuxTTS runtime dependencies | Installed into the packaged local PlushBuddy Hub runtime during macOS artifact creation. |
 | Gemini API | Optional parent-configured cloud reasoning provider | Users provide their own key and accept provider terms. |
 | OpenAI API | Optional parent-configured cloud reasoning provider | Users provide their own key and accept provider terms. |
 

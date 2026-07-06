@@ -82,11 +82,11 @@ setup-luxtts-voice:
 
 run-demo:
 	PLUSHPAL_RUNTIME_MODE=demo \
-	cargo run --release -p plushpal-desktop-host --features native-runtime
+	cargo run --release -p plushpal-desktop-host --bin plushpal-desktop-host --features native-runtime
 
 run-mac-demo:
 	PLUSHPAL_RUNTIME_MODE=demo \
-	cargo run --release -p plushpal-desktop-host --features native-runtime
+	cargo run --release -p plushpal-desktop-host --bin plushpal-desktop-host --features native-runtime
 
 run-mac-luxtts:
 	PLUSHPAL_VOICE_ENGINE=luxtts \
@@ -96,7 +96,7 @@ run-mac-luxtts:
 	PLUSHPAL_LUXTTS_SPEED=0.88 \
 	PLUSHPAL_LUXTTS_SEED=11 \
 	PLUSHPAL_LUXTTS_REF_DURATION=180 \
-	cargo run --release -p plushpal-desktop-host --features native-runtime
+	cargo run --release -p plushpal-desktop-host --bin plushpal-desktop-host --features native-runtime
 
 verify-release-local:
 	sh packaging/verify-release-local.sh

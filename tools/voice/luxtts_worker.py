@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Persistent LuxTTS worker for PlushPal Station.
+"""Persistent LuxTTS worker for PlushBuddy Hub.
 
 The one-shot ``luxtts_tts.py`` wrapper is intentionally simple, but it pays the
 Python startup, model load, and prompt-encoding costs on every synthesis.  This
@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import sys
 import traceback
@@ -22,11 +23,13 @@ PROTOCOL_STDOUT = sys.stdout
 sys.stdout = sys.stderr
 
 ROOT = Path(__file__).resolve().parents[2]
+ENV_LUX_ROOT = Path(value).expanduser() if (value := os.environ.get("PLUSHPAL_LUXTTS_SOURCE_DIR")) else None
 LUX_ROOT_CANDIDATES = [
+    ENV_LUX_ROOT,
     ROOT / "third_party" / "LuxTTS",
     Path(__file__).resolve().parents[1] / "third_party" / "LuxTTS",
 ]
-LUX_ROOT = next((path for path in LUX_ROOT_CANDIDATES if path.is_dir()), LUX_ROOT_CANDIDATES[0])
+LUX_ROOT = next((path for path in LUX_ROOT_CANDIDATES if path and path.is_dir()), ROOT / "third_party" / "LuxTTS")
 
 
 def _send(payload: dict[str, Any]) -> None:

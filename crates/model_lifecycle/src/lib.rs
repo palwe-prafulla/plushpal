@@ -225,15 +225,55 @@ pub fn verify_signed_manifest(
     Ok(manifest)
 }
 
-pub fn bundled_private_beta_manifest() -> Result<ModelManifest, LifecycleError> {
-    let document = include_bytes!("../../../models/manifests/qwen3-1.7b-q8-v1.json");
-    let signature = decode_hex::<64>(include_str!(
-        "../../../models/manifests/qwen3-1.7b-q8-v1.sig.hex"
-    ))?;
+fn trusted_manifest_from_bytes(
+    document: &[u8],
+    signature_hex: &str,
+) -> Result<ModelManifest, LifecycleError> {
+    let signature = decode_hex::<64>(signature_hex)?;
     let public_key = decode_hex::<32>(include_str!(
         "../../../models/trust/private_beta_ed25519_public_key.hex"
     ))?;
     verify_signed_manifest(document, &signature, &public_key)
+}
+
+pub fn bundled_private_beta_manifest() -> Result<ModelManifest, LifecycleError> {
+    trusted_private_beta_manifest(Some("gemma-4-e4b-q4"))
+}
+
+pub fn trusted_private_beta_manifests() -> Result<Vec<ModelManifest>, LifecycleError> {
+    Ok(vec![
+        trusted_manifest_from_bytes(
+            include_bytes!("../../../models/manifests/gemma-4-e4b-q4-v1.json"),
+            include_str!("../../../models/manifests/gemma-4-e4b-q4-v1.sig.hex"),
+        )?,
+        trusted_manifest_from_bytes(
+            include_bytes!("../../../models/manifests/gemma-4-12b-q4-v1.json"),
+            include_str!("../../../models/manifests/gemma-4-12b-q4-v1.sig.hex"),
+        )?,
+        trusted_manifest_from_bytes(
+            include_bytes!("../../../models/manifests/gemma-4-26b-a4b-q4-v1.json"),
+            include_str!("../../../models/manifests/gemma-4-26b-a4b-q4-v1.sig.hex"),
+        )?,
+    ])
+}
+
+pub fn trusted_private_beta_manifest(
+    model_id: Option<&str>,
+) -> Result<ModelManifest, LifecycleError> {
+    let manifests = trusted_private_beta_manifests()?;
+    if let Some(model_id) = model_id {
+        if let Some(manifest) = manifests
+            .iter()
+            .find(|manifest| manifest.model_id == model_id)
+            .cloned()
+        {
+            return Ok(manifest);
+        }
+    }
+    manifests
+        .into_iter()
+        .next()
+        .ok_or(LifecycleError::InvalidManifest)
 }
 
 pub fn verify_model_artifact(
@@ -546,13 +586,13 @@ mod tests {
 
     fn manifest(version: &str) -> ModelManifest {
         ModelManifest {
-            model_id: "qwen3-1.7b-q8".to_owned(),
+            model_id: "gemma-4-e4b-q4".to_owned(),
             version: version.to_owned(),
             engine_compatibility: "llama.cpp-1".to_owned(),
             download_size_bytes: 100,
             installed_size_bytes: 120,
             sha256_hex: "a".repeat(64),
-            license_id: "Apache-2.0".to_owned(),
+            license_id: "Gemma Terms of Use".to_owned(),
             source_url: "https://models.example.invalid/model.gguf".to_owned(),
         }
     }
@@ -640,12 +680,12 @@ mod tests {
     #[test]
     fn signed_manifest_is_verified_before_it_can_drive_downloads() {
         let document = br#"{
-            "model_id":"qwen3-1.7b-q8","version":"1",
+            "model_id":"gemma-4-e4b-q4","version":"1",
             "engine_compatibility":"llama.cpp-1",
             "download_size_bytes":100,"installed_size_bytes":100,
             "sha256_hex":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "license_id":"Apache-2.0",
-            "source_url":"https://huggingface.co/Qwen/model/resolve/main/model.gguf"
+            "license_id":"Gemma Terms of Use",
+            "source_url":"https://huggingface.co/google/model/resolve/main/model.gguf"
         }"#;
         let key_pair = ring::signature::Ed25519KeyPair::from_seed_unchecked(&[0x24; 32]).unwrap();
         let signature = key_pair.sign(document);
@@ -653,7 +693,7 @@ mod tests {
             verify_signed_manifest(document, signature.as_ref(), key_pair.public_key().as_ref())
                 .unwrap()
                 .model_id,
-            "qwen3-1.7b-q8"
+            "gemma-4-e4b-q4"
         );
         let mut tampered = document.to_vec();
         tampered.push(b' ');
@@ -686,13 +726,28 @@ mod tests {
     #[test]
     fn bundled_private_beta_manifest_has_a_valid_signature_and_exact_artifact() {
         let manifest = bundled_private_beta_manifest().unwrap();
-        assert_eq!(manifest.model_id, "qwen3-1.7b-q8");
-        assert_eq!(manifest.download_size_bytes, 1_834_426_016);
+        assert_eq!(manifest.model_id, "gemma-4-e4b-q4");
+        assert_eq!(manifest.download_size_bytes, 5_154_939_136);
         assert_eq!(
             manifest.sha256_hex,
-            "061b54daade076b5d3362dac252678d17da8c68f07560be70818cace6590cb1a"
+            "e8b6a059ba86947a44ace84d6e5679795bc41862c25c30513142588f0e9dba1d"
         );
-        assert_eq!(manifest.license_id, "Apache-2.0");
+        assert_eq!(manifest.license_id, "Gemma Terms of Use");
+    }
+
+    #[test]
+    fn trusted_manifest_selection_uses_requested_or_safe_fallback() {
+        let bundled = bundled_private_beta_manifest().unwrap();
+        let requested = trusted_private_beta_manifest(Some("gemma-4-26b-a4b-q4")).unwrap();
+        let fallback = trusted_private_beta_manifest(Some("unknown-local-model")).unwrap();
+
+        assert_eq!(requested.model_id, "gemma-4-26b-a4b-q4");
+        assert_eq!(fallback.model_id, bundled.model_id);
+        let manifests = trusted_private_beta_manifests().unwrap();
+        assert_eq!(manifests.len(), 3);
+        assert!(manifests
+            .iter()
+            .any(|manifest| manifest.model_id == bundled.model_id));
     }
 
     #[test]

@@ -7,11 +7,6 @@ ARCHIVE_TIMESTAMP=${PLUSHPAL_ARCHIVE_TIMESTAMP:-202601010000}
 ARTIFACTS_ROOT=${PLUSHPAL_ARTIFACTS_DIR:-"$ROOT/dist"}
 BUILD_ROOT=${PLUSHPAL_BUILD_DIR:-"$ROOT/build"}
 CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-"$ROOT/target"}
-DEFAULT_LUXTTS_SOURCE_DIR="$HOME/Downloads/PlushPal/deps/LuxTTS"
-if [ ! -f "$DEFAULT_LUXTTS_SOURCE_DIR/requirements.txt" ]; then
-  DEFAULT_LUXTTS_SOURCE_DIR="$ROOT/third_party/LuxTTS"
-fi
-LUXTTS_SOURCE_DIR=${PLUSHPAL_LUXTTS_SOURCE_DIR:-"$DEFAULT_LUXTTS_SOURCE_DIR"}
 OUTPUT="$ARTIFACTS_ROOT/macos"
 STATION_APP="$OUTPUT/PlushBuddy Hub.app"
 CLIENT_APP="$OUTPUT/PlushBuddy.app"
@@ -62,79 +57,8 @@ cp tools/stt/whisper_transcribe.py "$STATION_APP/Contents/Resources/stt/whisper_
 chmod +x "$STATION_APP/Contents/Resources/stt/whisper_transcribe.py"
 cp packaging/macos/install_chatterbox_runtime.sh "$STATION_APP/Contents/Resources/install_chatterbox_runtime.sh"
 cp packaging/macos/install_luxtts_runtime.sh "$STATION_APP/Contents/Resources/install_luxtts_runtime.sh"
-mkdir -p "$STATION_APP/Contents/Resources/third_party"
-if [ ! -f "$LUXTTS_SOURCE_DIR/requirements.txt" ]; then
-  echo "LuxTTS source was not found at $LUXTTS_SOURCE_DIR." >&2
-  echo "Run make public-artifacts, or set PLUSHPAL_LUXTTS_SOURCE_DIR to a LuxTTS checkout." >&2
-  exit 4
-fi
-rsync -a --delete "$LUXTTS_SOURCE_DIR/" "$STATION_APP/Contents/Resources/third_party/LuxTTS/"
 cp -R "$CLIENT_APP" "$STATION_APP/Contents/Resources/PlushBuddy.app"
-PYTHON_RUNTIME_DIR=${PLUSHPAL_PYTHON_RUNTIME_DIR:-"$HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/python"}
-if [ -d "$PYTHON_RUNTIME_DIR" ] && [ -x "$PYTHON_RUNTIME_DIR/bin/python3" ]; then
-  "$PYTHON_RUNTIME_DIR/bin/python3" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)'
-  rsync -a --delete "$PYTHON_RUNTIME_DIR/" "$STATION_APP/Contents/Resources/python/"
-  find "$STATION_APP/Contents/Resources/python" -type l | while IFS= read -r link; do
-    target=$(readlink "$link")
-    case "$target" in
-      /*)
-        sibling="$(dirname "$link")/$(basename "$target")"
-        if [ -e "$sibling" ]; then
-          rm "$link"
-          ln -s "$(basename "$target")" "$link"
-        else
-          rm "$link"
-        fi
-        ;;
-    esac
-  done
-  "$STATION_APP/Contents/Resources/python/bin/python3" -m pip install --upgrade pip wheel setuptools
-  "$STATION_APP/Contents/Resources/python/bin/python3" -m pip install "numpy>=1.26.0"
-  "$STATION_APP/Contents/Resources/python/bin/python3" -m pip install -r "$STATION_APP/Contents/Resources/third_party/LuxTTS/requirements.txt"
-  "$STATION_APP/Contents/Resources/python/bin/python3" -m pip install "setuptools<81"
-  mkdir -p "$BUILD_ROOT/python-cache/numba"
-  BUNDLED_HF_HOME="$STATION_APP/Contents/Resources/model-cache/huggingface"
-  BUNDLED_HF_HUB="$BUNDLED_HF_HOME/hub"
-  mkdir -p "$BUNDLED_HF_HUB"
-  copy_hf_model_cache() {
-    source_dir=$1
-    destination_name=$2
-    if [ -d "$source_dir/snapshots" ] && [ -d "$source_dir/blobs" ]; then
-      mkdir -p "$BUNDLED_HF_HUB/$destination_name"
-      rsync -a --delete "$source_dir/" "$BUNDLED_HF_HUB/$destination_name/"
-      return 0
-    fi
-    return 1
-  }
-  LUXTTS_CACHE_SOURCE=${PLUSHPAL_LUXTTS_HF_CACHE_SOURCE:-"$HOME/.cache/huggingface/hub/models--YatharthS--LuxTTS"}
-  WHISPER_CACHE_SOURCE=${PLUSHPAL_WHISPER_HF_CACHE_SOURCE:-"$HOME/.cache/huggingface/hub/models--openai--whisper-base"}
-  MODEL_CACHE_SEEDED=0
-  if copy_hf_model_cache "$LUXTTS_CACHE_SOURCE" "models--YatharthS--LuxTTS" &&
-    copy_hf_model_cache "$WHISPER_CACHE_SOURCE" "models--openai--whisper-base"; then
-    MODEL_CACHE_SEEDED=1
-  fi
-  if [ "$MODEL_CACHE_SEEDED" -eq 1 ]; then
-    PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 \
-      NUMBA_CACHE_DIR="$BUILD_ROOT/python-cache/numba" \
-      HF_HOME="$BUNDLED_HF_HOME" \
-      HF_HUB_OFFLINE=1 \
-      TRANSFORMERS_OFFLINE=1 \
-      HF_HUB_DISABLE_TELEMETRY=1 \
-      "$STATION_APP/Contents/Resources/python/bin/python3" \
-      "$STATION_APP/Contents/Resources/voice/luxtts_tts.py" \
-      --healthcheck
-  else
-    PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 \
-      NUMBA_CACHE_DIR="$BUILD_ROOT/python-cache/numba" \
-      HF_HOME="$BUNDLED_HF_HOME" \
-      HF_HUB_DISABLE_TELEMETRY=1 \
-      "$STATION_APP/Contents/Resources/python/bin/python3" \
-      "$STATION_APP/Contents/Resources/voice/luxtts_tts.py" \
-      --healthcheck
-  fi
-else
-  echo "warning: no bundled Python 3.12 runtime found; app setup will require Python 3.12 on the user's Mac." >&2
-fi
+echo "Building a thin Hub bundle: LuxTTS source, Python dependencies, Hugging Face caches, and local AI models are prepared lazily in user application support."
 sed "s/@VERSION@/$VERSION/g" packaging/macos/StationInfo.plist.in > "$STATION_APP/Contents/Info.plist"
 
 TEAM_ID=${PLUSHPAL_TEAM_ID:-LOCAL}
@@ -165,7 +89,7 @@ else
   codesign --force --sign - "$STATION_APP"
 fi
 
-rm -f "$OUTPUT/PlushBuddy-$VERSION-macos.zip"
+rm -f "$OUTPUT"/PlushBuddy-*-macos.zip "$OUTPUT"/PlushBuddy-*-macos.dmg
 (cd "$OUTPUT" && COPYFILE_DISABLE=1 zip -X -q -y -r "PlushBuddy-$VERSION-macos.zip" "PlushBuddy Hub.app" PlushBuddy.app)
 
 if command -v hdiutil >/dev/null 2>&1; then

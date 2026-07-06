@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate next-candidate voice bakeoff artifacts for PlushPal.
+"""Generate next-candidate voice bakeoff artifacts for PlushBuddy.
 
 Compares non-Chatterbox candidates against the same toy mid-window references
 that sounded best in the focused Chatterbox run.

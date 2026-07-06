@@ -29,7 +29,7 @@ Run PlushPal with:
   PLUSHPAL_CHATTERBOX_PYTHON="$VENV_DIR/bin/python" \\
   PLUSHPAL_CHATTERBOX_SCRIPT="$ROOT_DIR/tools/voice/chatterbox_tts.py" \\
   PLUSHPAL_CHATTERBOX_ENGINE=standard \\
-  cargo run --release -p plushpal-desktop-host --features native-runtime
+  cargo run --release -p plushpal-desktop-host --bin plushpal-desktop-host --features native-runtime
 
 Notes:
 - First synthesis may download Chatterbox model weights into your local Hugging Face cache.

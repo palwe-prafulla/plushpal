@@ -822,7 +822,7 @@ impl SqlCipherDatabase {
         }
         self.connection
             .execute(
-                "INSERT INTO paired_clients (client_id, platform, label, created_at, last_seen_at, last_seen_ip, revoked_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT(client_id) DO UPDATE SET platform = excluded.platform, label = COALESCE(excluded.label, paired_clients.label), last_seen_at = excluded.last_seen_at, last_seen_ip = excluded.last_seen_ip",
+                "INSERT INTO paired_clients (client_id, platform, label, created_at, last_seen_at, last_seen_ip, revoked_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT(client_id) DO UPDATE SET platform = excluded.platform, label = COALESCE(excluded.label, paired_clients.label), last_seen_at = excluded.last_seen_at, last_seen_ip = excluded.last_seen_ip, revoked_at = excluded.revoked_at",
                 params![
                     record.client_id,
                     record.platform,
@@ -1845,6 +1845,10 @@ mod tests {
             .revoke_paired_client(&client.client_id, 1_200)
             .unwrap();
         assert!(database
+            .paired_client_is_revoked(&client.client_id)
+            .unwrap());
+        database.upsert_paired_client(&client).unwrap();
+        assert!(!database
             .paired_client_is_revoked(&client.client_id)
             .unwrap());
         let character = CharacterRecord {

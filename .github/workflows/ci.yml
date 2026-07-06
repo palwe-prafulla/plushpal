@@ -69,8 +69,8 @@ jobs:
           PLUSHPAL_BUILD_DIR: ${{ runner.temp }}/PlushBuddyBuild
           CARGO_TARGET_DIR: ${{ runner.temp }}/PlushBuddyBuild/cargo-target
           PLUSHPAL_LUXTTS_SOURCE_DIR: ${{ runner.temp }}/LuxTTS
-      - run: codesign --verify --deep --strict --verbose=2 "$RUNNER_TEMP/PlushBuddyArtifacts/macos/PlushBuddy Station.app"
-      - run: otool -L "$RUNNER_TEMP/PlushBuddyArtifacts/macos/PlushBuddy Station.app/Contents/MacOS/plushpal-desktop-host" | grep -F '@rpath/libplushpal_llama.dylib'
+      - run: codesign --verify --deep --strict --verbose=2 "$RUNNER_TEMP/PlushBuddyArtifacts/macos/PlushBuddy Hub.app"
+      - run: otool -L "$RUNNER_TEMP/PlushBuddyArtifacts/macos/PlushBuddy Hub.app/Contents/MacOS/plushpal-desktop-host" | grep -F '@rpath/libplushpal_llama.dylib'
       - uses: actions/upload-artifact@v4
         with:
           name: PlushBuddy-macOS-ad-hoc-signed

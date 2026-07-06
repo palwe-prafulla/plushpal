@@ -183,6 +183,23 @@ impl TokenDigest {
         Self(Sha256::digest(token).into())
     }
 
+    fn from_hex(hex: &str) -> Option<Self> {
+        if hex.len() != 64 {
+            return None;
+        }
+        let mut bytes = [0_u8; 32];
+        for (index, chunk) in hex.as_bytes().chunks_exact(2).enumerate() {
+            let high = (chunk[0] as char).to_digit(16)? as u8;
+            let low = (chunk[1] as char).to_digit(16)? as u8;
+            bytes[index] = (high << 4) | low;
+        }
+        Some(Self(bytes))
+    }
+
+    fn to_hex(&self) -> String {
+        self.0.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
     fn matches(&self, token: &[u8]) -> bool {
         let candidate: [u8; 32] = Sha256::digest(token).into();
         bool::from(self.0.ct_eq(&candidate))
@@ -256,6 +273,18 @@ impl SessionSecurity {
         self.sessions
             .iter()
             .any(|digest| digest.matches(session_token))
+    }
+
+    #[must_use]
+    pub fn session_digest_hex(session_token: &[u8]) -> String {
+        TokenDigest::from_token(session_token).to_hex()
+    }
+
+    pub fn remember_session_digest_hex(&mut self, digest_hex: &str) -> bool {
+        let Some(digest) = TokenDigest::from_hex(digest_hex) else {
+            return false;
+        };
+        self.sessions.insert(digest)
     }
 
     pub fn revoke_session(&mut self, session_token: &[u8]) -> bool {
@@ -474,6 +503,17 @@ mod tests {
         assert!(security.revoke_session(b"session"));
         assert!(!security.validate_session(b"session"));
         assert!(security.validate_session(b"other"));
+    }
+
+    #[test]
+    fn sessions_can_be_restored_from_persisted_digest() {
+        let digest = SessionSecurity::session_digest_hex(b"session");
+        let mut security = SessionSecurity::new(b"bootstrap", 3, 60);
+
+        assert!(security.remember_session_digest_hex(&digest));
+        assert!(security.validate_session(b"session"));
+        assert!(!security.validate_session(b"other"));
+        assert!(!security.remember_session_digest_hex("not-a-digest"));
     }
 
     #[test]

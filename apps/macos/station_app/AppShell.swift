@@ -1,6 +1,8 @@
 import AppKit
 import CoreImage
+import Darwin
 import Foundation
+import Metal
 import Security
 import UniformTypeIdentifiers
 import WebKit
@@ -171,15 +173,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var hostStatusLabel: NSTextField!
     private var browserStatusLabel: NSTextField!
     private var retryButton: NSButton!
+    private var refreshStatusButton: NSButton!
     private var quitButton: NSButton!
     private var openBrowserButton: NSButton!
     private var pairAndroidButton: NSButton!
     private var openInAppButton: NSButton!
     private var runtimeModeButton: NSButton!
     private var themeModeButton: NSButton!
+    private var quickGuideButton: NSButton!
     private var parentSetupButton: NSButton!
     private var configureCloudLlmButton: NSButton!
+    private var localModelInstallButton: NSButton!
+    private var localModelCancelButton: NSButton!
     private var pairedDevicesButton: NSButton!
+    private var pairedDevicesSummaryLabel: NSTextField!
     private var copyDiagnosticsButton: NSButton!
     private var openLogsButton: NSButton!
     private var resetVoiceRuntimeButton: NSButton!
@@ -200,12 +207,84 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var healthWaitGeneration = 0
     private let healthMaxAttempts = 900
     private let logQueue = DispatchQueue(label: "com.plushpal.app-shell.logs")
+    private let themeModeKey = "PlushBuddyHubThemeMode"
+    private let themeMigrationKey = "PlushBuddyHubThemeModeV2SystemDefaultMigrated"
+    private let hubClientIdDefaultsKey = "PlushBuddyHubClientId"
+    private let hubClientIdFileName = "hub-client-id.txt"
     private var themedPanels: [NSView] = []
     private var sectionTitleLabels: [NSTextField] = []
     private var helperTextLabels: [NSTextField] = []
+    private var localAiInstallPollScheduled = false
+    private var hubUnlockedParentPin: String?
+    private var hubUnlockPromptVisible = false
+    private var lastConversationReady = false
+
+    private func normalizedHubClientId(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard normalized.hasPrefix("hub-"),
+              UUID(uuidString: String(normalized.dropFirst(4))) != nil else {
+            return nil
+        }
+        return normalized
+    }
+
+    private func persistHubClientId(_ value: String, to fileURL: URL) {
+        do {
+            try FileManager.default.createDirectory(
+                at: fileURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try "\(value)\n".write(to: fileURL, atomically: true, encoding: .utf8)
+            UserDefaults.standard.set(value, forKey: hubClientIdDefaultsKey)
+        } catch {
+            UserDefaults.standard.set(value, forKey: hubClientIdDefaultsKey)
+            appendLog("app-shell.log", "Could not persist stable Hub ID file: \(error.localizedDescription)")
+        }
+    }
+
+    private func hubClientId() -> String {
+        let fileURL = applicationSupportDirectory().appendingPathComponent(hubClientIdFileName, isDirectory: false)
+
+        if let existing = normalizedHubClientId(try? String(contentsOf: fileURL, encoding: .utf8)) {
+            UserDefaults.standard.set(existing, forKey: hubClientIdDefaultsKey)
+            return existing
+        }
+
+        if let migrated = normalizedHubClientId(UserDefaults.standard.string(forKey: hubClientIdDefaultsKey)) {
+            persistHubClientId(migrated, to: fileURL)
+            return migrated
+        }
+
+        let generated = "hub-\(UUID().uuidString.lowercased())"
+        persistHubClientId(generated, to: fileURL)
+        return generated
+    }
+
+    private func hubClientLabel() -> String {
+        let computerName = Host.current().localizedName?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let computerName, !computerName.isEmpty {
+            return "PlushBuddy Hub on \(computerName)"
+        }
+        return "PlushBuddy Hub"
+    }
+
+    private func addHubClientHeaders(_ request: inout URLRequest) {
+        request.setValue(hubClientId(), forHTTPHeaderField: "X-PlushBuddy-Client-Id")
+        request.setValue(hubClientId(), forHTTPHeaderField: "X-PlushBuddy-Hub-Id")
+        request.setValue(hubClientLabel(), forHTTPHeaderField: "X-PlushBuddy-Client-Label")
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
+        migrateThemePreferenceIfNeeded()
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(systemAppearanceChanged),
+            name: NSNotification.Name("AppleInterfaceThemeChangedNotification"),
+            object: nil
+        )
         configureMainMenu()
         buildWindow()
         NSApp.activate(ignoringOtherApps: true)
@@ -221,6 +300,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     func applicationWillTerminate(_ notification: Notification) {
         isTerminating = true
+        DistributedNotificationCenter.default().removeObserver(self)
         installPipe?.fileHandleForReading.readabilityHandler = nil
         hostPipe?.fileHandleForReading.readabilityHandler = nil
         installProcess?.terminate()
@@ -384,6 +464,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         retryButton.isHidden = true
         retryButton.translatesAutoresizingMaskIntoConstraints = false
 
+        refreshStatusButton = NSButton(title: "Refresh Hub status", target: self, action: #selector(refreshHubStatus))
+        refreshStatusButton.bezelStyle = .rounded
+        refreshStatusButton.isHidden = true
+        refreshStatusButton.translatesAutoresizingMaskIntoConstraints = false
+
         quitButton = NSButton(title: "Quit Hub", target: self, action: #selector(quitApp))
         quitButton.bezelStyle = .rounded
         quitButton.isHidden = true
@@ -404,7 +489,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         openInAppButton.isHidden = true
         openInAppButton.translatesAutoresizingMaskIntoConstraints = false
 
-        runtimeModeButton = NSButton(title: "Change runtime mode", target: self, action: #selector(configureRuntimeMode))
+        runtimeModeButton = NSButton(title: "AI mode: Cloud AI", target: self, action: #selector(configureRuntimeMode))
         runtimeModeButton.bezelStyle = .rounded
         runtimeModeButton.isHidden = true
         runtimeModeButton.translatesAutoresizingMaskIntoConstraints = false
@@ -413,6 +498,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         themeModeButton.bezelStyle = .rounded
         themeModeButton.isHidden = true
         themeModeButton.translatesAutoresizingMaskIntoConstraints = false
+
+        quickGuideButton = NSButton(title: "How to use PlushBuddy", target: self, action: #selector(showQuickGuide))
+        quickGuideButton.bezelStyle = .rounded
+        quickGuideButton.isHidden = true
+        quickGuideButton.translatesAutoresizingMaskIntoConstraints = false
 
         parentSetupButton = NSButton(title: "Set parent PIN", target: self, action: #selector(configureParentPin))
         parentSetupButton.bezelStyle = .rounded
@@ -424,10 +514,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         configureCloudLlmButton.isHidden = true
         configureCloudLlmButton.translatesAutoresizingMaskIntoConstraints = false
 
+        localModelInstallButton = NSButton(title: "Install Local AI model", target: self, action: #selector(installLocalAiModel))
+        localModelInstallButton.bezelStyle = .rounded
+        localModelInstallButton.isHidden = true
+        localModelInstallButton.translatesAutoresizingMaskIntoConstraints = false
+
+        localModelCancelButton = NSButton(title: "Cancel Local AI install", target: self, action: #selector(cancelLocalAiInstall))
+        localModelCancelButton.bezelStyle = .rounded
+        localModelCancelButton.isHidden = true
+        localModelCancelButton.translatesAutoresizingMaskIntoConstraints = false
+
         pairedDevicesButton = NSButton(title: "Manage paired devices", target: self, action: #selector(managePairedDevices))
         pairedDevicesButton.bezelStyle = .rounded
         pairedDevicesButton.isHidden = true
         pairedDevicesButton.translatesAutoresizingMaskIntoConstraints = false
+
+        pairedDevicesSummaryLabel = NSTextField(wrappingLabelWithString: "No phones paired yet.")
+        pairedDevicesSummaryLabel.font = .systemFont(ofSize: 13, weight: .regular)
+        pairedDevicesSummaryLabel.textColor = .secondaryLabelColor
+        pairedDevicesSummaryLabel.maximumNumberOfLines = 0
+        pairedDevicesSummaryLabel.alignment = .left
+        pairedDevicesSummaryLabel.translatesAutoresizingMaskIntoConstraints = false
+        helperTextLabels.append(pairedDevicesSummaryLabel)
 
         copyDiagnosticsButton = NSButton(title: "Copy diagnostics", target: self, action: #selector(copyDiagnostics))
         copyDiagnosticsButton.bezelStyle = .rounded
@@ -446,14 +554,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
         for button in [
             retryButton,
+            refreshStatusButton,
             quitButton,
             openBrowserButton,
             pairAndroidButton,
             openInAppButton,
             runtimeModeButton,
             themeModeButton,
+            quickGuideButton,
             parentSetupButton,
             configureCloudLlmButton,
+            localModelInstallButton,
+            localModelCancelButton,
             pairedDevicesButton,
             copyDiagnosticsButton,
             openLogsButton,
@@ -462,6 +574,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             button?.alignment = .left
             button?.imagePosition = .imageLeading
         }
+
+        let phonePairingRow = NSStackView(views: [
+            pairAndroidButton,
+            pairedDevicesButton,
+        ])
+        phonePairingRow.orientation = .horizontal
+        phonePairingRow.alignment = .centerY
+        phonePairingRow.distribution = .fillEqually
+        phonePairingRow.spacing = 10
+        phonePairingRow.translatesAutoresizingMaskIntoConstraints = false
 
         func sectionTitle(_ text: String) -> NSTextField {
             let label = NSTextField(labelWithString: text)
@@ -505,17 +627,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             sectionTitle("Today’s status"),
             helperText("Keep this Mac awake while your phone or Mac client is using buddy voices."),
             serviceStatusStack,
+            refreshStatusButton,
         ])
 
         setupPanel = verticalPanel([
             sectionTitle("Setup checklist"),
             helperText("Do these once, in order. The parent PIN protects sensitive settings such as Cloud AI model keys."),
+            quickGuideButton,
             parentSetupButton,
+            sectionTitle("AI mode"),
+            helperText("Choose where buddy answers come from. If you choose Local AI, install the recommended Local AI model for this Mac below. Voice, storage, and pairing stay on this Hub either way."),
+            runtimeModeButton,
+            localModelInstallButton,
+            localModelCancelButton,
             configureCloudLlmButton,
             sectionTitle("Connect clients"),
             helperText("Phones pair by QR code. Local Mac and browser clients connect directly to this Hub."),
-            pairAndroidButton,
-            pairedDevicesButton,
+            pairedDevicesSummaryLabel,
+            phonePairingRow,
             openBrowserButton,
             openInAppButton,
             sectionTitle("Look & feel"),
@@ -531,7 +660,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         mainPanel.translatesAutoresizingMaskIntoConstraints = false
 
         let advancedFirstRow = NSStackView(views: [
-            runtimeModeButton,
             retryButton,
             copyDiagnosticsButton,
         ])
@@ -617,14 +745,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             advancedPanel.bottomAnchor.constraint(lessThanOrEqualTo: splashView.bottomAnchor, constant: -72),
             serviceStatusStack.widthAnchor.constraint(lessThanOrEqualToConstant: 520),
             retryButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 120),
+            refreshStatusButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 180),
             quitButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 120),
             parentSetupButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 260),
+            quickGuideButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 260),
             configureCloudLlmButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 260),
+            localModelInstallButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 260),
+            localModelCancelButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 260),
             openBrowserButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 210),
             pairAndroidButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 210),
             pairedDevicesButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 210),
             openInAppButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 210),
-            runtimeModeButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 150),
+            runtimeModeButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 260),
             copyDiagnosticsButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 150),
             openLogsButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 120),
             resetVoiceRuntimeButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 160),
@@ -681,7 +813,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             update(.failed(failure.message))
             return
         }
-        let sttRuntime = prepareSpeechToTextRuntime()
+        let sttRuntime = prepareSpeechToTextRuntime(voiceRuntime: voiceRuntime)
         updateServiceStatuses(
             storage: nil,
             reasoning: nil,
@@ -719,19 +851,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let support = applicationSupportDirectory()
         let venv = support.appendingPathComponent("luxtts-venv", isDirectory: true)
         let python = venv.appendingPathComponent("bin/python")
+        let source = support
+            .appendingPathComponent("deps", isDirectory: true)
+            .appendingPathComponent("LuxTTS", isDirectory: true)
         let bundledPython = Bundle.main.resourceURL?
             .appendingPathComponent("python", isDirectory: true)
             .appendingPathComponent("bin/python3")
 
         if let bundledPython,
            FileManager.default.isExecutableFile(atPath: bundledPython.path),
-           isLuxTtsRuntimeReady(python: bundledPython, script: script) {
-            return .success(VoiceRuntime(engine: "luxtts", python: bundledPython, script: script))
+           isLuxTtsRuntimeReady(python: bundledPython, script: script, source: source) {
+            return .success(VoiceRuntime(engine: "luxtts", python: bundledPython, script: script, source: source))
         }
 
         if FileManager.default.isExecutableFile(atPath: python.path),
-           isLuxTtsRuntimeReady(python: python, script: script) {
-            return .success(VoiceRuntime(engine: "luxtts", python: python, script: script))
+           isLuxTtsRuntimeReady(python: python, script: script, source: source) {
+            return .success(VoiceRuntime(engine: "luxtts", python: python, script: script, source: source))
         }
 
         if ProcessInfo.processInfo.environment["PLUSHPAL_SKIP_LUXTTS_INSTALL"] != nil {
@@ -749,6 +884,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             process.arguments = [installer.path, venv.path]
             process.environment = mergedEnvironment(extra: [
                 "PLUSHPAL_LUXTTS_SCRIPT": script.path,
+                "PLUSHPAL_LUXTTS_SOURCE_DIR": source.path,
                 "PLUSHPAL_BUNDLED_PYTHON": Bundle.main.resourceURL?
                     .appendingPathComponent("python", isDirectory: true)
                     .appendingPathComponent("bin/python3")
@@ -780,8 +916,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
             if process.terminationStatus == 0,
                FileManager.default.isExecutableFile(atPath: python.path),
-               isLuxTtsRuntimeReady(python: python, script: script) {
-                return .success(VoiceRuntime(engine: "luxtts", python: python, script: script))
+               isLuxTtsRuntimeReady(python: python, script: script, source: source) {
+                return .success(VoiceRuntime(engine: "luxtts", python: python, script: script, source: source))
             }
             return .failure(StartupFailure(message: "PlushBuddy Hub could not finish installing LuxTTS voice support. \(setupDiagnosticTail())"))
         } catch {
@@ -813,12 +949,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if let bundledPython,
            FileManager.default.isExecutableFile(atPath: bundledPython.path),
            isChatterboxRuntimeImportReady(python: bundledPython) {
-            return .success(VoiceRuntime(engine: "chatterbox", python: bundledPython, script: script))
+            return .success(VoiceRuntime(engine: "chatterbox", python: bundledPython, script: script, source: nil))
         }
 
         if FileManager.default.isExecutableFile(atPath: python.path),
            isChatterboxRuntimeImportReady(python: python) {
-            return .success(VoiceRuntime(engine: "chatterbox", python: python, script: script))
+            return .success(VoiceRuntime(engine: "chatterbox", python: python, script: script, source: nil))
         }
 
         if ProcessInfo.processInfo.environment["PLUSHPAL_SKIP_CHATTERBOX_INSTALL"] != nil {
@@ -868,7 +1004,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             if process.terminationStatus == 0,
                FileManager.default.isExecutableFile(atPath: python.path),
                isChatterboxRuntimeImportReady(python: python) {
-                return .success(VoiceRuntime(engine: "chatterbox", python: python, script: script))
+                return .success(VoiceRuntime(engine: "chatterbox", python: python, script: script, source: nil))
             }
             return .failure(StartupFailure(message: "PlushBuddy Hub could not finish installing local voice support. \(setupDiagnosticTail())"))
         } catch {
@@ -878,11 +1014,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
-    private func isLuxTtsRuntimeReady(python: URL, script: URL) -> Bool {
+    private func isLuxTtsRuntimeReady(python: URL, script: URL, source: URL) -> Bool {
         let process = Process()
         process.executableURL = python
         process.arguments = [script.path, "--healthcheck"]
-        process.environment = mergedEnvironment(extra: [:])
+        process.environment = mergedEnvironment(extra: [
+            "PLUSHPAL_LUXTTS_SOURCE_DIR": source.path,
+        ])
         process.standardOutput = Pipe()
         process.standardError = Pipe()
         do {
@@ -913,7 +1051,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
-    private func prepareSpeechToTextRuntime() -> SpeechToTextRuntime? {
+    private func prepareSpeechToTextRuntime(voiceRuntime: VoiceRuntime?) -> SpeechToTextRuntime? {
         guard ProcessInfo.processInfo.environment["PLUSHPAL_DISABLE_HUB_STT"] == nil else {
             appendLog("app-shell.log", "Hub STT fallback disabled by environment")
             return nil
@@ -921,17 +1059,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let script = Bundle.main.resourceURL?
             .appendingPathComponent("stt", isDirectory: true)
             .appendingPathComponent("whisper_transcribe.py", isDirectory: false)
+        let preparedPython = voiceRuntime?.python
         let bundledPython = Bundle.main.resourceURL?
             .appendingPathComponent("python", isDirectory: true)
             .appendingPathComponent("bin/python3", isDirectory: false)
         guard let script,
-              FileManager.default.fileExists(atPath: script.path),
-              let bundledPython,
-              FileManager.default.isExecutableFile(atPath: bundledPython.path) else {
+              FileManager.default.fileExists(atPath: script.path) else {
             appendLog("app-shell.log", "Hub STT fallback is not bundled")
             return nil
         }
-        if let command = writeSpeechToTextCommandWrapper(python: bundledPython, script: script) {
+        let python = [preparedPython, bundledPython]
+            .compactMap { $0 }
+            .first { FileManager.default.isExecutableFile(atPath: $0.path) }
+        guard let python else {
+            appendLog("app-shell.log", "Hub STT fallback has no prepared Python runtime")
+            return nil
+        }
+        if !isSpeechToTextRuntimeReady(python: python, script: script) {
+            appendLog("app-shell.log", "Hub STT fallback Python runtime is not ready")
+            return nil
+        }
+        if let command = writeSpeechToTextCommandWrapper(python: python, script: script) {
             appendLog("app-shell.log", "Hub STT fallback wrapper prepared")
             return SpeechToTextRuntime(command: command)
         }
@@ -1012,10 +1160,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         var extra = [
             "PLUSHPAL_NO_BROWSER": "1",
             "PLUSHPAL_PRINT_BOOTSTRAP_URL": "1",
-            "PLUSHPAL_PORT": "0",
+            "PLUSHPAL_PORT": "50076",
             "PLUSHPAL_RUNTIME_MODE": selectedRuntimeMode(),
             "PLUSHPAL_CLOUD_LLM_PROVIDER": selectedCloudLlmProvider(),
+            "PLUSHPAL_HUB_CLIENT_ID": hubClientId(),
         ]
+        extra.merge(macLocalModelProfileEnvironment()) { _, new in new }
         if let lanAddress = preferredLanIPv4Address() {
             extra["PLUSHPAL_ENABLE_LAN"] = "1"
             extra["PLUSHPAL_LAN_HOST"] = lanAddress
@@ -1026,6 +1176,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             if voiceRuntime.engine == "luxtts" {
                 extra["PLUSHPAL_LUXTTS_PYTHON"] = voiceRuntime.python.path
                 extra["PLUSHPAL_LUXTTS_SCRIPT"] = voiceRuntime.script.path
+                if let source = voiceRuntime.source {
+                    extra["PLUSHPAL_LUXTTS_SOURCE_DIR"] = source.path
+                }
                 extra["PLUSHPAL_LUXTTS_NUM_STEPS"] = "8"
                 extra["PLUSHPAL_LUXTTS_SPEED"] = "0.88"
                 extra["PLUSHPAL_LUXTTS_SEED"] = "11"
@@ -1114,6 +1267,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
+    @objc private func refreshHubStatus() {
+        appendLog("app-shell.log", "manual refresh requested")
+        refreshChecklistButtons()
+        refreshPairedDevicesSummary()
+        if let existingHostUrl = hostUrl, hostProcess?.isRunning == true {
+            updateServiceStatuses(
+                storage: nil,
+                reasoning: "○ Conversations: refreshing",
+                voice: "○ Buddy voices: refreshing",
+                stt: "○ Listening helper: refreshing",
+                host: "○ Hub: refreshing",
+                browser: "○ Apps: refreshing"
+            )
+            waitForStationHealth(existingHostUrl)
+        } else {
+            retryStartup()
+        }
+    }
+
     @objc private func quitApp() {
         NSApp.terminate(nil)
     }
@@ -1169,12 +1341,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     @objc private func openPlushPalInBrowser() {
+        guard unlockHubIfNeeded(reason: "Open browser client") else { return }
         guard let hostUrl else { return }
         persistStationClientUrl(hostUrl)
         NSWorkspace.shared.open(hostUrl)
     }
 
     @objc private func showAndroidPairingLink() {
+        guard unlockHubIfNeeded(reason: "Pair phone with PlushBuddy Hub") else { return }
         guard let pairingUrl = lanPairingUrl ?? hostUrl else { return }
         let isLanUrl = lanPairingUrl != nil
         currentPairingUrlText = pairingUrl.absoluteString
@@ -1266,6 +1440,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     @objc private func closePairingWindow() {
         pairingWindow?.close()
         pairingWindow = nil
+        refreshPairedDevicesSummary()
     }
 
     private func qrCodeImage(for text: String, size: CGFloat) -> NSImage? {
@@ -1291,6 +1466,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     @objc private func openPlushPalInApp() {
+        guard unlockHubIfNeeded(reason: "Open Mac client") else { return }
         guard let hostUrl else { return }
         persistStationClientUrl(hostUrl)
         guard let clientAppUrl = bundledClientAppUrl() else {
@@ -1365,12 +1541,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case "light": "dark"
         default: "system"
         }
-        UserDefaults.standard.set(next, forKey: "PlushBuddyHubThemeMode")
+        UserDefaults.standard.set(true, forKey: themeMigrationKey)
+        UserDefaults.standard.set(next, forKey: themeModeKey)
         applyThemePreference()
     }
 
+    private func migrateThemePreferenceIfNeeded() {
+        guard UserDefaults.standard.bool(forKey: themeMigrationKey) == false else {
+            return
+        }
+        UserDefaults.standard.set("system", forKey: themeModeKey)
+        UserDefaults.standard.set(true, forKey: themeMigrationKey)
+    }
+
     private func selectedThemeMode() -> String {
-        if let stored = UserDefaults.standard.string(forKey: "PlushBuddyHubThemeMode"),
+        if let stored = UserDefaults.standard.string(forKey: themeModeKey),
            ["system", "light", "dark"].contains(stored) {
             return stored
         }
@@ -1392,21 +1577,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let mode = selectedThemeMode()
         switch mode {
         case "light":
-            NSApp.appearance = NSAppearance(named: .aqua)
+            let appearance = NSAppearance(named: .aqua)
+            NSApp.appearance = appearance
+            window?.appearance = appearance
         case "dark":
-            NSApp.appearance = NSAppearance(named: .darkAqua)
+            let appearance = NSAppearance(named: .darkAqua)
+            NSApp.appearance = appearance
+            window?.appearance = appearance
         default:
             NSApp.appearance = nil
+            window?.appearance = nil
         }
-        window?.appearance = NSApp.appearance
         themeModeButton?.title = "Theme: \(themeDisplayName(mode))"
         applyThemeColors()
     }
 
+    @objc private func systemAppearanceChanged() {
+        guard selectedThemeMode() == "system" else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.applyThemePreference()
+        }
+    }
+
+    private func systemPrefersDarkAppearance() -> Bool {
+        let effectiveAppearance = NSApp.effectiveAppearance
+        if effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
+            return true
+        }
+        if UserDefaults.standard.string(forKey: "AppleInterfaceStyle") == "Dark" {
+            return true
+        }
+        return false
+    }
+
+    private func hubUsesDarkAppearance() -> Bool {
+        switch selectedThemeMode() {
+        case "light":
+            false
+        case "dark":
+            true
+        default:
+            systemPrefersDarkAppearance()
+        }
+    }
+
     private func applyThemeColors() {
-        let appearance = window?.effectiveAppearance ?? NSApp.effectiveAppearance
-        let bestMatch = appearance.bestMatch(from: [.darkAqua, .aqua])
-        let isDark = bestMatch == .darkAqua
+        let isDark = hubUsesDarkAppearance()
         let panelBackgrounds: [NSColor] = isDark
             ? [
                 NSColor(calibratedRed: 0.14, green: 0.10, blue: 0.19, alpha: 0.94),
@@ -1446,14 +1662,170 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             panel.layer?.backgroundColor = panelBackgrounds[min(index, panelBackgrounds.count - 1)].cgColor
             panel.layer?.borderColor = panelBorders[min(index, panelBorders.count - 1)].cgColor
         }
-        for button in [parentSetupButton, configureCloudLlmButton, pairAndroidButton, pairedDevicesButton, openBrowserButton, openInAppButton, themeModeButton] {
+        for button in [parentSetupButton, configureCloudLlmButton, pairAndroidButton, pairedDevicesButton, openBrowserButton, openInAppButton, themeModeButton, quickGuideButton] {
             button?.contentTintColor = accent
         }
         refreshChecklistButtons()
     }
 
+    private func makeDialogForm(
+        _ rows: [(String, NSView)],
+        labelWidth: CGFloat = 128,
+        fieldWidth: CGFloat = 360
+    ) -> NSStackView {
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.spacing = 8
+        stack.alignment = .leading
+
+        for (title, field) in rows {
+            let label = NSTextField(labelWithString: title)
+            label.alignment = .left
+            label.lineBreakMode = .byTruncatingTail
+            label.translatesAutoresizingMaskIntoConstraints = false
+
+            field.translatesAutoresizingMaskIntoConstraints = false
+            let row = NSStackView(views: [label, field])
+            row.orientation = .horizontal
+            row.spacing = 12
+            row.alignment = .centerY
+            row.translatesAutoresizingMaskIntoConstraints = false
+
+            NSLayoutConstraint.activate([
+                label.widthAnchor.constraint(equalToConstant: labelWidth),
+                field.widthAnchor.constraint(greaterThanOrEqualToConstant: fieldWidth),
+            ])
+            stack.addArrangedSubview(row)
+        }
+
+        let height = CGFloat(max(rows.count, 1)) * 32.0
+        stack.setFrameSize(NSSize(width: labelWidth + fieldWidth + 16, height: height))
+        return stack
+    }
+
+    @objc private func showQuickGuide() {
+        func guideCard(number: String, icon: String, title: String, detail: String, color: NSColor) -> NSStackView {
+            let badge = NSTextField(labelWithString: "\(icon)\n\(number)")
+            badge.font = .systemFont(ofSize: 18, weight: .black)
+            badge.alignment = .center
+            badge.textColor = .white
+            badge.maximumNumberOfLines = 2
+            badge.translatesAutoresizingMaskIntoConstraints = false
+            badge.wantsLayer = true
+            badge.layer?.backgroundColor = color.cgColor
+            badge.layer?.cornerRadius = 18
+
+            let titleLabel = NSTextField(labelWithString: title)
+            titleLabel.font = .systemFont(ofSize: 16, weight: .bold)
+            titleLabel.textColor = .labelColor
+            titleLabel.alignment = .left
+
+            let detailLabel = NSTextField(wrappingLabelWithString: detail)
+            detailLabel.font = .systemFont(ofSize: 13, weight: .regular)
+            detailLabel.textColor = .secondaryLabelColor
+            detailLabel.maximumNumberOfLines = 0
+            detailLabel.alignment = .left
+            detailLabel.lineBreakMode = .byWordWrapping
+            detailLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+            let textStack = NSStackView(views: [titleLabel, detailLabel])
+            textStack.orientation = .vertical
+            textStack.alignment = .leading
+            textStack.spacing = 4
+            textStack.translatesAutoresizingMaskIntoConstraints = false
+
+            let card = NSStackView(views: [badge, textStack])
+            card.orientation = .horizontal
+            card.alignment = .centerY
+            card.spacing = 14
+            card.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 14)
+            card.translatesAutoresizingMaskIntoConstraints = false
+            card.wantsLayer = true
+            card.layer?.cornerRadius = 18
+            card.layer?.borderWidth = 1
+            card.layer?.borderColor = color.withAlphaComponent(0.45).cgColor
+            card.layer?.backgroundColor = color.withAlphaComponent(hubUsesDarkAppearance() ? 0.18 : 0.12).cgColor
+            NSLayoutConstraint.activate([
+                badge.widthAnchor.constraint(equalToConstant: 54),
+                badge.heightAnchor.constraint(equalToConstant: 54),
+                card.widthAnchor.constraint(equalToConstant: 520),
+            ])
+            return card
+        }
+
+        func arrow() -> NSTextField {
+            let label = NSTextField(labelWithString: "↓")
+            label.font = .systemFont(ofSize: 22, weight: .black)
+            label.textColor = NSColor(calibratedRed: 0.55, green: 0.36, blue: 0.96, alpha: 1.0)
+            label.alignment = .center
+            return label
+        }
+
+        let header = NSTextField(wrappingLabelWithString: "A tiny map from setup to playtime. Do it once, then PlushBuddy is ready whenever the Hub is open.")
+        header.font = .systemFont(ofSize: 14, weight: .medium)
+        header.textColor = .secondaryLabelColor
+        header.alignment = .center
+        header.maximumNumberOfLines = 0
+
+        let stack = NSStackView(views: [
+            header,
+            guideCard(
+                number: "1",
+                icon: "🏠",
+                title: "Start PlushBuddy Hub",
+                detail: "Keep this Mac awake. The Hub runs secure storage, AI, buddy voices, and pairing.",
+                color: NSColor(calibratedRed: 0.55, green: 0.36, blue: 0.96, alpha: 1.0)
+            ),
+            arrow(),
+            guideCard(
+                number: "2",
+                icon: "🧠",
+                title: "Choose AI mode",
+                detail: "Use Local AI for privacy-first play, or Cloud AI with your Gemini/OpenAI key.",
+                color: NSColor(calibratedRed: 0.22, green: 0.74, blue: 0.97, alpha: 1.0)
+            ),
+            arrow(),
+            guideCard(
+                number: "3",
+                icon: "📱",
+                title: "Pair the phone",
+                detail: "Scan the QR code. The phone becomes the kid-friendly mic, chat, and playback screen.",
+                color: NSColor(calibratedRed: 1.00, green: 0.55, blue: 0.82, alpha: 1.0)
+            ),
+            arrow(),
+            guideCard(
+                number: "4",
+                icon: "🧸",
+                title: "Create kid + toy",
+                detail: "Add a kid, make a toy buddy, upload a voice sample, preview it, then save it.",
+                color: NSColor(calibratedRed: 1.00, green: 0.74, blue: 0.22, alpha: 1.0)
+            ),
+            arrow(),
+            guideCard(
+                number: "5",
+                icon: "🎙️",
+                title: "Start playtime",
+                detail: "The phone listens, the Hub thinks, LuxTTS speaks back in the toy voice.",
+                color: NSColor(calibratedRed: 0.08, green: 0.62, blue: 0.30, alpha: 1.0)
+            ),
+        ])
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = 8
+        stack.edgeInsets = NSEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
+        stack.setFrameSize(NSSize(width: 560, height: 650))
+
+        let alert = NSAlert()
+        alert.messageText = "PlushBuddy playtime map"
+        alert.informativeText = ""
+        alert.accessoryView = stack
+        alert.addButton(withTitle: "Got it")
+        alert.runModal()
+    }
+
     @objc private func configureParentPin() {
-        if UserDefaults.standard.bool(forKey: "PlushBuddyHubParentPinConfigured") {
+        if (try? hubParentPinConfigured()) == true {
+            guard unlockHubIfNeeded(reason: "Update parent PIN") else { return }
             let manage = NSAlert()
             manage.messageText = "Parent PIN is already set"
             manage.informativeText = "Use the current PIN to update it. If you do not want to change it, you can leave it as is."
@@ -1464,21 +1836,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             return
         }
 
-        let pinInput = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
-        pinInput.placeholderString = "Parent PIN"
-        let confirmInput = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
-        confirmInput.placeholderString = "Confirm PIN"
-
-        let stack = NSStackView(views: [
-            NSTextField(labelWithString: "Parent PIN"),
-            pinInput,
-            NSTextField(labelWithString: "Confirm PIN"),
-            confirmInput,
+        let pinInput = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+        let confirmInput = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+        let stack = makeDialogForm([
+            ("Parent PIN", pinInput),
+            ("Confirm PIN", confirmInput),
         ])
-        stack.orientation = .vertical
-        stack.spacing = 8
-        stack.alignment = .leading
-        stack.setFrameSize(NSSize(width: 360, height: 104))
 
         let alert = NSAlert()
         alert.messageText = "Set parent PIN"
@@ -1498,6 +1861,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
         do {
             try saveParentPinToHub(pin: pin)
+            hubUnlockedParentPin = pin
             UserDefaults.standard.set(true, forKey: "PlushBuddyHubParentPinConfigured")
             refreshChecklistButtons()
             appendLog("app-shell.log", "parent PIN configured or verified")
@@ -1507,26 +1871,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
-    private func updateParentPin() {
-        let currentInput = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 340, height: 24))
-        currentInput.placeholderString = "Current parent PIN"
-        let newInput = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 340, height: 24))
-        newInput.placeholderString = "New parent PIN"
-        let confirmInput = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 340, height: 24))
-        confirmInput.placeholderString = "Confirm new PIN"
+    @discardableResult
+    private func unlockHubIfNeeded(reason: String = "Unlock PlushBuddy Hub") -> Bool {
+        guard (try? hubParentPinConfigured()) == true else {
+            hubUnlockedParentPin = nil
+            return true
+        }
+                if hubUnlockedParentPin != nil {
+                    return true
+                }
+                return promptHubUnlock(reason: reason)
+    }
 
-        let stack = NSStackView(views: [
-            NSTextField(labelWithString: "Current PIN"),
-            currentInput,
-            NSTextField(labelWithString: "New PIN"),
-            newInput,
-            NSTextField(labelWithString: "Confirm new PIN"),
-            confirmInput,
+    @discardableResult
+    private func promptHubUnlock(reason: String = "Unlock PlushBuddy Hub") -> Bool {
+        guard !hubUnlockPromptVisible else { return false }
+        hubUnlockPromptVisible = true
+        defer { hubUnlockPromptVisible = false }
+
+        while true {
+            let pinInput = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+            let alert = NSAlert()
+            alert.messageText = reason
+            alert.informativeText = "Enter the parent PIN to manage PlushBuddy Hub. You will not be asked again until you close and reopen the Hub."
+            alert.accessoryView = makeDialogForm([("Parent PIN", pinInput)], labelWidth: 92, fieldWidth: 280)
+            alert.addButton(withTitle: "Unlock Hub")
+            alert.addButton(withTitle: "Cancel")
+            DispatchQueue.main.async {
+                alert.window.makeFirstResponder(pinInput)
+            }
+            guard alert.runModal() == .alertFirstButtonReturn else {
+                showHubLockedHero()
+                return false
+            }
+            let pin = pinInput.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !pin.isEmpty else { continue }
+            do {
+                if try authorizeParentPinInHub(pin: pin) {
+                    hubUnlockedParentPin = pin
+                    refreshChecklistButtons()
+                    showHubReadyHero(conversationReady: lastConversationReady)
+                    return true
+                }
+                showInfoAlert(title: "Incorrect PIN", message: "That PIN did not unlock PlushBuddy Hub. Try again.")
+            } catch {
+                showInfoAlert(title: "Could not unlock Hub", message: error.localizedDescription)
+                return false
+            }
+        }
+    }
+
+    private func requireUnlockedParentPin(reason: String = "Unlock PlushBuddy Hub") -> String? {
+        if !unlockHubIfNeeded(reason: reason) {
+            return nil
+        }
+        return hubUnlockedParentPin
+    }
+
+    private func updateParentPin() {
+        guard let currentPin = requireUnlockedParentPin(reason: "Update parent PIN") else { return }
+        let newInput = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+        let confirmInput = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+        let stack = makeDialogForm([
+            ("New PIN", newInput),
+            ("Confirm new PIN", confirmInput),
         ])
-        stack.orientation = .vertical
-        stack.spacing = 8
-        stack.alignment = .leading
-        stack.setFrameSize(NSSize(width: 380, height: 156))
 
         let alert = NSAlert()
         alert.messageText = "Update parent PIN"
@@ -1535,18 +1944,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         alert.addButton(withTitle: "Update PIN")
         alert.addButton(withTitle: "Cancel")
         DispatchQueue.main.async {
-            alert.window.makeFirstResponder(currentInput)
+            alert.window.makeFirstResponder(newInput)
         }
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let current = currentInput.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         let newPin = newInput.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         let confirmation = confirmInput.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !current.isEmpty, !newPin.isEmpty, newPin == confirmation else {
-            showInfoAlert(title: "Parent PIN was not updated", message: "Enter the current PIN and make sure both new PIN fields match.")
+        guard !newPin.isEmpty, newPin == confirmation else {
+            showInfoAlert(title: "Parent PIN was not updated", message: "Make sure both new PIN fields match.")
             return
         }
         do {
-            try updateParentPinInHub(currentPin: current, newPin: newPin)
+            try updateParentPinInHub(currentPin: currentPin, newPin: newPin)
+            hubUnlockedParentPin = newPin
             UserDefaults.standard.set(true, forKey: "PlushBuddyHubParentPinConfigured")
             refreshChecklistButtons()
             appendLog("app-shell.log", "parent PIN updated")
@@ -1557,13 +1966,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     @objc private func configureCloudLlmKey() {
+        guard requireUnlockedParentPin(reason: "Manage Cloud AI model") != nil else { return }
         let status = (try? cloudAiModelStatus()) ?? CloudAiModelStatus(
             provider: selectedCloudLlmProvider(),
-            configured: UserDefaults.standard.bool(forKey: "PlushBuddyHubCloudLlmConfigured"),
+            configured: false,
             displayName: cloudLlmProviderDisplayName(selectedCloudLlmProvider()),
-            configuredProviders: UserDefaults.standard.bool(forKey: "PlushBuddyHubCloudLlmConfigured")
-                ? [selectedCloudLlmProvider()]
-                : []
+            configuredProviders: []
         )
         if status.configured || !status.configuredProviders.isEmpty {
             manageCloudAiModel(status: status)
@@ -1603,27 +2011,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     private func addOrUpdateCloudAiModelKey(initialProvider: String) {
-        let providerPopup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 520, height: 26), pullsDown: false)
+        guard let pin = requireUnlockedParentPin(reason: "Manage Cloud AI model") else { return }
+        let providerPopup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 360, height: 26), pullsDown: false)
         providerPopup.addItems(withTitles: ["Gemini", "OpenAI"])
         providerPopup.selectItem(withTitle: cloudLlmProviderDisplayName(initialProvider))
 
-        let input = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 520, height: 24))
-        input.placeholderString = "Paste provider API key"
-        let pinInput = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 180, height: 24))
-        pinInput.placeholderString = "Parent PIN"
-
-        let stack = NSStackView(views: [
-            NSTextField(labelWithString: "Cloud AI provider"),
-            providerPopup,
-            NSTextField(labelWithString: "API key"),
-            input,
-            NSTextField(labelWithString: "Parent PIN"),
-            pinInput,
+        let input = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
+        let stack = makeDialogForm([
+            ("Cloud AI model", providerPopup),
+            ("API key", input),
         ])
-        stack.orientation = .vertical
-        stack.spacing = 8
-        stack.alignment = .leading
-        stack.setFrameSize(NSSize(width: 520, height: 150))
 
         let alert = NSAlert()
         alert.messageText = "Add or update Cloud AI model"
@@ -1637,9 +2034,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let provider = cloudLlmProviderValue(providerPopup.selectedItem?.title)
         let key = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        let pin = pinInput.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { return }
-        guard !pin.isEmpty else { return }
         do {
             try saveCloudLlmKeyToHub(provider: provider, key: key, pin: pin)
             UserDefaults.standard.set(provider, forKey: "PlushBuddyCloudLlmProvider")
@@ -1657,20 +2052,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     private func selectCloudAiProvider(_ provider: String) {
-        let pinInput = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
-        pinInput.placeholderString = "Parent PIN"
+        guard let pin = requireUnlockedParentPin(reason: "Manage Cloud AI model") else { return }
         let alert = NSAlert()
         alert.messageText = "Use \(cloudLlmProviderDisplayName(provider))?"
-        alert.informativeText = "Enter the parent PIN to make \(cloudLlmProviderDisplayName(provider)) the active Cloud AI model."
-        alert.accessoryView = pinInput
+        alert.informativeText = "Make \(cloudLlmProviderDisplayName(provider)) the active Cloud AI model."
         alert.addButton(withTitle: "Use \(cloudLlmProviderDisplayName(provider))")
         alert.addButton(withTitle: "Cancel")
-        DispatchQueue.main.async {
-            alert.window.makeFirstResponder(pinInput)
-        }
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let pin = pinInput.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !pin.isEmpty else { return }
         do {
             try selectCloudAiProviderInHub(provider: provider, pin: pin)
             UserDefaults.standard.set(provider, forKey: "PlushBuddyCloudLlmProvider")
@@ -1703,24 +2091,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
-    @objc private func managePairedDevices() {
-        let pinInput = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
-        pinInput.placeholderString = "Parent PIN"
-        let pinAlert = NSAlert()
-        pinAlert.messageText = "Review paired devices"
-        pinAlert.informativeText = "Enter the parent PIN to review phones and apps paired with this Hub."
-        pinAlert.accessoryView = pinInput
-        pinAlert.addButton(withTitle: "Review")
-        pinAlert.addButton(withTitle: "Cancel")
-        DispatchQueue.main.async {
-            pinAlert.window.makeFirstResponder(pinInput)
+    private struct PairedDevicesSummary {
+        let activeCount: Int
+        let latestLabel: String?
+        let latestPlatform: String?
+        let latestClientId: String?
+    }
+
+    private func refreshPairedDevicesSummary() {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self else { return }
+            let summary = try? self.pairedDevicesSummary()
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                guard let summary else {
+                    self.pairedDevicesSummaryLabel.stringValue = "Pair phones with the QR code. Local Mac and browser clients connect directly."
+                    self.pairedDevicesButton.isHidden = true
+                    return
+                }
+                if summary.activeCount <= 0 {
+                    self.pairedDevicesSummaryLabel.stringValue = "No phones paired yet. Pair Android or iPhone with the QR code."
+                    self.pairedDevicesButton.isHidden = true
+                    return
+                }
+                let trimmedLabel = summary.latestLabel?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let latestName = (trimmedLabel?.isEmpty == false ? trimmedLabel : nil)
+                    ?? summary.latestPlatform?.capitalized
+                    ?? "phone"
+                let suffix = summary.activeCount == 1 ? "" : " + \(summary.activeCount - 1) more"
+                self.pairedDevicesSummaryLabel.stringValue = "Paired: \(latestName)\(suffix)"
+                self.pairedDevicesButton.title = summary.activeCount == 1
+                    ? "Manage paired device"
+                    : "Manage paired devices"
+                self.pairedDevicesButton.isHidden = false
+            }
         }
-        guard pinAlert.runModal() == .alertFirstButtonReturn else { return }
-        let pin = pinInput.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !pin.isEmpty else { return }
+    }
+
+    @objc private func managePairedDevices() {
+        guard let pin = requireUnlockedParentPin(reason: "Review paired devices") else { return }
 
         do {
             let devices = try pairedDevices(pin: pin)
+            refreshPairedDevicesSummary()
             guard !devices.isEmpty else {
                 showInfoAlert(title: "No paired devices yet", message: "Pair an Android or iPhone app with the QR code. Local Mac and browser clients connect directly.")
                 return
@@ -1768,6 +2181,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         guard confirm.runModal() == .alertFirstButtonReturn else { return }
         do {
             try revokePairedDevice(pin: pin, clientId: selected.clientId)
+            refreshPairedDevicesSummary()
             showInfoAlert(title: "Device forgotten", message: "\(pairedDeviceTitle(selected)) was removed from this Hub.")
         } catch {
             showInfoAlert(title: "Could not forget device", message: error.localizedDescription)
@@ -1794,19 +2208,151 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         return formatter.string(from: Date(timeIntervalSince1970: TimeInterval(seconds)))
     }
 
+    @objc private func installLocalAiModel() {
+        guard unlockHubIfNeeded(reason: "Install Local AI model") else { return }
+        startLocalAiInstall(showConfirmation: true)
+    }
+
+    private func startLocalAiInstall(showConfirmation: Bool) {
+        let localStatus = try? localAiModelStatus()
+        let modelName = localAiDisplayName(localStatus)
+        let recommendation = localStatus?.recommendationNote?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let confirm = NSAlert()
+        confirm.messageText = "Install \(modelName)?"
+        confirm.informativeText = """
+        PlushBuddy will download and verify the recommended Local AI model for this Mac. This can take a while and may use several GB of disk space.
+
+        \(recommendation?.isEmpty == false ? recommendation! + "\n\n" : "")Voice cloning and storage already stay on this Hub. Install this only if you want conversations to use Local AI instead of a Cloud AI model.
+        """
+        confirm.addButton(withTitle: "Install recommended model")
+        confirm.addButton(withTitle: "Cancel")
+        if showConfirmation {
+            guard confirm.runModal() == .alertFirstButtonReturn else { return }
+        }
+        do {
+            try installLocalAiModelInHub()
+            refreshChecklistButtons()
+            showLocalAiInstallingHero(status: localStatus)
+            updateServiceStatuses(
+                storage: nil,
+                reasoning: "○ Conversations: Local AI model installing",
+                voice: nil,
+                stt: nil,
+                host: "✓ Hub: ready",
+                browser: nil
+            )
+            scheduleLocalAiInstallPoll()
+            showInfoAlert(title: "Local AI model install started", message: "Keep this Mac awake. PlushBuddy will update this screen when \(modelName) is ready.")
+        } catch {
+            showInfoAlert(title: "Local AI install could not start", message: error.localizedDescription)
+        }
+    }
+
+    @objc private func cancelLocalAiInstall() {
+        do {
+            try cancelLocalAiModelInstallInHub()
+            refreshChecklistButtons()
+            showHubReadyHero(conversationReady: false)
+            updateServiceStatuses(
+                storage: nil,
+                reasoning: "△ Conversations: Local AI model install cancelled",
+                voice: nil,
+                stt: nil,
+                host: "✓ Hub: ready",
+                browser: nil
+            )
+            showInfoAlert(title: "Local AI install cancelled", message: "You can restart Local AI setup anytime from the Hub.")
+        } catch {
+            showInfoAlert(title: "Could not cancel Local AI install", message: error.localizedDescription)
+        }
+    }
+
+    private func scheduleLocalAiInstallPoll() {
+        guard !localAiInstallPollScheduled else { return }
+        localAiInstallPollScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            guard let self else { return }
+            self.localAiInstallPollScheduled = false
+            self.refreshChecklistButtons()
+            let status = try? self.localAiModelStatus()
+            if status?.installing == true {
+                self.showLocalAiInstallingHero(status: status)
+                self.updateServiceStatuses(
+                    storage: nil,
+                    reasoning: "○ Conversations: Local AI model installing",
+                    voice: nil,
+                    stt: nil,
+                    host: "✓ Hub: ready",
+                    browser: nil
+                )
+                self.scheduleLocalAiInstallPoll()
+            } else if status?.ready == true {
+                self.showLocalAiReadyHero(status: status)
+                self.updateServiceStatuses(
+                    storage: nil,
+                    reasoning: "✓ Conversations: ready",
+                    voice: nil,
+                    stt: nil,
+                    host: "✓ Hub: ready",
+                    browser: nil
+                )
+            }
+        }
+    }
+
+    private func showLocalAiInstallingHero(status: LocalAiModelStatus?) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let modelName = self.localAiDisplayName(status)
+            self.titleLabel.stringValue = "Installing Local AI model"
+            self.detailLabel.stringValue = "\(modelName) is downloading and being verified for this Mac. This can take several minutes; keep this Hub open and awake."
+            self.progress.isHidden = false
+            self.progress.startAnimation(nil)
+        }
+    }
+
+    private func showLocalAiReadyHero(status: LocalAiModelStatus?) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.progress.stopAnimation(nil)
+            self.progress.isHidden = true
+            self.titleLabel.stringValue = "PlushBuddy Hub is ready"
+            self.detailLabel.stringValue = "\(self.localAiDisplayName(status)) is installed. You can connect a phone, open a local client, or start testing conversations."
+        }
+    }
+
+    private func showHubReadyHero(conversationReady: Bool) {
+        progress.stopAnimation(nil)
+        progress.isHidden = true
+        titleLabel.stringValue = "PlushBuddy Hub is ready"
+        detailLabel.stringValue = conversationReady
+            ? "All required local services are healthy. Set parent controls, connect a phone, or open a local client."
+            : (selectedRuntimeMode() == "privacy_local_first"
+                ? "Voice, storage, and pairing are ready. Local AI needs its model installed and ready before real conversations."
+                : "Voice, storage, and pairing are ready. Set or verify the parent PIN, then configure a Cloud AI model before real conversations.")
+    }
+
+    private func showHubLockedHero() {
+        progress.stopAnimation(nil)
+        progress.isHidden = true
+        titleLabel.stringValue = "PlushBuddy Hub is locked"
+        detailLabel.stringValue = "Enter the parent PIN to manage settings, paired devices, AI mode, and clients. Voice services stay ready while the Hub is open."
+    }
+
     @objc private func configureRuntimeMode() {
+        guard unlockHubIfNeeded(reason: "Change AI mode") else { return }
         let current = selectedRuntimeMode()
         let alert = NSAlert()
-        alert.messageText = "Choose PlushBuddy runtime mode"
+        alert.messageText = "Choose PlushBuddy AI mode"
         alert.informativeText = """
-        Cloud LLM mode uses Gemini/OpenAI for answers after Hub redaction and keeps voice, storage, profiles, and audio local.
+        Cloud AI mode uses Gemini/OpenAI for answers after Hub redaction and keeps voice, storage, profiles, and audio local.
 
-        Privacy local-first mode avoids cloud LLM calls and uses local models when installed. It is more private, but needs more memory and may be less capable until local model setup is complete.
+        Local AI mode avoids Cloud AI model calls and uses a Local AI model installed on this Mac. It is more private, but needs more memory and may be less capable until Local AI setup is complete.
 
         Current mode: \(runtimeModeDisplayName(current))
         """
-        alert.addButton(withTitle: "Cloud LLM")
-        alert.addButton(withTitle: "Privacy local-first")
+        alert.addButton(withTitle: "Cloud AI")
+        alert.addButton(withTitle: "Local AI")
         alert.addButton(withTitle: "Cancel")
         let choice = alert.runModal()
         let next: String?
@@ -1820,8 +2366,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
         guard let next, next != current else { return }
         UserDefaults.standard.set(next, forKey: "PlushBuddyRuntimeMode")
+        UserDefaults.standard.set(next == "privacy_local_first", forKey: "PlushBuddyPromptLocalAiSetupAfterRestart")
         appendLog("app-shell.log", "runtime mode changed to \(next)")
         retryStartup()
+    }
+
+    private func promptLocalAiSetupIfNeeded() {
+        guard selectedRuntimeMode() == "privacy_local_first" else { return }
+        let shouldPrompt = UserDefaults.standard.bool(forKey: "PlushBuddyPromptLocalAiSetupAfterRestart")
+        guard shouldPrompt else { return }
+        UserDefaults.standard.set(false, forKey: "PlushBuddyPromptLocalAiSetupAfterRestart")
+
+        let status = try? localAiModelStatus()
+        if status?.ready == true {
+            showInfoAlert(title: "Local AI is ready", message: "\(localAiDisplayName(status)) is installed and ready for conversations.")
+            return
+        }
+        if status?.installing == true {
+            showInfoAlert(title: "Local AI model is installing", message: "Keep this Mac awake. PlushBuddy will update the Hub screen when the Local AI model is ready.")
+            scheduleLocalAiInstallPoll()
+            return
+        }
+        guard status?.installSupported == true else {
+            showInfoAlert(title: "Local AI is not available here", message: "This Hub build cannot install a Local AI model on this Mac. Switch to Cloud AI if you want conversations now.")
+            return
+        }
+
+        let modelName = localAiDisplayName(status)
+        let recommendation = status?.recommendationNote?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let alert = NSAlert()
+        alert.messageText = "Local AI selected"
+        alert.informativeText = """
+        Based on this Mac, PlushBuddy recommends \(modelName).
+
+        \(recommendation?.isEmpty == false ? recommendation! + "\n\n" : "")Install it now, or come back later using the Local AI setup button.
+        """
+        alert.addButton(withTitle: "Install now")
+        alert.addButton(withTitle: "Later")
+        if alert.runModal() == .alertFirstButtonReturn {
+            startLocalAiInstall(showConfirmation: false)
+        }
     }
 
     private func selectedRuntimeMode() -> String {
@@ -1839,9 +2423,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func runtimeModeDisplayName(_ mode: String) -> String {
         switch mode {
         case "privacy_local_first":
-            return "Privacy local-first"
+            return "Local AI"
         case "cloud_llm":
-            return "Cloud LLM"
+            return "Cloud AI"
         default:
             return mode
         }
@@ -1876,6 +2460,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         provider == "openai" ? "OpenAI" : "Gemini"
     }
 
+    private func localAiDisplayName(_ status: LocalAiModelStatus?) -> String {
+        if let selected = status?.selectedModelId, !selected.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return localAiModelDisplayName(selected)
+        }
+        if let recommended = status?.recommendedModelId, !recommended.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return localAiModelDisplayName(recommended)
+        }
+        if let display = status?.displayName,
+           display.localizedCaseInsensitiveContains("local"),
+           !display.localizedCaseInsensitiveContains("cloud"),
+           !display.localizedCaseInsensitiveContains("gemini"),
+           !display.localizedCaseInsensitiveContains("openai") {
+            return display
+        }
+        return "the recommended Local AI model"
+    }
+
+    private func localAiModelDisplayName(_ modelId: String) -> String {
+        switch modelId {
+        case "gemma-4-e4b-q4":
+            return "Gemma 4 E4B Q4 Local AI model"
+        case "gemma-4-12b-q4":
+            return "Gemma 4 12B Q4 Local AI model"
+        case "gemma-4-26b-a4b-q4":
+            return "Gemma 4 26B A4B Q4 Local AI model"
+        default:
+            return "\(modelId) Local AI model"
+        }
+    }
+
     private struct CloudAiModelStatus {
         let provider: String
         let configured: Bool
@@ -1889,14 +2503,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
+    private struct LocalAiModelStatus {
+        let ready: Bool
+        let installSupported: Bool
+        let installing: Bool
+        let displayName: String
+        let recommendedModelId: String?
+        let selectedModelId: String?
+        let recommendationNote: String?
+    }
+
     private func refreshChecklistButtons(conversationReady: Bool? = nil) {
-        let parentPinReady = UserDefaults.standard.bool(forKey: "PlushBuddyHubParentPinConfigured")
+        let parentPinReady = (try? hubParentPinConfigured()) ?? false
+        UserDefaults.standard.set(parentPinReady, forKey: "PlushBuddyHubParentPinConfigured")
+        let runtimeMode = selectedRuntimeMode()
+        let localAiMode = runtimeMode == "privacy_local_first"
+        let aiModeTitle = localAiMode
+            ? "AI mode: Local AI"
+            : "AI mode: Cloud AI"
+        let localStatus = try? localAiModelStatus()
         let status = try? cloudAiModelStatus()
         if let status {
             UserDefaults.standard.set(status.provider, forKey: "PlushBuddyCloudLlmProvider")
             UserDefaults.standard.set(status.configured, forKey: "PlushBuddyHubCloudLlmConfigured")
+        } else {
+            UserDefaults.standard.set(false, forKey: "PlushBuddyHubCloudLlmConfigured")
         }
-        let cloudReady = conversationReady == true || status?.configured == true || UserDefaults.standard.bool(forKey: "PlushBuddyHubCloudLlmConfigured")
+        let cloudReady = status?.configured == true
         let providerName = status?.displayName ?? cloudLlmProviderDisplayName(selectedCloudLlmProvider())
         let available = status?.availableDescription ?? ""
         let cloudTitle: String
@@ -1908,7 +2541,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             cloudTitle = "Configure Cloud AI model"
         }
         setChecklistButton(parentSetupButton, title: parentPinReady ? "Parent PIN done" : "Set parent PIN", complete: parentPinReady)
-        setChecklistButton(configureCloudLlmButton, title: cloudTitle, complete: cloudReady)
+        setChecklistButton(runtimeModeButton, title: aiModeTitle, complete: true)
+        configureCloudLlmButton.isHidden = localAiMode
+        localModelInstallButton.isHidden = !localAiMode
+        localModelCancelButton.isHidden = true
+        if !localAiMode {
+            setChecklistButton(configureCloudLlmButton, title: cloudTitle, complete: cloudReady)
+        } else {
+            let ready = localStatus?.ready == true
+            let installing = localStatus?.installing == true
+            let supported = localStatus?.installSupported == true
+            let localTitle: String
+            if ready {
+                localTitle = "Local AI model ready: \(localAiDisplayName(localStatus))"
+            } else if installing {
+                localTitle = "Installing Local AI model: \(localAiDisplayName(localStatus))…"
+            } else if supported {
+                localTitle = "Local AI setup needed — install recommended model"
+            } else {
+                localTitle = "Local AI install unavailable"
+            }
+            setChecklistButton(localModelInstallButton, title: localTitle, complete: ready)
+            localModelInstallButton.toolTip = localStatus?.recommendationNote
+            localModelInstallButton.isEnabled = supported && !ready && !installing
+            localModelCancelButton.isHidden = !installing
+            if installing {
+                showLocalAiInstallingHero(status: localStatus)
+                scheduleLocalAiInstallPoll()
+            }
+        }
     }
 
     private func setChecklistButton(_ button: NSButton?, title: String, complete: Bool) {
@@ -2083,6 +2744,68 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         )
     }
 
+    private func localAiModelStatus() throws -> LocalAiModelStatus {
+        let health = try getJsonFromHub(path: "/api/v1/health")
+        let status = try? getJsonFromHub(path: "/api/v1/status")
+        return LocalAiModelStatus(
+            ready: health["conversation_engine_ready"] as? Bool ?? false,
+            installSupported: health["model_install_supported"] as? Bool ?? false,
+            installing: health["model_installing"] as? Bool ?? false,
+            displayName: status?["display_name"] as? String ?? "Local AI model",
+            recommendedModelId: status?["recommended_model_id"] as? String,
+            selectedModelId: status?["selected_local_model_id"] as? String,
+            recommendationNote: status?["local_model_recommendation_note"] as? String
+        )
+    }
+
+    private func installLocalAiModelInHub() throws {
+        let statusCode = try postEmptyToHub(path: "/api/v1/model/install")
+        guard (200..<300).contains(statusCode) else {
+            let message: String
+            switch statusCode {
+            case 403:
+                message = "Only PlushBuddy Hub can install the local AI model."
+            case 501:
+                message = "Local AI model installation is not supported on this Hub build."
+            default:
+                message = "Hub returned HTTP \(statusCode)."
+            }
+            throw NSError(domain: "PlushBuddyHub", code: statusCode, userInfo: [NSLocalizedDescriptionKey: message])
+        }
+    }
+
+    private func cancelLocalAiModelInstallInHub() throws {
+        let statusCode = try postEmptyToHub(path: "/api/v1/model/cancel")
+        guard (200..<300).contains(statusCode) else {
+            throw NSError(
+                domain: "PlushBuddyHub",
+                code: statusCode,
+                userInfo: [NSLocalizedDescriptionKey: "Hub returned HTTP \(statusCode)."]
+            )
+        }
+    }
+
+    private func hubParentPinConfigured() throws -> Bool {
+        let object = try getJsonFromHub(path: "/api/v1/status")
+        return object["parent_configured"] as? Bool ?? false
+    }
+
+    private func authorizeParentPinInHub(pin: String) throws -> Bool {
+        let statusCode = try postJsonToHub(path: "/api/v1/parent-pin/authorize", body: ["pin": pin])
+        switch statusCode {
+        case 200..<300:
+            return true
+        case 401:
+            return false
+        default:
+            throw NSError(
+                domain: "PlushBuddyHub",
+                code: statusCode,
+                userInfo: [NSLocalizedDescriptionKey: "Hub returned HTTP \(statusCode)."]
+            )
+        }
+    }
+
     private func pairedDevices(pin: String) throws -> [PairedDevice] {
         let rows = try postJsonToHubForArray(path: "/api/v1/paired-clients", body: ["pin": pin])
         return rows.compactMap { row in
@@ -2096,6 +2819,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 revokedAt: row["revoked_at"] as? Int
             )
         }
+    }
+
+    private func pairedDevicesSummary() throws -> PairedDevicesSummary {
+        let object = try getJsonFromHub(path: "/api/v1/paired-clients/summary")
+        return PairedDevicesSummary(
+            activeCount: object["active_count"] as? Int ?? 0,
+            latestLabel: object["latest_label"] as? String,
+            latestPlatform: object["latest_platform"] as? String,
+            latestClientId: object["latest_client_id"] as? String
+        )
     }
 
     private func revokePairedDevice(pin: String, clientId: String) throws {
@@ -2126,7 +2859,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(cookie, forHTTPHeaderField: "Cookie")
         request.setValue(try stationOrigin(), forHTTPHeaderField: "Origin")
+        addHubClientHeaders(&request)
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        return blockingHttpStatus(request).statusCode
+    }
+
+    private func postEmptyToHub(path: String) throws -> Int {
+        let cookie = try stationSessionCookie()
+        let endpoint = try stationApiUrl(path: path)
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 20
+        request.setValue(cookie, forHTTPHeaderField: "Cookie")
+        request.setValue(try stationOrigin(), forHTTPHeaderField: "Origin")
+        addHubClientHeaders(&request)
         return blockingHttpStatus(request).statusCode
     }
 
@@ -2138,6 +2884,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         request.timeoutInterval = 20
         request.setValue(cookie, forHTTPHeaderField: "Cookie")
         request.setValue(try stationOrigin(), forHTTPHeaderField: "Origin")
+        addHubClientHeaders(&request)
         let result = blockingHttpData(request)
         guard (200..<300).contains(result.statusCode) else {
             throw NSError(
@@ -2165,6 +2912,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(cookie, forHTTPHeaderField: "Cookie")
         request.setValue(try stationOrigin(), forHTTPHeaderField: "Origin")
+        addHubClientHeaders(&request)
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let result = blockingHttpData(request)
         guard (200..<300).contains(result.statusCode) else {
@@ -2242,6 +2990,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         request.timeoutInterval = 10
         request.setValue(token, forHTTPHeaderField: "x-plushpal-bootstrap")
         request.setValue(try stationOrigin(), forHTTPHeaderField: "Origin")
+        addHubClientHeaders(&request)
         let result = blockingHttpStatus(request)
         guard (200..<300).contains(result.statusCode),
               let setCookie = result.headers["Set-Cookie"] as? String,
@@ -2317,8 +3066,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         guard let text = String(data: hostOutput, encoding: .utf8) else { return }
 
         for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
-            if line.contains("PlushPal test bootstrap URL:") {
-                let urlText = line.replacingOccurrences(of: "PlushPal test bootstrap URL:", with: "")
+            if line.contains("PlushBuddy Hub test bootstrap URL:") {
+                let urlText = line.replacingOccurrences(of: "PlushBuddy Hub test bootstrap URL:", with: "")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 guard parsedHostUrlText != urlText else { continue }
                 if let url = URL(string: urlText) {
@@ -2326,7 +3075,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     didLoadHostUrl = true
                     hostUrl = url
                     stationSessionCookieValue = nil
-                    appendLog("app-shell.log", "station host url \(urlText)")
+                    appendLog("app-shell.log", "Hub host url \(urlText)")
                     DispatchQueue.main.async { [weak self] in
                         self?.updateServiceStatuses(
                             storage: nil,
@@ -2339,12 +3088,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     }
                     waitForStationHealth(url)
                 }
-            } else if line.contains("PlushPal LAN bootstrap URL:") {
-                let urlText = line.replacingOccurrences(of: "PlushPal LAN bootstrap URL:", with: "")
+            } else if line.contains("PlushBuddy Hub LAN bootstrap URL:") {
+                let urlText = line.replacingOccurrences(of: "PlushBuddy Hub LAN bootstrap URL:", with: "")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 if let url = URL(string: urlText), lanPairingUrl?.absoluteString != urlText {
                     lanPairingUrl = url
-                    appendLog("app-shell.log", "station LAN pairing url \(urlText)")
+                    appendLog("app-shell.log", "Hub LAN pairing url \(urlText)")
                 }
             }
         }
@@ -2467,7 +3216,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if isConversationEngineReady(health) {
             return "✓ Conversations: ready"
         }
-        return "△ Conversations: configure Cloud LLM or local mode in Hub"
+        return selectedRuntimeMode() == "privacy_local_first"
+            ? "△ Conversations: Local AI model needs setup"
+            : "△ Conversations: configure Cloud AI model"
     }
 
     private func sttStatusLine(from health: [String: Any]) -> String {
@@ -2664,15 +3415,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.progress.isHidden = false
                 self.progress.startAnimation(nil)
                 self.retryButton.isHidden = true
+                self.refreshStatusButton.isHidden = true
                 self.quitButton.isHidden = true
                 self.openBrowserButton.isHidden = true
                 self.pairAndroidButton.isHidden = true
                 self.pairedDevicesButton.isHidden = true
+                self.pairedDevicesSummaryLabel.isHidden = true
                 self.openInAppButton.isHidden = true
                 self.runtimeModeButton.isHidden = true
                 self.themeModeButton.isHidden = true
+                self.quickGuideButton.isHidden = true
                 self.parentSetupButton.isHidden = true
                 self.configureCloudLlmButton.isHidden = true
+                self.localModelInstallButton.isHidden = true
+                self.localModelCancelButton.isHidden = true
                 self.copyDiagnosticsButton.isHidden = true
                 self.openLogsButton.isHidden = true
                 self.resetVoiceRuntimeButton.isHidden = true
@@ -2683,15 +3439,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.progress.isHidden = false
                 self.progress.startAnimation(nil)
                 self.retryButton.isHidden = true
+                self.refreshStatusButton.isHidden = true
                 self.quitButton.isHidden = true
                 self.openBrowserButton.isHidden = true
                 self.pairAndroidButton.isHidden = true
                 self.pairedDevicesButton.isHidden = true
+                self.pairedDevicesSummaryLabel.isHidden = true
                 self.openInAppButton.isHidden = true
                 self.runtimeModeButton.isHidden = true
                 self.themeModeButton.isHidden = true
+                self.quickGuideButton.isHidden = true
                 self.parentSetupButton.isHidden = true
                 self.configureCloudLlmButton.isHidden = true
+                self.localModelInstallButton.isHidden = true
+                self.localModelCancelButton.isHidden = true
                 self.copyDiagnosticsButton.isHidden = true
                 self.openLogsButton.isHidden = true
                 self.resetVoiceRuntimeButton.isHidden = true
@@ -2702,44 +3463,63 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.progress.isHidden = false
                 self.progress.startAnimation(nil)
                 self.retryButton.isHidden = true
+                self.refreshStatusButton.isHidden = true
                 self.quitButton.isHidden = true
                 self.openBrowserButton.isHidden = true
                 self.pairAndroidButton.isHidden = true
                 self.pairedDevicesButton.isHidden = true
+                self.pairedDevicesSummaryLabel.isHidden = true
                 self.openInAppButton.isHidden = true
                 self.runtimeModeButton.isHidden = true
                 self.themeModeButton.isHidden = true
+                self.quickGuideButton.isHidden = true
                 self.parentSetupButton.isHidden = true
                 self.configureCloudLlmButton.isHidden = true
+                self.localModelInstallButton.isHidden = true
+                self.localModelCancelButton.isHidden = true
                 self.copyDiagnosticsButton.isHidden = true
                 self.openLogsButton.isHidden = true
                 self.resetVoiceRuntimeButton.isHidden = true
             case .stationReady(let url, let conversationReady):
                 self.setupPanel.isHidden = false
-                self.progress.stopAnimation(nil)
-                self.progress.isHidden = true
+                self.hostUrl = url
+                self.lastConversationReady = conversationReady
+                self.persistStationClientUrl(url)
                 self.refreshChecklistButtons(conversationReady: conversationReady)
-                self.titleLabel.stringValue = "PlushBuddy Hub is ready"
-                self.detailLabel.stringValue = conversationReady
-                    ? "All required local services are healthy. Set parent controls, connect a phone, or open a local client."
-                    : "Voice, storage, and pairing are ready. Set or verify the parent PIN, then configure a Cloud AI model before real conversations."
+                let localStatus = try? self.localAiModelStatus()
+                if self.selectedRuntimeMode() == "privacy_local_first", localStatus?.installing == true {
+                    self.showLocalAiInstallingHero(status: localStatus)
+                } else {
+                    self.showHubReadyHero(conversationReady: conversationReady)
+                }
                 self.splashScrollView.isHidden = false
                 self.webView.isHidden = true
                 self.retryButton.isHidden = false
+                self.refreshStatusButton.isHidden = false
                 self.quitButton.isHidden = false
                 self.openBrowserButton.isHidden = false
                 self.pairAndroidButton.isHidden = false
-                self.pairedDevicesButton.isHidden = false
+                self.pairedDevicesSummaryLabel.isHidden = false
                 self.openInAppButton.isHidden = false
                 self.runtimeModeButton.isHidden = false
                 self.themeModeButton.isHidden = false
+                self.quickGuideButton.isHidden = false
                 self.parentSetupButton.isHidden = false
                 self.configureCloudLlmButton.isHidden = false
+                self.localModelInstallButton.isHidden = self.selectedRuntimeMode() != "privacy_local_first"
+                self.localModelCancelButton.isHidden = true
+                self.promptLocalAiSetupIfNeeded()
                 self.copyDiagnosticsButton.isHidden = false
                 self.openLogsButton.isHidden = false
                 self.resetVoiceRuntimeButton.isHidden = false
-                self.hostUrl = url
-                self.persistStationClientUrl(url)
+                self.refreshChecklistButtons(conversationReady: conversationReady)
+                self.refreshPairedDevicesSummary()
+                if (try? self.hubParentPinConfigured()) == true,
+                   self.hubUnlockedParentPin == nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                        self?.unlockHubIfNeeded(reason: "Unlock PlushBuddy Hub")
+                    }
+                }
             case .ready:
                 self.setupPanel.isHidden = true
                 self.progress.stopAnimation(nil)
@@ -2747,15 +3527,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.splashScrollView.isHidden = true
                 self.webView.isHidden = false
                 self.retryButton.isHidden = true
+                self.refreshStatusButton.isHidden = true
                 self.quitButton.isHidden = true
                 self.openBrowserButton.isHidden = true
                 self.pairAndroidButton.isHidden = true
                 self.pairedDevicesButton.isHidden = true
+                self.pairedDevicesSummaryLabel.isHidden = true
                 self.openInAppButton.isHidden = true
                 self.runtimeModeButton.isHidden = true
                 self.themeModeButton.isHidden = true
+                self.quickGuideButton.isHidden = true
                 self.parentSetupButton.isHidden = true
                 self.configureCloudLlmButton.isHidden = true
+                self.localModelInstallButton.isHidden = true
+                self.localModelCancelButton.isHidden = true
                 self.copyDiagnosticsButton.isHidden = true
                 self.openLogsButton.isHidden = true
                 self.resetVoiceRuntimeButton.isHidden = true
@@ -2768,15 +3553,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.splashScrollView.isHidden = false
                 self.webView.isHidden = true
                 self.retryButton.isHidden = false
+                self.refreshStatusButton.isHidden = false
                 self.quitButton.isHidden = false
                 self.openBrowserButton.isHidden = true
                 self.pairAndroidButton.isHidden = true
                 self.pairedDevicesButton.isHidden = true
+                self.pairedDevicesSummaryLabel.isHidden = true
                 self.openInAppButton.isHidden = true
                 self.runtimeModeButton.isHidden = false
                 self.themeModeButton.isHidden = false
+                self.quickGuideButton.isHidden = false
                 self.parentSetupButton.isHidden = true
                 self.configureCloudLlmButton.isHidden = true
+                self.localModelInstallButton.isHidden = true
+                self.localModelCancelButton.isHidden = true
                 self.copyDiagnosticsButton.isHidden = false
                 self.openLogsButton.isHidden = false
                 self.resetVoiceRuntimeButton.isHidden = false
@@ -2857,6 +3647,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         return base.appendingPathComponent("PlushPal", isDirectory: true)
     }
 
+    private func macLocalModelProfileEnvironment() -> [String: String] {
+        let totalMemoryMiB = ProcessInfo.processInfo.physicalMemory / 1_048_576
+        let availableMemoryMiB = macAvailableMemoryMiB() ?? totalMemoryMiB
+        let freeStorageMiB = macFreeStorageMiB() ?? 0
+        let osMajor = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
+        #if arch(arm64)
+        let architecture = "arm64"
+        #else
+        let architecture = "x86_64"
+        #endif
+        let acceleration = MTLCreateSystemDefaultDevice() == nil ? "none" : "metal"
+        return [
+            "PLUSHPAL_DEVICE_PLATFORM": "macos",
+            "PLUSHPAL_DEVICE_ARCH": architecture,
+            "PLUSHPAL_DEVICE_OS_MAJOR": "\(osMajor)",
+            "PLUSHPAL_DEVICE_TOTAL_MEMORY_MIB": "\(totalMemoryMiB)",
+            "PLUSHPAL_DEVICE_AVAILABLE_MEMORY_MIB": "\(availableMemoryMiB)",
+            "PLUSHPAL_DEVICE_FREE_STORAGE_MIB": "\(freeStorageMiB)",
+            "PLUSHPAL_DEVICE_LOGICAL_CORES": "\(ProcessInfo.processInfo.activeProcessorCount)",
+            "PLUSHPAL_DEVICE_ACCELERATION": acceleration,
+        ]
+    }
+
+    private func macAvailableMemoryMiB() -> UInt64? {
+        var stats = vm_statistics64()
+        var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64_data_t>.stride / MemoryLayout<integer_t>.stride)
+        let result = withUnsafeMutablePointer(to: &stats) { pointer in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { rebound in
+                host_statistics64(mach_host_self(), HOST_VM_INFO64, rebound, &count)
+            }
+        }
+        guard result == KERN_SUCCESS else { return nil }
+        let pageSize = UInt64(vm_kernel_page_size)
+        let freePages = UInt64(stats.free_count)
+        let inactivePages = UInt64(stats.inactive_count)
+        let purgeablePages = UInt64(stats.purgeable_count)
+        return (freePages + inactivePages + purgeablePages) * pageSize / 1_048_576
+    }
+
+    private func macFreeStorageMiB() -> UInt64? {
+        let url = applicationSupportDirectory()
+        let values = try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey, .volumeAvailableCapacityKey])
+        let bytes = values?.volumeAvailableCapacityForImportantUsage
+            ?? values?.volumeAvailableCapacity.map(Int64.init)
+        guard let bytes, bytes > 0 else { return nil }
+        return UInt64(bytes) / 1_048_576
+    }
+
     private func mergedEnvironment(extra: [String: String]) -> [String: String] {
         var environment = ProcessInfo.processInfo.environment
         let cache = applicationSupportDirectory().appendingPathComponent("cache", isDirectory: true)
@@ -2904,6 +3742,7 @@ private struct VoiceRuntime {
     let engine: String
     let python: URL
     let script: URL
+    let source: URL?
 }
 
 private struct SpeechToTextRuntime {

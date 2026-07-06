@@ -207,54 +207,47 @@ const fn percentage_with_ceiling(value: u64, percent: u64) -> u64 {
 
 #[must_use]
 pub fn initial_model_candidates() -> Vec<ModelCandidate> {
-    let platforms = vec![
-        Platform::Ios,
-        Platform::Android,
-        Platform::MacOs,
-        Platform::Windows,
-    ];
+    let platforms = vec![Platform::MacOs];
     let architectures = vec![Architecture::Arm64, Architecture::X86_64];
-    let minimum_os_versions = vec![
-        PlatformOsMinimum {
-            platform: Platform::Ios,
-            major: 17,
-        },
-        PlatformOsMinimum {
-            platform: Platform::Android,
-            major: 29,
-        },
-        PlatformOsMinimum {
-            platform: Platform::MacOs,
-            major: 13,
-        },
-        PlatformOsMinimum {
-            platform: Platform::Windows,
-            major: 11,
-        },
-    ];
+    let minimum_os_versions = vec![PlatformOsMinimum {
+        platform: Platform::MacOs,
+        major: 13,
+    }];
     vec![
         ModelCandidate {
-            model_id: "qwen3-1.7b-q8".to_owned(),
+            model_id: "gemma-4-e4b-q4".to_owned(),
             quality_rank: 10,
             supported_platforms: platforms.clone(),
             supported_architectures: architectures.clone(),
             minimum_os_versions: minimum_os_versions.clone(),
-            minimum_total_memory_mib: 4_096,
-            expected_peak_memory_mib: 2_500,
-            installed_size_mib: 1_830,
-            minimum_logical_cores: 4,
+            minimum_total_memory_mib: 12_288,
+            expected_peak_memory_mib: 6_144,
+            installed_size_mib: 4_916,
+            minimum_logical_cores: 6,
             requires_acceleration: true,
         },
         ModelCandidate {
-            model_id: "qwen3-4b-q4".to_owned(),
+            model_id: "gemma-4-12b-q4".to_owned(),
             quality_rank: 20,
+            supported_platforms: platforms.clone(),
+            supported_architectures: architectures.clone(),
+            minimum_os_versions: minimum_os_versions.clone(),
+            minimum_total_memory_mib: 16_384,
+            expected_peak_memory_mib: 9_216,
+            installed_size_mib: 6_654,
+            minimum_logical_cores: 8,
+            requires_acceleration: true,
+        },
+        ModelCandidate {
+            model_id: "gemma-4-26b-a4b-q4".to_owned(),
+            quality_rank: 30,
             supported_platforms: platforms,
             supported_architectures: architectures,
             minimum_os_versions,
-            minimum_total_memory_mib: 8_192,
-            expected_peak_memory_mib: 3_400,
-            installed_size_mib: 2_800,
-            minimum_logical_cores: 6,
+            minimum_total_memory_mib: 32_768,
+            expected_peak_memory_mib: 20_480,
+            installed_size_mib: 13_771,
+            minimum_logical_cores: 8,
             requires_acceleration: true,
         },
     ]
@@ -266,9 +259,9 @@ mod tests {
 
     fn device(memory: u64, available: u64, storage: u64) -> DeviceProfile {
         DeviceProfile {
-            platform: Platform::Ios,
+            platform: Platform::MacOs,
             architecture: Architecture::Arm64,
-            os_major: 18,
+            os_major: 14,
             total_memory_mib: memory,
             available_memory_mib: available,
             free_storage_mib: storage,
@@ -279,18 +272,33 @@ mod tests {
 
     #[test]
     fn enhanced_device_selects_highest_quality_eligible_tier() {
+        let result = CapabilityAssessor::default().assess(
+            &device(32_768, 32_768, 128_000),
+            &initial_model_candidates(),
+        );
+        assert_eq!(
+            result.recommended_model_id.as_deref(),
+            Some("gemma-4-26b-a4b-q4")
+        );
+    }
+
+    #[test]
+    fn mid_tier_device_selects_12b_when_26b_does_not_fit() {
         let result = CapabilityAssessor::default()
-            .assess(&device(16_384, 8_192, 10_000), &initial_model_candidates());
-        assert_eq!(result.recommended_model_id.as_deref(), Some("qwen3-4b-q4"));
+            .assess(&device(24_576, 24_576, 64_000), &initial_model_candidates());
+        assert_eq!(
+            result.recommended_model_id.as_deref(),
+            Some("gemma-4-12b-q4")
+        );
     }
 
     #[test]
     fn standard_device_falls_back_to_smaller_tier() {
         let result = CapabilityAssessor::default()
-            .assess(&device(6_144, 3_200, 4_000), &initial_model_candidates());
+            .assess(&device(12_288, 7_373, 32_000), &initial_model_candidates());
         assert_eq!(
             result.recommended_model_id.as_deref(),
-            Some("qwen3-1.7b-q8")
+            Some("gemma-4-e4b-q4")
         );
     }
 
@@ -298,12 +306,12 @@ mod tests {
     fn memory_headroom_boundary_is_inclusive() {
         let candidate = &initial_model_candidates()[0];
         let result = CapabilityAssessor::default().assess(
-            &device(4_096, 3_000, 2_342),
+            &device(12_288, 7_373, 5_428),
             std::slice::from_ref(candidate),
         );
         assert_eq!(
             result.recommended_model_id.as_deref(),
-            Some("qwen3-1.7b-q8")
+            Some("gemma-4-e4b-q4")
         );
     }
 
@@ -311,30 +319,30 @@ mod tests {
     fn one_mib_below_storage_reserve_fails() {
         let candidate = &initial_model_candidates()[0];
         let result = CapabilityAssessor::default().assess(
-            &device(4_096, 3_000, 2_341),
+            &device(12_288, 7_373, 5_427),
             std::slice::from_ref(candidate),
         );
         assert_eq!(result.recommended_model_id, None);
         assert!(result.candidates[0]
             .reasons
             .contains(&IneligibilityReason::InsufficientStorage {
-                required_mib: 2_342,
-                actual_mib: 2_341,
+                required_mib: 5_428,
+                actual_mib: 5_427,
             }));
     }
 
     #[test]
     fn missing_acceleration_and_old_os_are_reported_together() {
         let candidate = &initial_model_candidates()[0];
-        let mut profile = device(8_192, 4_000, 4_000);
-        profile.os_major = 16;
+        let mut profile = device(12_288, 7_373, 32_000);
+        profile.os_major = 12;
         profile.acceleration = Acceleration::None;
         let result =
             CapabilityAssessor::default().assess(&profile, std::slice::from_ref(candidate));
         assert!(result.candidates[0].reasons.contains(
             &IneligibilityReason::OperatingSystemTooOld {
-                required: 17,
-                actual: 16,
+                required: 13,
+                actual: 12,
             }
         ));
         assert!(result.candidates[0]

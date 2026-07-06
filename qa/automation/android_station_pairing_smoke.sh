@@ -4,7 +4,7 @@ set +m
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RESULT_ROOT="${PLUSHPAL_TEST_RESULTS_DIR:-$HOME/Downloads/PlushPal/test-results}"
-RESULT_DIR="$RESULT_ROOT/android-station-pairing-$(date +%Y%m%d-%H%M%S)"
+RESULT_DIR="$RESULT_ROOT/android-hub-pairing-$(date +%Y%m%d-%H%M%S)"
 DEVICE_ID="${ANDROID_DEVICE_ID:-}"
 PACKAGE_ID="${PLUSHPAL_ANDROID_PACKAGE:-com.plushpal.app}"
 mkdir -p "$RESULT_DIR"
@@ -22,7 +22,10 @@ MODEL_DIR="$(mktemp -d /tmp/plushbuddy-android-pairing-models-XXXXXX)"
 HOST_LOG="$RESULT_DIR/host.log"
 
 cleanup() {
-  if [[ -n "${HOST_PID:-}" ]]; then kill "$HOST_PID" >/dev/null 2>&1 || true; fi
+  if [[ -n "${HOST_PID:-}" ]]; then
+    kill "$HOST_PID" >/dev/null 2>&1 || true
+    wait "$HOST_PID" >/dev/null 2>&1 || true
+  fi
   rm -rf "$DATA_DIR" "$MODEL_DIR"
 }
 trap cleanup EXIT
@@ -36,18 +39,18 @@ trap cleanup EXIT
   PLUSHPAL_MODEL_DIR="$MODEL_DIR" \
   CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$HOME/Downloads/PlushPal/test-build/cargo-target}" \
   PLUSHPAL_ENABLE_MAC_KEYCHAIN_GEMINI=0 \
-  cargo run --release -p plushpal-desktop-host --features native-runtime > "$HOST_LOG" 2>&1
+  cargo run --release -p plushpal-desktop-host --bin plushpal-desktop-host --features native-runtime > "$HOST_LOG" 2>&1
 ) &
 HOST_PID=$!
 
 for _ in $(seq 1 120); do
-  if grep -q "PlushPal test bootstrap URL:" "$HOST_LOG"; then break; fi
+  if grep -q "PlushBuddy Hub test bootstrap URL:" "$HOST_LOG"; then break; fi
   sleep 1
 done
 
-BOOTSTRAP_URL="$(grep "PlushPal test bootstrap URL:" "$HOST_LOG" | tail -1 | sed 's/.*URL: //')"
+BOOTSTRAP_URL="$(grep "PlushBuddy Hub test bootstrap URL:" "$HOST_LOG" | tail -1 | sed 's/.*URL: //')"
 if [[ -z "$BOOTSTRAP_URL" ]]; then
-  echo "Station did not print bootstrap URL." >&2
+  echo "Hub did not print bootstrap URL." >&2
   exit 3
 fi
 
@@ -90,7 +93,7 @@ adb -s "$DEVICE_ID" pull /sdcard/plushbuddy-pairing.xml "$RESULT_DIR/window.xml"
 adb -s "$DEVICE_ID" exec-out screencap -p > "$RESULT_DIR/screen.png" || true
 
 if adb -s "$DEVICE_ID" shell dumpsys package "$PACKAGE_ID" >/dev/null 2>&1; then
-  echo "PASS: Android debug pairing intent accepted for Station on localhost:$PORT"
+  echo "PASS: Android debug pairing intent accepted for Hub on localhost:$PORT"
   echo "pass" > "$RESULT_DIR/status.txt"
 else
   echo "WARN: Android package not visible after pairing intent." >&2

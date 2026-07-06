@@ -420,7 +420,7 @@ impl PinnedHttpsTransport for ReqwestPinnedHttpsTransport {
             .redirect(reqwest::redirect::Policy::none())
             .no_proxy()
             .timeout(deadline)
-            .user_agent("PlushPal/0.1")
+            .user_agent("PlushBuddy/0.1")
             .resolve_to_addrs(host, addresses)
             .build()
             .map_err(|_| SearchError::Internal)?;

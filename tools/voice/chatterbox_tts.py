@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local Chatterbox voice-cloning bridge for PlushPal.
+"""Local Chatterbox voice-cloning bridge for PlushBuddy.
 
 This script is intentionally small and process-oriented so the Rust desktop
 host can keep all uploaded voice samples encrypted at rest, decrypt a reference

@@ -30,7 +30,7 @@ clients for mic capture, local STT when available, and playback.
   <img src="docs/assets/screenshots/iphone-simulator-welcome.png" alt="PlushBuddy iPhone simulator welcome screen" width="210" />
 </p>
 
-**Browser client** — local web client opened from PlushBuddy Hub/Station.
+**Browser client** — local web client opened from PlushBuddy Hub.
 
 <p>
   <img src="docs/assets/screenshots/browser-welcome.png" alt="PlushBuddy browser client welcome screen" width="650" />
@@ -51,7 +51,7 @@ clients for mic capture, local STT when available, and playback.
   profile through LuxTTS.
 - Requires parent approval before a voice can be used in conversation.
 - Supports voice-first child input on native clients, with typing as fallback.
-- Offers two Hub modes: privacy local-first or cloud LLM.
+- Offers two Hub modes: Local AI or Cloud AI.
 - Redacts/pseudonymizes kid information before cloud reasoning in cloud mode.
 - Synthesizes the response locally through LuxTTS in the selected toy voice.
 - Keeps conversation history scoped by kid and character.
@@ -71,16 +71,28 @@ PlushBuddy uses a local-Hub architecture:
 
 Android/iPhone/Mac/browser clients now route parent setup, kids, characters,
 provider keys, history, voice enrollment, and conversation turns through the
-Hub. Native client code still keeps local fallback/demo paths for development,
-but paired product usage treats the Hub as the backend.
+Hub. External apps only keep the minimum local shell state needed to operate:
+stable client identity, pairing/session information, theme/UI preferences, OS
+permission state, and temporary mic/file-picker data. They do not own durable
+family data, API keys, voice profiles, or conversation history.
+
+The Hub also has its own stable `hub-*` client identity. Hub admin data
+including parent PIN, Cloud AI provider keys, active provider, and paired-device
+revocation lives in that Hub-scoped encrypted store. During pairing/bootstrap,
+the Hub returns that Hub ID to the client. After that, every private persisted
+client request sends both `X-PlushBuddy-Client-Id` and
+`X-PlushBuddy-Hub-Id`: client-owned data is isolated by stable device identity,
+while Hub-owned checks such as parent PIN and Cloud AI settings are routed to
+the Hub store explicitly rather than by IP address or hidden global fallback.
 
 ```mermaid
 flowchart TB
     Clients["Android / iPhone / Mac app / local browser"] --> Hub["PlushBuddy Hub<br/>local private backend"]
-    Hub --> Registry["Root SQLCipher DB<br/>pairing + revocation registry"]
-    Hub --> ClientDB["Per-client SQLCipher stores<br/>kids, characters, keys, history, voices"]
+    Hub --> HubDB["Hub scoped SQLCipher store<br/>PIN, Cloud AI keys, paired devices"]
+    Hub --> Registry["Root SQLCipher DB<br/>key + compatibility store"]
+    Hub --> ClientDB["Per-client SQLCipher stores<br/>kids, characters, history, voices"]
     Hub --> STT["Local STT fallback<br/>packaged Whisper"]
-    Hub --> LLM["Local LLM or Gemini/OpenAI"]
+    Hub --> AI["Local AI model or Gemini/OpenAI"]
     Hub --> TTS["LuxTTS toy voice"]
     TTS --> Clients
 ```
@@ -89,8 +101,8 @@ flowchart TB
 
 | Mode | What runs locally | What may leave the home network | Best for |
 |---|---|---|---|
-| Privacy local-first | STT fallback, LLM, LuxTTS, SQLCipher storage | Nothing after model setup/update checks | Maximum privacy |
-| Cloud LLM | STT fallback, redaction, guardrails, LuxTTS, SQLCipher storage | Redacted text prompt to Gemini/OpenAI | Better answer quality / lower local compute |
+| Local AI | STT fallback, AI, LuxTTS, SQLCipher storage | Nothing after model setup/update checks | Maximum privacy |
+| Cloud AI | STT fallback, redaction, guardrails, LuxTTS, SQLCipher storage | Redacted text prompt to Gemini/OpenAI | Better answer quality / lower local compute |
 
 In both modes, raw voice samples and generated toy voice audio stay local.
 
@@ -104,7 +116,7 @@ Releases:
 
 That release includes:
 
-- macOS Station + Mac client DMG, split into `.part-aa`, `.part-ab`, ... files
+- macOS Hub + Mac client DMG, split into `.part-aa`, `.part-ab`, ... files
   because the DMG is large;
 - Android debug APK;
 - iPhone simulator app archive;
@@ -162,7 +174,8 @@ make run-demo
 
 This starts the current Hub runtime in `PLUSHPAL_RUNTIME_MODE=demo`, with deterministic demo
 reasoning and a synthetic voice engine. It validates the app flow, but it does
-not represent the real cloned toy-voice quality.
+not represent the real cloned toy-voice quality. Demo mode is a Hub runtime;
+external apps still use Hub APIs and do not create their own demo family store.
 
 ## Documentation map
 
@@ -170,7 +183,7 @@ Start here:
 
 - [Detailed system design and architecture](docs/architecture/SYSTEM_DESIGN.md)
 - [Codebase directory guide](docs/architecture/CODEBASE_DIRECTORY_GUIDE.md)
-- [PlushBuddy Hub MVP architecture transition](docs/architecture/ANDROID_MACSTATION_MVP_ARCHITECTURE.md)
+- [PlushBuddy Hub client architecture](docs/architecture/HUB_CLIENT_ARCHITECTURE.md)
 - [Documentation publication policy](docs/PUBLICATION_POLICY.md)
 - [Production hardening plan](docs/implementation/PRODUCTION_HARDENING_PLAN.md)
 - [QA test plan and latest execution report](docs/release/QA_TEST_PLAN_AND_EXECUTION_2026-06-25.md)
@@ -191,7 +204,7 @@ PlushBuddy is released under the [MIT License](LICENSE).
 
 The current `v0.1.0-dev.1` prerelease is buildable and demonstrates the product
 flow with Android, iPhone simulator, Mac client, local browser, and the macOS
-Station/Hub voice runtime.
+PlushBuddy Hub runtime.
 
 The implementation has moved to this stricter backend model:
 
@@ -210,8 +223,8 @@ The implementation has moved to this stricter backend model:
 2. Hub prevents system sleep while active.
 3. Hub opens/creates the SQLCipher database.
 4. Hub shows exactly two setup modes:
-   - privacy local-first;
-   - cloud LLM.
+   - Local AI mode;
+   - Cloud AI.
 5. Hub verifies required runtimes for the selected mode.
 6. Parent opens local browser/Mac client or displays QR pairing for native
    external clients.
@@ -236,7 +249,7 @@ The implementation has moved to this stricter backend model:
 5. Client sends transcript to Hub.
 6. Hub loads kid/character/history/settings from SQLCipher.
 7. Hub applies guardrails and redaction.
-8. Hub uses either local LLM or Gemini/OpenAI depending on mode.
+8. Hub uses either local AI model or Gemini/OpenAI depending on mode.
 9. Hub stores the turn.
 10. Hub synthesizes the response with LuxTTS.
 11. Client plays the generated toy voice.
@@ -253,10 +266,10 @@ The implementation has moved to this stricter backend model:
 | Hub launcher | Swift AppKit first; Windows/Linux launchers later |
 | Hub backend | Rust, Axum, Tokio |
 | Hub database | SQLCipher via Rust `rusqlite` |
-| Hub STT fallback | Packaged Python/Transformers wrapper for `openai/whisper-base`; `whisper.cpp` is the future lean-runtime target |
-| Local LLM | Target: `llama.cpp` + GGUF model tier by memory |
+| Hub STT fallback | Lazy setup using the Hub-managed Python/LuxTTS runtime plus `openai/whisper-base`; `whisper.cpp` is the future lean-runtime target |
+| Local AI model | `llama.cpp` + signed Google Gemma GGUF model tier by memory |
 | Voice model | LuxTTS through `tools/voice/luxtts_worker.py` |
-| Cloud LLM mode | Gemini/OpenAI called from Hub after redaction |
+| Cloud AI mode | Gemini/OpenAI called from Hub after redaction |
 | Packaging | Makefile, Cargo, Flutter, Gradle, Xcode, shell scripts |
 
 ## Repository structure
@@ -416,8 +429,9 @@ make public-artifacts
 
 This command builds from an external workspace under `~/Downloads/PlushPal/build`
 and writes artifacts under `~/Downloads/PlushPal/artifacts`, so generated files do
-not dirty the source checkout. It downloads the LuxTTS source dependency into
-`~/Downloads/PlushPal/deps` when needed.
+not dirty the source checkout. The generated apps stay lightweight: LuxTTS
+source/dependencies/model cache and Local AI GGUF models are downloaded later by
+PlushBuddy Hub setup into the user’s application-support/cache directories.
 
 Expected artifacts, depending on installed platform toolchains:
 
@@ -486,15 +500,17 @@ the background. QR pairing is for external native clients.
 2. Open PlushBuddy on Android.
 3. In Hub, choose the pairing QR option.
 4. Scan the QR in the Android app.
-5. In Android settings:
-   - create parent PIN;
-   - pair Hub;
-   - choose runtime mode;
+5. In Hub:
+   - set the parent PIN;
+   - choose Local AI or Cloud AI mode;
+   - configure Gemini/OpenAI if using Cloud AI;
+   - install the recommended local model if using Local AI.
+6. In Android settings:
    - create kid profile;
    - create character;
    - upload character photo and voice sample;
    - preview and approve the voice.
-6. Enter child mode and start talking.
+7. Enter child mode and start talking.
 
 ### Use iPhone
 
@@ -549,9 +565,9 @@ Chatterbox remains wired as a fallback/smoke-test path. OpenVoice, GPT-SoVITS, F
 
 Hub setup should offer only two parent-facing modes:
 
-- **Privacy local-first**: verified client STT or Hub STT fallback, local LLM,
+- **Local AI**: verified client STT or Hub STT fallback, local AI model,
   LuxTTS, and SQLCipher storage.
-- **Cloud LLM**: verified client STT or Hub STT fallback, Hub redaction and
+- **Cloud AI**: verified client STT or Hub STT fallback, Hub redaction and
   guardrails, Gemini/OpenAI text reasoning, LuxTTS, and SQLCipher storage.
 
 ## Security and privacy model
@@ -561,8 +577,8 @@ Hub setup should offer only two parent-facing modes:
 - Clients store only stable Hub pairing/client identity and session data.
 - Local browser/Mac attach and Android/iPhone/Mac QR pairing both use a bootstrap token exchanged for a Hub session.
 - Hub validates Host/Origin and bounds request sizes.
-- Voice samples are not sent to cloud LLMs.
-- Cloud LLM mode receives redacted text plus age/persona/safety context.
+- Voice samples are not sent to Cloud AI providers.
+- Cloud AI mode receives redacted text plus age/persona/safety context.
 
 ## Test commands
 
@@ -587,12 +603,19 @@ Latest local verification, June 25, 2026:
 - packaged Hub launched and reached readiness;
 - browser client rendered through packaged Hub;
 - packaged Mac client attached to packaged Hub;
-- Android real-device install/launch and Station pairing passed on a connected
+- Android real-device install/launch and Hub pairing passed on a connected
   Pixel 10 Pro;
 - iPhone simulator install/launch passed.
 
-Live Gemini/OpenAI UI conversation was not rerun in the June 25 pass because no
-provider API key was present after local secrets were removed.
+Latest local verification, July 5, 2026:
+
+- Hub was repackaged and launched in Cloud AI mode;
+- Hub health reached ready for local service, LuxTTS voice engine, STT,
+  conversation engine, and browser UI;
+- Gemini key stored in Hub SQLCipher was detected as configured;
+- Android APK was rebuilt/reinstalled on Pixel 10 Pro;
+- Android child-mode typed chat reached Hub/Gemini and rendered a child-safe
+  Teddy response.
 
 See the full platform-by-platform QA matrix in [docs/release/QA_TEST_PLAN_AND_EXECUTION_2026-06-25.md](docs/release/QA_TEST_PLAN_AND_EXECUTION_2026-06-25.md).
 
@@ -607,7 +630,7 @@ qa/automation/run_local_quality_gate.sh
 # Android physical device install/launch smoke
 qa/automation/android_device_smoke.sh
 
-# Android debug-build Station pairing smoke
+# Android debug-build Hub pairing smoke
 qa/automation/android_station_pairing_smoke.sh
 
 # iPhone simulator install/launch smoke
@@ -653,8 +676,9 @@ Generated evidence is written under `~/Downloads/PlushPal/test-results` by defau
   fallback; typed chat remains available when mic capture is blocked.
 - LuxTTS quality is good for the current samples, but latency remains a product concern.
 - Hub host machine must remain awake/reachable while clients use it.
-- Hub owns durable browser/mobile family state; remaining client-local paths are
-  development fallback paths for unpaired/demo operation.
+- Hub owns durable browser/mobile family state. External clients keep only
+  stable identity, pairing/session state, UI preferences, and temporary
+  permission/media-helper state.
 - No production account sync or cloud backup yet. Local encrypted Hub
   backup/export/import is available from Parent Settings.
 - Windows is not currently verified.
@@ -670,8 +694,9 @@ hardening work beyond the current `v0.1.0-dev.1` release:
 1. Run physical iPhone E2E with QR pairing, microphone, local-network
    permission, M4A upload, preview, approval, and child conversation.
 2. Broaden Mac/WebKit microphone QA and optimize Hub STT runtime packaging.
-3. Add local LLM runtime and the two-mode setup screen.
-4. Extend visible latency metrics for STT, LLM, Hub queue, LuxTTS synthesis,
+3. Broaden local/Cloud AI safety regression and model-quality evidence.
+4. Polish the two-mode setup screen and local-model install progress UX.
+5. Extend visible latency metrics for STT, AI, Hub queue, LuxTTS synthesis,
    WAV transfer, and playback.
 6. Add production signing/notarization for Hub and the Mac client.
 7. Add managed CI/CD release pipelines for Android, iPhone, and Mac. The repo

@@ -185,8 +185,6 @@ final class MacClientAppDelegate: NSObject, NSApplicationDelegate, WKNavigationD
     @objc private func openStation() {
         let candidates = [
             Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("PlushBuddy Hub.app", isDirectory: true),
-            Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("PlushBuddy Station.app", isDirectory: true),
-            Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("PlushPal.app", isDirectory: true),
         ]
         if let station = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }) {
             NSWorkspace.shared.openApplication(at: station, configuration: NSWorkspace.OpenConfiguration())

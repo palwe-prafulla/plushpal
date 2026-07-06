@@ -5,6 +5,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 ARTIFACTS_ROOT=${PLUSHPAL_ARTIFACTS_DIR:-"$ROOT/dist"}
 BUILD_ROOT=${PLUSHPAL_BUILD_DIR:-"$ROOT/build"}
 CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-"$BUILD_ROOT/cargo-target"}
+VERSION=${PLUSHPAL_VERSION:-0.1.0}
 export PLUSHPAL_ARTIFACTS_DIR="$ARTIFACTS_ROOT"
 export PLUSHPAL_BUILD_DIR="$BUILD_ROOT"
 export CARGO_TARGET_DIR
@@ -59,6 +60,6 @@ fi
 
 git diff --check
 shasum -a 256 \
-  "$ARTIFACTS_ROOT/macos/PlushBuddy-0.1.0-macos.zip" \
+  "$ARTIFACTS_ROOT/macos/PlushBuddy-$VERSION-macos.zip" \
   "$ARTIFACTS_ROOT/macos/PlushBuddy Hub.app/Contents/MacOS/PlushBuddy Hub" \
   "$ARTIFACTS_ROOT/macos/PlushBuddy Hub.app/Contents/Frameworks/libplushpal_llama.dylib"

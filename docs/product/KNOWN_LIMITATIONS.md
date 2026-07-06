@@ -1,6 +1,6 @@
 # Known limitations
 
-Last updated: 2026-07-03
+Last updated: 2026-07-05
 
 PlushBuddy is public and buildable, but it is still an MVP/prototype. The core
 Hub-backed architecture is implemented for paired product usage, including a
@@ -9,14 +9,17 @@ local Whisper STT fallback endpoint, and Android/iPhone can record bounded
 local WAV fallback clips for that endpoint. Local browser/Mac WebKit clients
 can also record bounded WAV fallback clips for Hub STT when browser microphone
 capture is available. Per-client encrypted Hub data stores are implemented on
-top of stable client identity. Fully local LLM mode is still in progress.
+top of stable client identity. Local-first AI mode is implemented with signed
+Google Gemma GGUF manifests and Hub-side model recommendation, but needs broader
+safety/performance QA before product-release claims.
 
 ## Architecture limitations
 
 - Paired product usage routes durable state, provider calls, guardrails, and
   business logic through PlushBuddy Hub.
-- Some unpaired/demo native paths still contain local fallback state/reasoning
-  for development and testing.
+- External clients are UI shells: they keep stable identity, pairing/session
+  info, UI preference, permissions, and temporary media-helper state only. Demo
+  and mock behavior lives in the Hub runtime, not in client-owned family stores.
 - Remote browser clients are intentionally out of scope. Browser support is
   local-only on the same machine running the Hub.
 - Windows/Linux Hub launchers are future work.
@@ -50,11 +53,13 @@ top of stable client identity. Fully local LLM mode is still in progress.
 - Local browser/Mac WebKit clients use bounded microphone capture and the Hub
   local STT endpoint when mic APIs are available; typed chat remains the
   fallback if mic capture is blocked.
-- Hub local STT fallback is packaged through a Python/Transformers
-  `openai/whisper-base` wrapper and health-checked by the Station launcher;
-  it is still heavier than the future `whisper.cpp` runtime target.
-- Fully local mode requires a local LLM runtime and model recommendation flow.
-- Cloud LLM mode requires a parent-provided Gemini/OpenAI key, stored by the
+- Hub local STT fallback is prepared by first-run setup through a
+  Python/Transformers `openai/whisper-base` wrapper and health-checked by the
+  Hub launcher; it is still heavier than the future `whisper.cpp` runtime
+  target.
+- Fully local mode is available through Hub-installed Gemma GGUF tiers, but
+  response quality, latency, and safety should be tested further across devices.
+- Cloud AI mode requires a parent-provided Gemini/OpenAI key, stored by the
   Hub and never returned to clients.
 - Prompt guardrails reduce risk but are not a complete safety system.
 

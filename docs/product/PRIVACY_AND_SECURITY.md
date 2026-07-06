@@ -1,6 +1,6 @@
 # Privacy and security model
 
-Last updated: 2026-07-02
+Last updated: 2026-07-05
 
 PlushBuddy is designed as a local-first pretend-play system. The current
 architecture uses **PlushBuddy Hub** as the local private backend. The Hub runs
@@ -19,14 +19,14 @@ Current paired-product architecture:
 - Remote browser clients are not supported for now.
 - Raw voice samples are sent only to the Hub over the paired local session for
   voice-profile creation.
-- Cloud LLM providers never receive raw audio or voice samples.
+- Cloud AI providers never receive raw audio or voice samples.
 
 ## Runtime modes
 
 | Mode | Cloud use | Local processing |
 |---|---|---|
-| Privacy local-first | No cloud LLM calls after model setup/update checks | Packaged Hub local STT fallback, local LLM target, LuxTTS, SQLCipher |
-| Cloud LLM | Redacted/minimized text prompt goes to Gemini/OpenAI | Redaction, guardrails, LuxTTS, SQLCipher |
+| Local AI | No Cloud AI calls after model setup/update checks | Packaged Hub local STT fallback, Hub-installed local Gemma/llama.cpp tier, LuxTTS, SQLCipher |
+| Cloud AI | Redacted/minimized text prompt goes to Gemini/OpenAI | Redaction, guardrails, LuxTTS, SQLCipher |
 
 Provider cloud STT is not used silently. If cloud STT is ever added, it must be
 an explicit parent opt-in.
@@ -47,16 +47,16 @@ Whisper wrapper for this endpoint.
 
 ## Data flow summary
 
-| Data | Stored where | Sent to Hub | Sent to cloud LLM |
+| Data | Stored where | Sent to Hub | Sent to Cloud AI |
 |---|---|---:|---:|
 | Kid name/birthdate/photo | Hub SQLCipher | Native clients read/write via authenticated API | No; prompt uses age/pseudonym |
 | Character/persona/photo | Hub SQLCipher | Native clients read/write via authenticated API | Redacted/persona fields only when needed |
-| Parent provider API key | Hub secure storage / SQLCipher secret reference | Entered through Hub/client setup API | Used by Hub in cloud LLM mode |
+| Parent provider API key | Hub-scoped SQLCipher encrypted record | Entered through Hub setup UI/API | Used by Hub in Cloud AI mode |
 | Raw voice sample | Hub transient processing input | Yes, local paired session only | No |
 | Processed voice reference | Hub encrypted voice store | N/A | No |
 | Child utterance audio | Client temporary or Hub STT fallback | Only if Hub STT fallback is needed | No |
 | Transcript text | Hub conversation pipeline | Yes | Local mode: no; cloud mode: redacted/minimized prompt |
-| LLM response text | Hub SQLCipher/history | Returned to client for display/playback | Returned by provider in cloud mode |
+| AI response text | Hub SQLCipher/history | Returned to client for display/playback | Returned by provider in cloud mode |
 | Generated WAV | Hub transient output and client playback | N/A | No |
 
 ## Secrets and storage
@@ -91,7 +91,7 @@ If a phone’s IP changes, it remains the same paired client.
 
 | Threat | Mitigation target |
 |---|---|
-| Raw voice sample leaks to cloud | Hub sends only text to cloud LLM; raw audio stays local |
+| Raw voice sample leaks to cloud | Hub sends only text to Cloud AI; raw audio stays local |
 | Cloud prompt contains child PII | Hub redaction/pseudonymization before provider call |
 | Client IP changes causing duplicated state | Stable client identity independent of IP |
 | Unpaired device talks to Hub | QR bootstrap, authenticated sessions, device revocation |
@@ -122,9 +122,9 @@ Before a consumer release, PlushBuddy should add:
 - file-based backup/export/import UX polish beyond the current parent-PIN
   encrypted clipboard flow;
 - broaden Mac/WebKit microphone QA across macOS versions;
-- replace the Python/Transformers Hub STT wrapper with a leaner packaged
+- replace the Python/Transformers Hub STT wrapper with a leaner setup-managed
   `whisper.cpp` runtime if performance requires it;
-- local LLM bakeoff and safety regression suite;
-- clear parent consent for cloud LLM mode;
+- expanded local/Cloud AI safety regression suite;
+- clear parent consent for Cloud AI mode;
 - telemetry/diagnostics that do not collect child content;
 - dependency/model checksum verification and runtime recovery.

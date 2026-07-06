@@ -36,7 +36,10 @@ echo "Clearing app data for fresh-launch smoke..."
 adb -s "$DEVICE_ID" shell pm clear "$PACKAGE_ID" > "$RESULT_DIR/pm-clear.log" 2>&1 || true
 
 echo "Launching PlushBuddy..."
-adb -s "$DEVICE_ID" shell monkey -p "$PACKAGE_ID" -c android.intent.category.LAUNCHER 1 \
+adb -s "$DEVICE_ID" shell am start \
+  -n "$PACKAGE_ID/.MainActivity" \
+  -a android.intent.action.MAIN \
+  -c android.intent.category.LAUNCHER \
   > "$RESULT_DIR/launch.log" 2>&1
 sleep 5
 
@@ -47,7 +50,7 @@ adb -s "$DEVICE_ID" pull /sdcard/plushbuddy-window.xml "$RESULT_DIR/window.xml" 
   > "$RESULT_DIR/uiautomator-pull.log" 2>&1 || true
 adb -s "$DEVICE_ID" exec-out screencap -p > "$RESULT_DIR/launch.png" || true
 
-if [[ -f "$RESULT_DIR/window.xml" ]] && grep -Eiq 'PlushBuddy|PlushPal|Settings|Parent|Welcome' "$RESULT_DIR/window.xml"; then
+if [[ -f "$RESULT_DIR/window.xml" ]] && grep -Eiq 'PlushBuddy|Settings|Parent|Welcome' "$RESULT_DIR/window.xml"; then
   echo "PASS: Android app installed, launched, and exposed expected UI text."
   echo "pass" > "$RESULT_DIR/status.txt"
 else

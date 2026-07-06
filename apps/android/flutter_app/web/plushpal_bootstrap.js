@@ -19,6 +19,13 @@
     return `Browser on ${String(platform).slice(0, 60)}`;
   };
 
+  const rememberHubId = (hubId) => {
+    if (!/^hub-[a-f0-9-]{36}$/.test(hubId || '')) return;
+    try {
+      window.localStorage.setItem('plushbuddy-web-hub-id-v1', hubId);
+    } catch (_) {}
+  };
+
   window.__plushpalStationBootstrapStatus = 'not-needed';
   window.__plushpalStationBootstrapReady = (async () => {
     const parameters = new URLSearchParams(window.location.hash.slice(1));
@@ -45,6 +52,7 @@
       window.__plushpalStationBootstrapStatus = 'failed';
       return 'failed';
     }
+    rememberHubId(response.headers.get('x-plushbuddy-hub-id'));
     window.__plushpalStationBootstrapStatus = 'ready';
     return 'ready';
   })().catch(() => {

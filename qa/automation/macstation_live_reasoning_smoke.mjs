@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const resultRoot = process.env.PLUSHPAL_TEST_RESULTS_DIR || join(process.env.HOME || '.', 'Downloads', 'PlushPal', 'test-results');
-const resultDir = join(resultRoot, `macstation-reasoning-${timestamp()}`);
+const resultDir = join(resultRoot, `hub-reasoning-${timestamp()}`);
 mkdirSync(resultDir, { recursive: true });
 
 const apiKey = readGeminiApiKey();
@@ -43,9 +43,9 @@ try {
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  const startup = await waitForOutput(host, /PlushPal test bootstrap URL: (http:\/\/[^\s]+)/, 180_000);
+  const startup = await waitForOutput(host, /PlushBuddy Hub test bootstrap URL: (http:\/\/[^\s]+)/, 180_000);
   writeFileSync(join(resultDir, 'host-startup.log'), redact(startup));
-  const bootstrapUrl = startup.match(/PlushPal test bootstrap URL: (http:\/\/[^\s]+)/)?.[1];
+  const bootstrapUrl = startup.match(/PlushBuddy Hub test bootstrap URL: (http:\/\/[^\s]+)/)?.[1];
   if (!bootstrapUrl) throw new Error('Could not parse bootstrap URL');
   const url = new URL(bootstrapUrl);
   const baseUrl = `${url.protocol}//${url.host}`;

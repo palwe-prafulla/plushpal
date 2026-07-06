@@ -8,13 +8,14 @@ installer uses:
 - ``python -c ...`` for version support
 - ``python luxtts_tts.py --healthcheck`` for runtime readiness
 
-If the marker checksums match, the installer must exit early and avoid deleting
-or rebuilding the runtime.
+If the marker checksums match against the lazy app-support LuxTTS source cache,
+the installer must exit early and avoid deleting or rebuilding the runtime.
 """
 
 from __future__ import annotations
 
 import hashlib
+import os
 import shutil
 import stat
 import subprocess
@@ -24,7 +25,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 INSTALLER = ROOT / "packaging/macos/install_luxtts_runtime.sh"
-INSTALLER_VERSION = "2026-06-26-luxtts-runtime-v1"
+INSTALLER_VERSION = "2026-07-05-luxtts-lazy-runtime-v2"
 
 
 def sha256(path: Path) -> str:
@@ -40,12 +41,14 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="plushpal-luxtts-installer-") as tmp:
         root = Path(tmp)
         bundle = root / "bundle"
+        app_support = root / "Application Support/PlushPal"
         venv = root / "luxtts-venv"
         voice_dir = bundle / "voice"
-        lux_dir = bundle / "third_party/LuxTTS"
+        lux_dir = app_support / "deps/LuxTTS"
+        fake_bin = root / "bin"
         bin_dir = venv / "bin"
         voice_dir.mkdir(parents=True)
-        lux_dir.mkdir(parents=True)
+        fake_bin.mkdir(parents=True)
         bin_dir.mkdir(parents=True)
 
         installer = bundle / "install_luxtts_runtime.sh"
@@ -54,8 +57,26 @@ def main() -> int:
 
         lux_script = voice_dir / "luxtts_tts.py"
         lux_script.write_text("# fake luxtts wrapper\n", encoding="utf-8")
-        requirements = lux_dir / "requirements.txt"
-        requirements.write_text("# fake requirements\n", encoding="utf-8")
+        requirements_text = "# fake requirements\n"
+        requirements_sha = hashlib.sha256(requirements_text.encode("utf-8")).hexdigest()
+
+        fake_git = fake_bin / "git"
+        fake_git.write_text(
+            f"""#!/bin/sh
+set -eu
+destination=""
+for arg do
+  destination="$arg"
+done
+mkdir -p "$destination"
+cat > "$destination/requirements.txt" <<'EOF'
+{requirements_text.rstrip()}
+EOF
+exit 0
+""",
+            encoding="utf-8",
+        )
+        make_executable(fake_git)
 
         fake_python = bin_dir / "python"
         fake_python.write_text(
@@ -86,7 +107,8 @@ exit 9
                     "installed_at_utc=2026-06-26T00:00:00Z",
                     f"python_path={fake_python}",
                     "python_version=Python 3.12.0",
-                    f"requirements_sha256={sha256(requirements)}",
+                    f"luxtts_source_path={lux_dir}",
+                    f"requirements_sha256={requirements_sha}",
                     f"script_sha256={sha256(lux_script)}",
                     "",
                 ]
@@ -96,6 +118,11 @@ exit 9
 
         completed = subprocess.run(
             ["/bin/sh", str(installer), str(venv)],
+            env={
+                "PATH": f"{fake_bin}:/usr/bin:/bin:/usr/sbin:/sbin",
+                "PLUSHPAL_LUXTTS_SOURCE_DIR": str(lux_dir),
+                "PLUSHPAL_LUXTTS_SCRIPT": str(lux_script),
+            },
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -107,6 +134,8 @@ exit 9
             raise SystemExit(f"installer did not use marker fast path:\n{completed.stdout}")
         if not fake_python.exists():
             raise SystemExit("installer unexpectedly removed the fake existing runtime")
+        if not (lux_dir / "requirements.txt").exists():
+            raise SystemExit("installer did not populate the lazy LuxTTS source cache")
 
     print("PASS: LuxTTS installer marker fast path")
     return 0

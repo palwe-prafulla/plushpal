@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small MLX-Audio TTS wrapper for PlushPal voice bakeoffs."""
+"""Small MLX-Audio TTS wrapper for PlushBuddy voice bakeoffs."""
 
 from __future__ import annotations
 

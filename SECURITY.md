@@ -16,7 +16,7 @@ GitHub, or contact the repository owner directly.
 
 Useful reports include:
 
-- impacted platform: Android, iPhone, browser, Mac client, or MacStation;
+- impacted platform: Android, iPhone, browser, Mac client, or PlushBuddy Hub;
 - reproduction steps;
 - whether private audio/photo/profile/API-key data can be exposed;
 - logs with secrets redacted.

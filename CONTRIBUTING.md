@@ -41,7 +41,7 @@ If your change touches packaging, also run:
 make public-artifacts
 ```
 
-If your change touches Android, iPhone, browser, Mac client, or MacStation
+If your change touches Android, iPhone, browser, Mac client, or PlushBuddy Hub
 behavior in your fork, keep the relevant smoke-test evidence from
 `~/Downloads/PlushPal/test-results`.
 
@@ -58,6 +58,6 @@ behavior in your fork, keep the relevant smoke-test evidence from
 ## Code style
 
 - Keep reusable product logic in shared Flutter/Rust layers where possible.
-- Keep MacStation responsible for voice/model services, not for owning client
+- Keep PlushBuddy Hub responsible for voice/model services, not for owning client
   profile/history state.
 - Prefer focused tests for each regression.

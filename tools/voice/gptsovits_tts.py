@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small GPT-SoVITS inference wrapper for PlushPal voice bakeoffs.
+"""Small GPT-SoVITS inference wrapper for PlushBuddy voice bakeoffs.
 
 This is intentionally not part of the app runtime yet. It lets us evaluate
 GPT-SoVITS against the same local toy samples before deciding whether it is

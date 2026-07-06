@@ -111,6 +111,17 @@ external JSPromise<JSAny?> _saveCharacter(
   JSNumber? personaAgeYears,
 );
 
+@JS('plushpalRenameCharacter')
+external JSPromise<JSAny?> _renameCharacter(
+  JSString pin,
+  JSString currentCharacterAlias,
+  JSString newCharacterAlias,
+  JSArray<JSString> characterTraits,
+  JSString? parentGuidance,
+  JSString? kidId,
+  JSNumber? personaAgeYears,
+);
+
 @JS('plushpalDeleteCharacter')
 external JSPromise<JSAny?> _deleteCharacter(
   JSString pin,
@@ -471,6 +482,27 @@ class WebBackendClient implements BackendClient {
     await _saveCharacter(
       pin.toJS,
       characterAlias.toJS,
+      characterTraits.map((value) => value.toJS).toList().toJS,
+      parentGuidance?.toJS,
+      kidId?.toJS,
+      personaAgeYears?.toJS,
+    ).toDart;
+  }
+
+  @override
+  Future<void> renameCharacter({
+    required String pin,
+    required String currentCharacterAlias,
+    required String newCharacterAlias,
+    required List<String> characterTraits,
+    required String? parentGuidance,
+    String? kidId,
+    int? personaAgeYears,
+  }) async {
+    await _renameCharacter(
+      pin.toJS,
+      currentCharacterAlias.toJS,
+      newCharacterAlias.toJS,
       characterTraits.map((value) => value.toJS).toList().toJS,
       parentGuidance?.toJS,
       kidId?.toJS,

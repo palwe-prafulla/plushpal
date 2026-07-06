@@ -12,7 +12,7 @@ elseif(WIN32)
   add_library(plushpal_key_vault STATIC src/windows_credential_vault.cpp)
   target_link_libraries(plushpal_key_vault PRIVATE Advapi32)
 else()
-  message(FATAL_ERROR "PlushPal key vault currently supports Apple and Windows hosts")
+  message(FATAL_ERROR "PlushBuddy key vault currently supports Apple and Windows hosts")
 endif()
 target_include_directories(plushpal_key_vault PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 

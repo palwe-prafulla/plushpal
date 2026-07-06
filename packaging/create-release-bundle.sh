@@ -88,7 +88,7 @@ Local release bundle generated from this checkout.
 
 ## Contents
 
-- macOS Station and Mac client archives, when macOS packaging was built
+- macOS PlushBuddy Hub and Mac client archives, when macOS packaging was built
 - Android debug APK, when Android tooling was available
 - iPhone simulator / unsigned device app archives, when Xcode tooling was available
 - SHA256SUMS for all bundled artifacts
@@ -96,13 +96,13 @@ Local release bundle generated from this checkout.
 ## Notes
 
 - Unsigned/development artifacts are for local testing and learning.
-- LuxTTS model caches are not bundled; Station prepares local runtime/cache on first use.
+- Apps are intentionally lightweight; PlushBuddy Hub downloads/prepares LuxTTS source, Python dependencies, voice/STT model caches, and optional Local AI models during setup.
 - Do not upload private voice samples, API keys, or local databases to releases.
 - Very large artifacts may be split into .part-aa, .part-ab, ... files to stay
   under GitHub release upload limits. Reassemble on macOS/Linux with:
 
   \`\`\`sh
-  cat PlushBuddy-*.dmg.part-* > PlushBuddy-0.1.0-macos.dmg
+  cat PlushBuddy-*.dmg.part-* > PlushBuddy-$safe_version-macos.dmg
   \`\`\`
 EOF
 

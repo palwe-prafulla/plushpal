@@ -1,6 +1,6 @@
 # Production hardening completion plan
 
-Last updated: 2026-07-03
+Last updated: 2026-07-05
 Scope: finish the 10 public-production-readiness items identified after the
 initial GitHub publication.
 
@@ -18,7 +18,7 @@ understand it, run checks, and exercise core flows without hand-holding.
 
 | # | Original hardening item | Current status | Remaining work |
 |---:|---|---|---|
-| 1 | Make setup boringly reliable | Partial | Harden LuxTTS install/runtime verification and Station setup recovery |
+| 1 | Make setup boringly reliable | Partial | Harden LuxTTS install/runtime verification and Hub setup recovery |
 | 2 | Add a demo mode | Partial | UI banner/demo seed data still needed for polished try-it flow |
 | 3 | Improve README onboarding | Done | Keep screenshots/docs current |
 | 4 | Add CI public clone validation | Done | Add more smoke coverage as new demo mode matures |
@@ -40,7 +40,7 @@ understand it, run checks, and exercise core flows without hand-holding.
 
 Reasoning:
 
-- Station reliability and LuxTTS setup are the highest user-facing failure
+- Hub reliability and LuxTTS setup are the highest user-facing failure
   risks.
 - Full demo mode makes the public repo easy to try without paid keys or heavy
   model setup.
@@ -60,13 +60,13 @@ Reasoning:
   script/requirements checksums.
 - Packaged LuxTTS installer repairs missing, incomplete, or stale runtime
   environments instead of silently reusing them.
-- Station includes a confirmation-gated “Reset voice runtime” action that
+- Hub includes a confirmation-gated “Reset voice runtime” action that
   rebuilds only the local LuxTTS venv and preserves app data/model caches.
 - Public repo check runs a fast LuxTTS installer marker regression test.
 
 ### Remaining deliverables
 
-- Station setup state machine with explicit phases:
+- Hub setup state machine with explicit phases:
   - app storage;
   - bundled runtime check;
   - LuxTTS source/runtime check;
@@ -86,22 +86,22 @@ Reasoning:
   - stale host process/port conflict.
 - Version/checksum marker files for downloaded/runtime components where
   practical. ✅ for packaged LuxTTS venv
-- Clear actionable error messages with copyable diagnostics. ✅ initial Station
+- Clear actionable error messages with copyable diagnostics. ✅ initial Hub
   diagnostics path
 
 ### Acceptance criteria
 
 - A fresh machine can run `make doctor` and receive clear next steps.
-- Station never silently bounces back to the landing page after setup failure.
+- Hub never silently bounces back to the landing page after setup failure.
 - Failed setup leaves a visible failed phase and a retry/reset option.
-- Reopening Station after partial setup either resumes or reports the exact
+- Reopening Hub after partial setup either resumes or reports the exact
   broken component.
 
 ### Tests
 
 - Unit tests for setup phase reducer/state transitions.
 - Scripted tests with intentionally missing LuxTTS/Python/model paths.
-- Packaged Station launch smoke with:
+- Packaged Hub launch smoke with:
   - clean app data;
   - already-installed runtime;
   - corrupted runtime marker;
@@ -209,10 +209,10 @@ Done for baseline clone health.
 | `cloud` | Gemini/OpenAI | synthetic WAV | reasoning testing |
 | `full` | Gemini/OpenAI | LuxTTS | real product flow |
 
-- Central mode parser/config object shared by Station/app launch scripts. ✅
+- Central mode parser/config object shared by Hub/app launch scripts. ✅
 - UI labels for non-full modes.
 - Tests ensuring mock/demo/local_voice modes never call cloud providers. ✅ for
-  Station mode selection
+  Hub mode selection
 
 ### Acceptance criteria
 
@@ -234,18 +234,18 @@ Done for baseline clone health.
 - `docs/product/KNOWN_LIMITATIONS.md`.
 - Public secret scan.
 - API keys/private samples excluded from repo.
-- Existing client-side redaction/pseudonymization path.
-- Browser provider API keys are session-only and no longer persisted to
-  localStorage.
-- Browser backend test asserts localStorage does not contain the provider API
-  key after configuration.
+- Hub-owned redaction/pseudonymization path shared by local and cloud models.
+- Cloud AI provider keys are Hub-scoped SQLCipher encrypted records; browser,
+  Android, iPhone, and Mac clients do not persist provider keys.
+- Browser backend test asserts localStorage does not contain provider API keys
+  after configuration.
 - Hub diagnostics endpoint/smoke test verifies private diagnostic fields
   are not exposed.
 
 ### Remaining deliverables
 
-- Browser local-state encryption for parent/kid/character/history data, or a
-  documented explicit “unsafe demo/browser” mode until encryption is complete.
+- Regression tests that prove thin clients do not persist kids, characters,
+  conversation history, or provider keys outside the Hub.
 - Safety regression corpus:
   - PII requests;
   - secrets;
@@ -255,8 +255,8 @@ Done for baseline clone health.
   - adult content;
   - prompt injection by child or parent guidance.
 - Privacy-network test plan:
-  - voice samples only to Station;
-  - LLM request excludes raw voice and real kid identifiers;
+  - voice samples only to Hub;
+  - AI request excludes raw voice and real kid identifiers;
   - no API keys in URLs/logs.
 - Optional pre-commit or local secret-scan helper.
 
@@ -330,7 +330,7 @@ GET /api/v1/diagnostics
 - Diagnostics endpoint test verifies authentication and redaction expectations.
 - Hub API smoke now verifies authenticated diagnostics and scans for
   private-field regressions.
-- Station setup UI now exposes:
+- Hub setup UI now exposes:
   - copy redacted diagnostics;
   - open log folder;
   - retry setup;
@@ -340,7 +340,7 @@ GET /api/v1/diagnostics
 
 ### Deliverables
 
-- Finish a richer diagnostics panel in Station:
+- Finish a richer diagnostics panel in Hub:
   - setup phase;
   - service health;
   - active mode;
@@ -363,7 +363,7 @@ GET /api/v1/diagnostics
 GET /api/v1/diagnostics
 ```
 
-- Station UI should consume both shell setup state and host diagnostics.
+- Hub UI should consume both shell setup state and host diagnostics.
 
 ### Acceptance criteria
 
@@ -375,7 +375,7 @@ GET /api/v1/diagnostics
 
 - Swift setup-state reducer/unit tests where possible.
 - Rust diagnostics endpoint tests.
-- Packaged Station screenshot/log smoke.
+- Packaged Hub screenshot/log smoke.
 - Secret scan over diagnostics output.
 
 ## Item 9 — Add more E2E scripted tests
@@ -395,7 +395,7 @@ GET /api/v1/diagnostics
 - Full UI journey automation:
   - first launch;
   - configure parent;
-  - pair Station;
+  - pair Hub;
   - create kid;
   - create character;
   - upload sample or demo voice;
@@ -422,7 +422,7 @@ GET /api/v1/diagnostics
 - Playwright or browser automation for web.
 - ADB UIAutomator for Android.
 - `xcrun simctl`/XCUITest-lite smoke for iOS simulator.
-- Rust API journey tests for Station.
+- Rust API journey tests for Hub.
 
 ## Item 10 — Document limitations clearly
 
@@ -443,13 +443,13 @@ Done.
 
 ## Milestone plan
 
-### Milestone A — Station reliability
+### Milestone A — Hub reliability
 
 Includes items 1 and 8.
 
 Deliver:
 
-- Station diagnostics panel.
+- Hub diagnostics panel.
 - Setup phase model.
 - Retry/reset/open logs/copy diagnostics.
 - Host diagnostics endpoint.
@@ -568,7 +568,7 @@ All 10 items are complete when:
 - fresh-clone README flow works;
 - full demo mode works without secrets/heavy model;
 - full LuxTTS mode works on supported Mac;
-- Station explains failures and provides retry/reset/logs;
+- Hub explains failures and provides retry/reset/logs;
 - CI protects public clone health;
 - local quality gate is green;
 - release artifacts have checksums and clear labels;

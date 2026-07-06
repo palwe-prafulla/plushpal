@@ -66,7 +66,7 @@ std::string token_piece(const llama_vocab *vocab, llama_token token) {
 
 void log_native_error(enum ggml_log_level level, const char *text, void *) {
   if (level == GGML_LOG_LEVEL_ERROR && text != nullptr) {
-    std::fputs("PlushPal llama runtime: ", stderr);
+    std::fputs("PlushBuddy Hub llama runtime: ", stderr);
     std::fputs(text, stderr);
   }
 }
@@ -143,37 +143,38 @@ void run_generation(pp_llama_engine_t *engine, llama_model *model,
                     pp_llama_generation_options_t options,
                     pp_llama_job_id_t job) {
   JobResult result;
+  const std::string user_payload = prompt_text;
   const char *chat_template = llama_model_chat_template(model, nullptr);
-  if (chat_template == nullptr) {
-    result.status = PP_LLAMA_INTERNAL;
-    publish_result(engine, job, std::move(result));
-    return;
-  }
   constexpr const char *system_prompt =
-      "You are the local PlushPal child-safety response engine. Follow the "
+      "You are the local PlushBuddy child-safety response engine. Follow the "
       "immutable policy in the user payload. Never expose internal reasoning. "
       "Return exactly one JSON object and no Markdown.";
-  const llama_chat_message messages[] = {
-      {"system", system_prompt},
-      {"user", prompt_text.c_str()},
-  };
-  const int32_t formatted_size = llama_chat_apply_template(
-      chat_template, messages, 2, true, nullptr, 0);
-  if (formatted_size <= 0) {
-    result.status = PP_LLAMA_INTERNAL;
-    publish_result(engine, job, std::move(result));
-    return;
+  bool applied_template = false;
+  if (chat_template != nullptr) {
+    const llama_chat_message messages[] = {
+        {"system", system_prompt},
+        {"user", user_payload.c_str()},
+    };
+    const int32_t formatted_size = llama_chat_apply_template(
+        chat_template, messages, 2, true, nullptr, 0);
+    if (formatted_size > 0) {
+      std::vector<char> formatted_prompt(static_cast<size_t>(formatted_size) + 1);
+      if (llama_chat_apply_template(chat_template, messages, 2, true,
+                                    formatted_prompt.data(),
+                                    static_cast<int32_t>(formatted_prompt.size())) >=
+          0) {
+        prompt_text.assign(formatted_prompt.data(),
+                           static_cast<size_t>(formatted_size));
+        applied_template = true;
+      }
+    }
   }
-  std::vector<char> formatted_prompt(static_cast<size_t>(formatted_size) + 1);
-  if (llama_chat_apply_template(chat_template, messages, 2, true,
-                                formatted_prompt.data(),
-                                static_cast<int32_t>(formatted_prompt.size())) <
-      0) {
-    result.status = PP_LLAMA_INTERNAL;
-    publish_result(engine, job, std::move(result));
-    return;
+  if (!applied_template) {
+    prompt_text =
+        std::string("System:\n") + system_prompt +
+        "\n\nUser:\n" + user_payload +
+        "\n\nAssistant:\n";
   }
-  prompt_text.assign(formatted_prompt.data(), static_cast<size_t>(formatted_size));
   const llama_vocab *vocab = llama_model_get_vocab(model);
   const int32_t required = llama_tokenize(vocab, prompt_text.data(),
                                           prompt_text.size(), nullptr, 0, true,

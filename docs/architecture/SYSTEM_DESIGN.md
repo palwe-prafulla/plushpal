@@ -1,6 +1,6 @@
 # PlushBuddy Hub system design and architecture
 
-Last updated: 2026-07-02
+Last updated: 2026-07-05
 
 ## 1. Executive summary
 
@@ -14,9 +14,9 @@ The current architecture makes **PlushBuddy Hub** the local private backend:
 - the Hub runs first on macOS;
 - Android, iPhone, Mac app, and future Windows/Linux apps are thin UI clients;
 - the browser client is local-only on the same computer as the Hub;
-- durable app data is stored in Hub-owned encrypted SQLCipher stores: a root
-  registry for pairing/revocation plus one scoped encrypted store per stable
-  client identity;
+- durable app data is stored in Hub-owned encrypted SQLCipher stores: the Hub
+  has its own stable `hub-*` scoped store for admin state, and each paired UI
+  client has its own stable client-scoped encrypted store;
 - all business logic, guardrails, model orchestration, and provider calls live
   in the Hub;
 - clients capture input and play output, but do not own family data.
@@ -30,12 +30,13 @@ Native clients + local browser UI
         | paired local-network session / localhost
         v
 PlushBuddy Hub
-  root encrypted SQLCipher registry
+  root encrypted SQLCipher key/compatibility store
+  Hub scoped SQLCipher store
   per-client encrypted SQLCipher stores
   kid/character/history APIs
   two runtime modes
   local STT fallback
-  local or cloud LLM reasoning
+  local or Cloud AI reasoning
   LuxTTS voice cloning and TTS
 ```
 
@@ -45,26 +46,34 @@ The current implementation has completed the main Hub-first migration:
 
 - Hub SQLCipher storage owns parent setup, kids, characters, photos, provider
   settings, conversation history, voice metadata, and provider API keys.
+- Hub admin state uses a stable `hub-*` client identity. The Hub scoped store
+  owns Hub parent PIN, Cloud AI provider keys, active provider, and the
+  paired-device registry/revocation list.
 - Browser/Mac web client APIs call the Hub instead of storing durable family
   data in browser storage.
 - Paired Android/iPhone clients call the Hub for parent setup, kids,
   characters, provider keys, voice lifecycle, conversation turns, and history.
 - Gemini and OpenAI cloud reasoning are activated from the Hub after parent
   authorization and encrypted key storage.
-- Clients generate stable `client_id` values and send them with Hub requests so
-  Hub identity does not depend on IP address.
+- Clients generate stable `client_id` values and send them with every private
+  Hub request so Hub routing does not depend on IP address.
 - Hub stores a paired-client registry with platform/label/last-seen metadata
-  and parent-gated revocation.
+  and parent-gated revocation in the Hub scoped store.
 - Hub resolves normal family-data APIs through the request `client_id`, giving
   each paired client an isolated encrypted store for parent setup, kids,
-  characters, provider keys, voice profiles, and conversation history.
+  characters, voice profiles, and conversation history.
+- Missing client IDs are rejected for private persisted APIs once the Hub has a
+  persistent store, which prevents accidental fallback into a shared/root data
+  bucket.
 
 Remaining architecture work:
 
 - broaden Mac/WebKit microphone QA for the implemented bounded-audio Hub STT
   fallback path;
-- finish privacy local-first LLM model selection and safety bakeoff;
-- rename remaining internal MacStation implementation names to PlushBuddy Hub.
+- expand safety/regression evaluation for the selected local Gemma tiers and
+  cloud providers;
+- rename remaining historical `macstation` implementation names to PlushBuddy
+  Hub where practical.
 
 Implemented direction:
 
@@ -80,12 +89,12 @@ Now:
   apps.
 - Local-only browser UI on the same machine running the Hub.
 - Parent-friendly setup with exactly two runtime choices:
-  1. privacy local-first;
-  2. cloud LLM.
+  1. Local AI mode;
+  2. Cloud AI.
 - Encrypted single source of truth per Hub installation.
 - Stable paired-client identity that does not depend on IP address.
 - Best available local toy voice quality through LuxTTS.
-- No raw voice samples sent to cloud LLM providers.
+- No raw voice samples sent to Cloud AI providers.
 - Clear fallback when local/offline capability is unavailable.
 
 ## 4. Non-goals for this phase
@@ -113,7 +122,7 @@ Now:
 
 The Hub offers only two parent-facing modes.
 
-### 6.1 Privacy local-first mode
+### 6.1 Local AI mode
 
 Everything runs locally except first-time model downloads and optional release
 updates.
@@ -121,7 +130,7 @@ updates.
 ```text
 Client STT if verified on-device
   else Hub local STT
-Hub local LLM
+Hub local AI model
 Hub LuxTTS
 Hub SQLCipher storage
 ```
@@ -130,22 +139,22 @@ Candidate model stack:
 
 | Capability | Primary candidate | Notes |
 |---|---|---|
-| STT fallback | Packaged Python/Transformers wrapper for `openai/whisper-base`; future lean target is `whisper.cpp` | Use smaller/faster Whisper tier on lower-memory machines |
-| Local LLM | `llama.cpp` + Qwen3/Gemma/Llama GGUF | Hub recommends model by memory |
+| STT fallback | Lazy Hub setup using the Hub-managed Python/Transformers runtime for `openai/whisper-base`; future lean target is `whisper.cpp` | Use smaller/faster Whisper tier on lower-memory machines |
+| Local AI model | `llama.cpp` + signed Google Gemma 4 GGUF manifests | Hub recommends and installs the exact tier that fits Mac memory/storage |
 | TTS / voice clone | LuxTTS | Current best toy-voice match |
 
-Suggested local LLM tiers:
+Suggested local AI model tiers:
 
-| Hub memory | Suggested local reasoning tier |
+| Hub memory | Suggested Local AI tier |
 |---:|---|
-| 12 GB | Qwen3 4B Q4 or Llama 3.2 3B Q4 |
-| 16 GB | Qwen3 4B/8B Q4 |
-| 24 GB | Qwen3 8B/14B Q4 or Gemma 12B Q4 after bakeoff |
+| 12 GB | Gemma 4 E4B Q4 |
+| 16-24 GB | Gemma 4 12B Q4 |
+| 32 GB+ | Gemma 4 26B A4B Q4 |
 
 Pros:
 
 - Maximum privacy.
-- No LLM API key required.
+- No AI API key required.
 - Conversation text stays on the Hub.
 - Works without cloud reasoning once models are installed.
 
@@ -153,14 +162,15 @@ Cons:
 
 - Larger setup/downloads.
 - More memory/CPU/GPU pressure.
-- Local LLM may be less capable than Gemini/OpenAI.
-- Local LLM knowledge can be stale.
-- Requires model quality/safety bakeoff before product claims.
+- Local AI model may be less capable than Gemini/OpenAI.
+- Local AI model knowledge can be stale.
+- Requires broader safety and quality regression evidence before product
+  release claims.
 
-### 6.2 Cloud LLM mode
+### 6.2 Cloud AI mode
 
 Voice, storage, STT fallback, redaction, guardrails, and TTS remain local. Only
-the minimized/redacted text prompt goes to the parent-selected cloud LLM.
+the minimized/redacted text prompt goes to the parent-selected Cloud AI.
 
 ```text
 Client STT if verified on-device
@@ -174,7 +184,7 @@ Hub SQLCipher storage
 Pros:
 
 - Better answer quality.
-- Smaller local reasoning setup.
+- Smaller Local AI setup.
 - Lower Hub memory requirements.
 - Parent can use their own Gemini/OpenAI key.
 
@@ -203,7 +213,7 @@ All native clients are voice-first. The default STT policy is:
 | Local browser | Browser mic on `localhost` | Can send audio to Hub | Hub Whisper/STT |
 
 Hub STT receives compressed or bounded audio over the local session only. Cloud
-LLM providers receive text, not raw audio.
+Cloud AI providers receive text, not raw audio.
 
 ## 8. High-level architecture
 
@@ -222,7 +232,7 @@ flowchart TB
         Pairing["Paired devices<br/>stable client identity"]
         Policy["Guardrails + redaction + prompt builder"]
         LocalSTT["Local STT fallback<br/>packaged Whisper"]
-        LocalLLM["Local LLM<br/>llama.cpp/GGUF"]
+        LocalLLM["Local AI model<br/>llama.cpp/GGUF"]
         CloudLLM["Gemini/OpenAI<br/>cloud mode only"]
         TTS["LuxTTS worker<br/>toy voice synthesis"]
         VoiceStore["Encrypted voice refs"]
@@ -275,7 +285,7 @@ Clients own:
 ### 10.1 Hub database
 
 Each Hub installation has a root encrypted SQLCipher database for Hub registry
-state:
+compatibility state and key derivation:
 
 ```text
 ~/Library/Application Support/PlushPal/plushbuddy-hub.sqlcipher
@@ -284,23 +294,27 @@ state:
 Current implementation uses `plushpal.sqlcipher` for compatibility with earlier
 dev builds. A future migration may rename it to `plushbuddy-hub.sqlcipher`.
 
-The root store owns:
+The root store is not the normal product data tenant. It is retained for
+compatibility, database bootstrap, key material, and migration support.
 
-- `hub_settings`
-- `runtime_mode`
-- `paired_clients`
-- `client_sessions`
-- `schema_migrations`
-- `audit_events`
+The Hub itself has a stable `hub-*` client identity and a scoped encrypted store.
+The Hub scoped store owns:
+
+- parent PIN / parent-gate profile;
+- Cloud AI provider keys and active provider;
+- paired-client registry;
+- paired-client revocation state;
+- Hub setup/runtime preferences;
+- Hub audit and migration state.
 
 Each stable paired client also gets an isolated encrypted SQLCipher store under
 the Hub data directory. The store is keyed by the stable `client_id`
-(`android-...`, `ios-...`, `macos-...`, `web-...`) rather than by IP address,
-so DHCP changes do not create new family data silos.
+(`android-...`, `ios-...`, `macos-...`, `web-...`, `windows-...`,
+`linux-...`) rather than by IP address, so DHCP changes do not create new
+family data silos.
 
 Per-client stores own:
 
-- `provider_secrets`
 - `kids`
 - `characters`
 - `character_voice_profiles`
@@ -309,15 +323,43 @@ Per-client stores own:
 - `conversation_turns`
 - `schema_migrations`
 
-### 10.2 Secret storage
+### 10.2 Request routing and tenant boundary
+
+Every private persisted API request must include:
+
+```http
+X-PlushBuddy-Client-Id: <stable-client-id>
+X-PlushBuddy-Hub-Id: <hub-id returned during bootstrap/pairing>
+X-PlushBuddy-Client-Label: <friendly device label>
+```
+
+The backend uses the request client ID to resolve client-owned data such as
+kids, characters, voice profiles, conversation history, and backups. For
+Hub-owned APIs such as parent PIN verification/update, Cloud AI provider keys,
+active provider selection, paired-device registry, and revocation, the backend
+validates `X-PlushBuddy-Hub-Id` and opens the Hub-scoped store. It does not
+infer tenancy from IP address, LAN URL, session cookie contents, or the root DB.
+
+The Hub macOS launcher generates and persists its own `hub-*` ID in user
+defaults, passes it to the Rust host as `PLUSHPAL_HUB_CLIENT_ID`, and sends it on
+all Hub-admin requests. Phone/native/web clients generate platform-specific
+stable IDs, receive the Hub ID from `/api/v1/bootstrap`, persist both IDs, and
+send both on every Hub API call after pairing. If the Hub ID is missing or does
+not match the running Hub, Hub-owned APIs fail closed.
+
+Revocation is also checked against the Hub scoped paired-device registry on
+every authenticated request from non-Hub clients, so a parent can stop an
+already-paired device without waiting for the next pairing attempt.
+
+### 10.3 Secret storage
 
 - The SQLCipher DB key is stored/wrapped by platform secure storage.
 - On macOS, use Keychain where practical.
-- Provider API keys may be stored as Keychain references or encrypted DB
-  records, but they must not be returned to clients or logs.
+- Provider API keys are stored as encrypted SQLCipher records in the Hub scoped
+  store; they must not be returned to clients or logs.
 - Voice reference files are encrypted separately and referenced from SQLCipher.
 
-### 10.3 Client storage
+### 10.4 Client storage
 
 Native external clients store only:
 
@@ -328,7 +370,9 @@ Native external clients store only:
 - tiny non-sensitive UI cache if needed.
 
 Paired clients do not store kids, characters, API keys, or history in product
-usage. Some unpaired native demo/fallback paths remain for development tests.
+usage. Hub demo/mock modes are backend runtimes only; external clients still
+call Hub APIs and keep only identity, pairing/session, theme/UI preference, and
+temporary platform-helper state.
 
 ## 11. Stable paired-client identity
 
@@ -341,8 +385,9 @@ Pairing flow:
 3. Parent opens Hub pairing QR.
 4. QR contains a one-time bootstrap token and Hub address.
 5. Client exchanges bootstrap token plus `client_id`/public key.
-6. Hub stores the device in `paired_clients`.
-7. Future sessions authenticate with the device credential and receive a short
+6. Hub stores the device in `paired_clients` and returns `X-PlushBuddy-Hub-Id`.
+7. Client persists the Hub ID with its pairing credentials.
+8. Future sessions authenticate with the device credential and receive a short
    session token.
 
 Hub stores:
@@ -390,7 +435,7 @@ sequenceDiagram
     Shell->>Shell: Prevent system sleep while active
     Shell->>DB: Verify/open encrypted DB
     Shell->>Hub: Start backend
-    Hub->>Models: Verify STT/LLM/TTS runtime per selected mode
+    Hub->>Models: Verify STT/AI/TTS runtime per selected mode
     Hub-->>Shell: Health/status
     Shell-->>Parent: Ready + mode + pairing/local launch options
 ```
@@ -421,7 +466,7 @@ sequenceDiagram
     participant Client
     participant Hub
     participant STT as Client STT / Hub STT
-    participant Reason as Local LLM or Gemini/OpenAI
+    participant Reason as Local AI model or Gemini/OpenAI
     participant Lux as LuxTTS
     participant DB as SQLCipher
 
@@ -448,8 +493,8 @@ sequenceDiagram
 - Hub is the only durable store of family data in paired product usage.
 - SQLCipher protects Hub records at rest.
 - Voice samples stay on the local network and are not sent to Gemini/OpenAI.
-- Cloud LLM mode sends only minimized/redacted text.
-- Local-first mode sends no conversation text to cloud LLMs.
+- Cloud AI mode sends only minimized/redacted text.
+- Local-first mode sends no conversation text to Cloud AI providers.
 - Clients must authenticate every Hub API call.
 - Parent PIN gates settings and destructive actions.
 - Device revocation must be supported.
@@ -462,14 +507,14 @@ Primary latency contributors:
 | Step | Notes |
 |---|---|
 | STT | Client local STT is fastest; Hub STT fallback adds audio upload + model latency |
-| Reasoning | Local LLM depends on model size; cloud LLM depends on provider latency |
+| Reasoning | Local AI model depends on model size; Cloud AI depends on provider latency |
 | TTS | LuxTTS quality path remains the largest local compute step |
 | Transfer | LAN audio/WAV transfer is usually smaller than model latency |
 
 Performance tactics:
 
 - keep LuxTTS worker warm;
-- keep selected local LLM loaded when in local-first mode;
+- keep selected local AI model loaded when in Local AI mode;
 - keep STT model warm if Hub fallback is enabled;
 - cap prompt/history length;
 - prewarm active character voice reference;
@@ -477,16 +522,17 @@ Performance tactics:
 
 ## 16. Platform roadmap
 
-1. Finish local-first LLM model bakeoff/setup UX.
+1. Broaden Local AI model safety and quality regression coverage.
 2. Broaden Mac/WebKit microphone QA and optimize Hub STT runtime packaging.
-3. Rename internal MacStation implementation paths/strings to PlushBuddy Hub.
+3. Rename historical `macstation` implementation paths/strings to PlushBuddy Hub.
 4. Windows Hub launcher/runtime.
 5. Linux Hub launcher/runtime.
 
 ## 17. Remaining implementation work
 
-- Polish Hub runtime-mode setup screen with only two parent-facing choices.
-- Add local LLM runtime behind llama.cpp.
+- Broaden local/cloud reasoning safety regression coverage.
+- Polish Hub runtime-mode setup screen around the two parent-facing choices.
 - Broaden Mac/WebKit microphone QA for the implemented Hub STT fallback.
-- Rename remaining user-facing/internal MacStation language to PlushBuddy Hub.
-- Keep old `MacStation` code paths only as implementation names until renamed.
+- Rename remaining user-facing/internal historical `macstation` language to
+  PlushBuddy Hub.
+- Keep old `macstation` code paths only as implementation names until renamed.

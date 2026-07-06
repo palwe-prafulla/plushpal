@@ -10,12 +10,42 @@ import 'backend_client.dart';
 BackendClient createPlatformBackendClient() =>
     const MethodChannelBackendClient();
 
+class HubAuthenticationRejectedException implements Exception {
+  const HubAuthenticationRejectedException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 class MethodChannelBackendClient implements BackendClient {
   const MethodChannelBackendClient({
     this.channel = const MethodChannel('com.plushpal/platform'),
   });
 
   final MethodChannel channel;
+
+  Never _hubRequired() => throw UnsupportedError(
+    'Connect PlushBuddy Hub before using family, voice, or conversation data.',
+  );
+
+  bool _isValidStationResponse(Map<Object?, Object?>? response) {
+    if (response == null || response['paired'] != true) return false;
+    final baseUrl = response['baseUrl'] as String?;
+    final cookie = response['cookie'] as String?;
+    final clientId = response['clientId'] as String?;
+    final hubId = response['hubId'] as String?;
+    return baseUrl != null &&
+        cookie != null &&
+        clientId != null &&
+        hubId != null &&
+        baseUrl.isNotEmpty &&
+        cookie.isNotEmpty &&
+        clientId.isNotEmpty &&
+        RegExp(r'^(android|ios|web|mac)-[a-f0-9-]{36}$').hasMatch(clientId) &&
+        RegExp(r'^hub-[a-f0-9-]{36}$').hasMatch(hubId);
+  }
 
   Future<_StationBackendClient?> _stationBackend() async {
     final config = await _stationConfig();
@@ -27,22 +57,16 @@ class MethodChannelBackendClient implements BackendClient {
     final response = await channel.invokeMapMethod<Object?, Object?>(
       'stationPairingStatus',
     );
-    if (response == null || response['paired'] != true) return null;
-    final baseUrl = response['baseUrl'] as String?;
-    final cookie = response['cookie'] as String?;
-    final clientId = response['clientId'] as String?;
-    if (baseUrl == null ||
-        cookie == null ||
-        clientId == null ||
-        baseUrl.isEmpty ||
-        cookie.isEmpty ||
-        clientId.isEmpty) {
-      return null;
-    }
+    if (!_isValidStationResponse(response)) return null;
+    final baseUrl = response!['baseUrl']! as String;
+    final cookie = response['cookie']! as String;
+    final clientId = response['clientId']! as String;
+    final hubId = response['hubId']! as String;
     return _StationConfig(
       baseUrl: Uri.parse(baseUrl),
       cookie: cookie,
       clientId: clientId,
+      hubId: hubId,
     );
   }
 
@@ -51,9 +75,39 @@ class MethodChannelBackendClient implements BackendClient {
     final response = await channel.invokeMapMethod<Object?, Object?>(
       'stationPairingStatus',
     );
+    final paired = _isValidStationResponse(response);
+    if (paired) {
+      final config = _StationConfig(
+        baseUrl: Uri.parse(response!['baseUrl']! as String),
+        cookie: response['cookie']! as String,
+        clientId: response['clientId']! as String,
+        hubId: response['hubId']! as String,
+      );
+      try {
+        await _StationBackendClient(
+          config: config,
+          channel: channel,
+        ).localModelReadiness();
+      } on HubAuthenticationRejectedException {
+        return const StationPairingStatus(paired: false);
+      } catch (_) {
+        // Do not clear pairing for transient Hub startup/network failures.
+        // _StationBackendClient._requestBytes clears the platform pairing only
+        // when the Hub explicitly rejects the stored session or Hub ID with
+        // 401/403. Re-read platform state after the failed probe so auth
+        // rejections still surface as unpaired, while warmup timeouts keep the
+        // phone paired and allow the UI to say the Hub is still starting.
+        final current = await channel.invokeMapMethod<Object?, Object?>(
+          'stationPairingStatus',
+        );
+        if (!_isValidStationResponse(current)) {
+          return const StationPairingStatus(paired: false);
+        }
+      }
+    }
     return StationPairingStatus(
-      paired: response?['paired'] as bool? ?? false,
-      baseUrl: response?['baseUrl'] as String?,
+      paired: paired,
+      baseUrl: paired ? (response?['baseUrl'] as String?) : null,
     );
   }
 
@@ -74,6 +128,7 @@ class MethodChannelBackendClient implements BackendClient {
       'baseUrl': config.baseUrl.toString(),
       'cookie': config.cookie,
       'clientId': config.clientId,
+      'hubId': config.hubId,
     });
   }
 
@@ -104,13 +159,10 @@ class MethodChannelBackendClient implements BackendClient {
   Future<ReasoningProviderStatus> reasoningProviderStatus() async {
     final station = await _stationBackend();
     if (station != null) return station.reasoningProviderStatus();
-    final response = await channel.invokeMapMethod<Object?, Object?>(
-      'reasoningProviderStatus',
-    );
-    return ReasoningProviderStatus(
-      provider: response?['provider'] as String? ?? 'gemini',
-      configured: response?['configured'] as bool? ?? false,
-      displayName: response?['displayName'] as String? ?? 'Gemini',
+    return const ReasoningProviderStatus(
+      provider: 'hub',
+      configured: false,
+      displayName: 'PlushBuddy Hub',
     );
   }
 
@@ -128,10 +180,7 @@ class MethodChannelBackendClient implements BackendClient {
         apiKey: apiKey,
       );
     }
-    return channel.invokeMethod<void>('saveProviderApiKey', {
-      'provider': provider,
-      'apiKey': apiKey,
-    });
+    _hubRequired();
   }
 
   @override
@@ -142,20 +191,7 @@ class MethodChannelBackendClient implements BackendClient {
   Future<List<KidProfile>> kids() async {
     final station = await _stationBackend();
     if (station != null) return station.kids();
-    final rows = await channel.invokeListMethod<Object?>('kids') ?? const [];
-    return rows.map((row) {
-      final kid = row! as Map<Object?, Object?>;
-      return KidProfile(
-        id: kid['id']! as String,
-        name: kid['name']! as String,
-        birthdateIso: kid['birthdateIso']! as String,
-        photoBytes: switch (kid['photoBase64'] as String?) {
-          final value? when value.isNotEmpty => base64Decode(value),
-          _ => null,
-        },
-        photoMime: kid['photoMime'] as String?,
-      );
-    }).toList();
+    return const [];
   }
 
   @override
@@ -178,14 +214,7 @@ class MethodChannelBackendClient implements BackendClient {
         photoMime: photoMime,
       );
     }
-    return channel.invokeMethod<void>('saveKid', {
-      'pin': pin,
-      'kidId': kidId,
-      'name': name,
-      'birthdateIso': birthdateIso,
-      'photoBytes': photoBytes,
-      'photoMime': photoMime,
-    });
+    _hubRequired();
   }
 
   @override
@@ -194,38 +223,21 @@ class MethodChannelBackendClient implements BackendClient {
     if (station != null) {
       return station.deleteKid(pin: pin, kidId: kidId);
     }
-    return channel.invokeMethod<void>('deleteKid', {
-      'pin': pin,
-      'kidId': kidId,
-    });
+    _hubRequired();
   }
 
   @override
   Future<LocalModelReadiness> localModelReadiness() async {
     final station = await _stationBackend();
     if (station != null) return station.localModelReadiness();
-    final response = await channel.invokeMapMethod<Object?, Object?>(
-      'modelStatus',
-    );
-    if (response == null || response['ready'] is! bool) {
-      throw PlatformException(code: 'invalid_model_status');
-    }
-    return LocalModelReadiness(
-      modelId: response['modelId'] as String? ?? 'local-model',
-      displayName: response['displayName'] as String? ?? 'Local model',
-      ready: response['ready']! as bool,
-      installSupported: response['installSupported'] as bool? ?? false,
-      installing: response['installing'] as bool? ?? false,
-      runtimeMode: response['runtimeMode'] as String? ?? 'custom',
-      parentConfigured: response['parentConfigured'] as bool? ?? false,
-      ageBand: response['ageBand'] as String?,
-      characterAlias: response['characterAlias'] as String?,
-      characterTraits:
-          (response['characterTraits'] as List<Object?>? ?? const [])
-              .cast<String>(),
-      parentGuidance: response['parentGuidance'] as String?,
-      retentionDays: response['retentionDays'] as int?,
-      speechToTextReady: response['speechToTextReady'] as bool? ?? false,
+    return const LocalModelReadiness(
+      modelId: 'hub-required',
+      displayName: 'PlushBuddy Hub',
+      ready: false,
+      installSupported: false,
+      installing: false,
+      runtimeMode: 'hub',
+      parentConfigured: false,
     );
   }
 
@@ -253,24 +265,7 @@ class MethodChannelBackendClient implements BackendClient {
         characterPlayAgeYears: characterPlayAgeYears,
       );
     }
-    final response = await channel
-        .invokeMapMethod<Object?, Object?>('generateLocal', {
-          'ageBand': ageBand,
-          'characterAlias': characterAlias,
-          'text': text,
-          'kidId': kidId,
-          'kidName': kidName,
-          'childAgeYears': childAgeYears,
-          'childAgeMonths': childAgeMonths,
-          'characterPlayAgeYears': characterPlayAgeYears,
-        });
-    if (response == null || response['speech'] is! String) {
-      throw PlatformException(code: 'invalid_response');
-    }
-    return BackendResponse(
-      speech: response['speech']! as String,
-      suggestTrustedAdult: response['suggestTrustedAdult'] as bool? ?? false,
-    );
+    _hubRequired();
   }
 
   @override
@@ -283,24 +278,18 @@ class MethodChannelBackendClient implements BackendClient {
   }
 
   @override
-  Future<void> cancelTurn() async =>
-      (await _stationBackend())?.cancelTurn() ??
-      channel.invokeMethod<void>('cancelTurn');
+  Future<void> cancelTurn() async => (await _stationBackend())?.cancelTurn();
 
   @override
-  Future<void> endSession() async =>
-      (await _stationBackend())?.endSession() ??
-      channel.invokeMethod<void>('endSession');
+  Future<void> endSession() async => (await _stationBackend())?.endSession();
 
   @override
   Future<void> installLocalModel() async =>
-      (await _stationBackend())?.installLocalModel() ??
-      channel.invokeMethod<void>('installLocalModel');
+      (await _stationBackend())?.installLocalModel() ?? _hubRequired();
 
   @override
   Future<void> cancelModelInstall() async =>
-      (await _stationBackend())?.cancelModelInstall() ??
-      channel.invokeMethod<void>('cancelModelInstall');
+      (await _stationBackend())?.cancelModelInstall();
 
   @override
   Future<void> configureParentPin({
@@ -324,46 +313,25 @@ class MethodChannelBackendClient implements BackendClient {
         kidId: kidId,
       );
     }
-    return channel.invokeMethod<void>('configureParentPin', {
-      'pin': pin,
-      'ageBand': ageBand,
-      'characterAlias': characterAlias,
-      'characterTraits': characterTraits,
-      'parentGuidance': parentGuidance,
-      'retentionDays': retentionDays,
-      'kidId': kidId,
-    });
+    _hubRequired();
   }
 
   @override
   Future<bool> authorizeParentPin(String pin) async {
     final station = await _stationBackend();
     if (station != null) return station.authorizeParentPin(pin);
-    return await channel.invokeMethod<bool>('authorizeParentPin', {
-          'pin': pin,
-        }) ??
-        false;
+    return false;
   }
 
   @override
   Future<void> deleteAllLocalData(String pin) async =>
-      (await _stationBackend())?.deleteAllLocalData(pin) ??
-      channel.invokeMethod<void>('deleteAllLocalData', {'pin': pin});
+      (await _stationBackend())?.deleteAllLocalData(pin) ?? _hubRequired();
 
   @override
   Future<HubBackup> exportBackup(String pin) async {
     final station = await _stationBackend();
     if (station != null) return station.exportBackup(pin);
-    final response = await channel.invokeMapMethod<Object?, Object?>(
-      'exportBackup',
-      {'pin': pin},
-    );
-    final backupBase64 = response?['backupBase64'] as String?;
-    final exportedAt = response?['exportedAt'] as int?;
-    if (backupBase64 == null || backupBase64.isEmpty || exportedAt == null) {
-      throw PlatformException(code: 'invalid_backup_export');
-    }
-    return HubBackup(backupBase64: backupBase64, exportedAt: exportedAt);
+    _hubRequired();
   }
 
   @override
@@ -375,27 +343,14 @@ class MethodChannelBackendClient implements BackendClient {
     if (station != null) {
       return station.importBackup(pin: pin, backupBase64: backupBase64);
     }
-    return channel.invokeMethod<void>('importBackup', {
-      'pin': pin,
-      'backupBase64': backupBase64,
-    });
+    _hubRequired();
   }
 
   @override
   Future<List<ConversationHistoryEntry>> history(String pin) async {
     final station = await _stationBackend();
     if (station != null) return station.history(pin);
-    final rows =
-        await channel.invokeListMethod<Object?>('history', {'pin': pin}) ??
-        const [];
-    return rows.map((row) {
-      final entry = (row! as Map<Object?, Object?>);
-      return ConversationHistoryEntry(
-        childText: entry['childText']! as String,
-        characterText: entry['characterText']! as String,
-        completedAt: entry['completedAt']! as int,
-      );
-    }).toList();
+    return const [];
   }
 
   @override
@@ -412,61 +367,18 @@ class MethodChannelBackendClient implements BackendClient {
         characterAlias: characterAlias,
       );
     }
-    final rows =
-        await channel.invokeListMethod<Object?>('history', {
-          'pin': pin,
-          'kidId': kidId,
-          'characterAlias': characterAlias,
-        }) ??
-        const [];
-    return rows.map((row) {
-      final entry = (row! as Map<Object?, Object?>);
-      return ConversationHistoryEntry(
-        childText: entry['childText']! as String,
-        characterText: entry['characterText']! as String,
-        completedAt: entry['completedAt']! as int,
-      );
-    }).toList();
+    return const [];
   }
 
   @override
   Future<void> deleteHistory(String pin) async =>
-      (await _stationBackend())?.deleteHistory(pin) ??
-      channel.invokeMethod<void>('deleteHistory', {'pin': pin});
-
-  VoiceProfileStatus _voiceFromMap(Map<Object?, Object?>? response) =>
-      VoiceProfileStatus(
-        enrolled: response?['enrolled'] as bool? ?? false,
-        approved: response?['approved'] as bool? ?? false,
-        runtimeReady: response?['runtimeReady'] as bool? ?? false,
-        durationMilliseconds: response?['durationMilliseconds'] as int?,
-        profileId: response?['profileId'] as String?,
-      );
+      (await _stationBackend())?.deleteHistory(pin) ?? _hubRequired();
 
   @override
   Future<List<CharacterConfiguration>> characters() async {
     final station = await _stationBackend();
     if (station != null) return station.characters();
-    final rows =
-        await channel.invokeListMethod<Object?>('characters') ?? const [];
-    final characters = rows.map((row) {
-      final character = row! as Map<Object?, Object?>;
-      return CharacterConfiguration(
-        alias: character['alias']! as String,
-        traits: (character['traits'] as List<Object?>? ?? const [])
-            .cast<String>(),
-        parentGuidance: character['parentGuidance'] as String?,
-        voice: _voiceFromMap(character['voice'] as Map<Object?, Object?>?),
-        kidId: character['kidId'] as String?,
-        personaAgeYears: character['personaAgeYears'] as int?,
-        photoBytes: switch (character['photoBase64'] as String?) {
-          final value? when value.isNotEmpty => base64Decode(value),
-          _ => null,
-        },
-        photoMime: character['photoMime'] as String?,
-      );
-    }).toList();
-    return characters;
+    return const [];
   }
 
   @override
@@ -489,14 +401,32 @@ class MethodChannelBackendClient implements BackendClient {
         personaAgeYears: personaAgeYears,
       );
     }
-    return channel.invokeMethod<void>('saveCharacter', {
-      'pin': pin,
-      'characterAlias': characterAlias,
-      'characterTraits': characterTraits,
-      'parentGuidance': parentGuidance,
-      'kidId': kidId,
-      'personaAgeYears': personaAgeYears,
-    });
+    _hubRequired();
+  }
+
+  @override
+  Future<void> renameCharacter({
+    required String pin,
+    required String currentCharacterAlias,
+    required String newCharacterAlias,
+    required List<String> characterTraits,
+    required String? parentGuidance,
+    String? kidId,
+    int? personaAgeYears,
+  }) async {
+    final station = await _stationBackend();
+    if (station != null) {
+      return station.renameCharacter(
+        pin: pin,
+        currentCharacterAlias: currentCharacterAlias,
+        newCharacterAlias: newCharacterAlias,
+        characterTraits: characterTraits,
+        parentGuidance: parentGuidance,
+        kidId: kidId,
+        personaAgeYears: personaAgeYears,
+      );
+    }
+    _hubRequired();
   }
 
   @override
@@ -532,12 +462,7 @@ class MethodChannelBackendClient implements BackendClient {
         photoMime: photoMime,
       );
     }
-    return channel.invokeMethod<void>('saveCharacterPhoto', {
-      'pin': pin,
-      'characterAlias': characterAlias,
-      'photoBytes': photoBytes,
-      'photoMime': photoMime,
-    });
+    _hubRequired();
   }
 
   @override
@@ -554,11 +479,7 @@ class MethodChannelBackendClient implements BackendClient {
         kidId: kidId,
       );
     }
-    return channel.invokeMethod<void>('deleteCharacter', {
-      'pin': pin,
-      'characterAlias': characterAlias,
-      'kidId': kidId,
-    });
+    _hubRequired();
   }
 
   @override
@@ -567,10 +488,11 @@ class MethodChannelBackendClient implements BackendClient {
     if (station != null) {
       return station.voiceStatus(characterAlias: characterAlias);
     }
-    final response = await channel.invokeMapMethod<Object?, Object?>(
-      'voiceStatus',
+    return const VoiceProfileStatus(
+      enrolled: false,
+      approved: false,
+      runtimeReady: false,
     );
-    return _voiceFromMap(response);
   }
 
   @override
@@ -612,14 +534,7 @@ class MethodChannelBackendClient implements BackendClient {
         sourceMime: uploadMime,
       );
     }
-    return channel.invokeMethod<void>('enrollVoice', {
-      'pin': pin,
-      'adultAuthorized': adultAuthorized,
-      'characterAlias': characterAlias,
-      'wavBytes': wavBytes,
-      'sourceFilename': sourceFilename,
-      'sourceMime': sourceMime,
-    });
+    _hubRequired();
   }
 
   @override
@@ -635,10 +550,7 @@ class MethodChannelBackendClient implements BackendClient {
       }
       return station.previewVoice(pin, characterAlias: characterAlias);
     }
-    return channel.invokeMethod<void>('previewVoice', {
-      'pin': pin,
-      'characterAlias': characterAlias,
-    });
+    _hubRequired();
   }
 
   @override
@@ -654,10 +566,7 @@ class MethodChannelBackendClient implements BackendClient {
       }
       return station.approveVoice(pin, characterAlias: characterAlias);
     }
-    return channel.invokeMethod<void>('approveVoice', {
-      'pin': pin,
-      'characterAlias': characterAlias,
-    });
+    _hubRequired();
   }
 
   @override
@@ -673,10 +582,7 @@ class MethodChannelBackendClient implements BackendClient {
       }
       return station.deleteVoice(pin, characterAlias: characterAlias);
     }
-    return channel.invokeMethod<void>('deleteVoice', {
-      'pin': pin,
-      'characterAlias': characterAlias,
-    });
+    _hubRequired();
   }
 
   @override
@@ -700,10 +606,7 @@ class MethodChannelBackendClient implements BackendClient {
         text,
         characterAlias: characterAlias,
       ) ??
-      channel.invokeMethod<void>('speakWithVoice', {
-        'text': text,
-        'characterAlias': characterAlias,
-      });
+      _hubRequired();
 }
 
 class _StationConfig {
@@ -711,11 +614,13 @@ class _StationConfig {
     required this.baseUrl,
     required this.cookie,
     required this.clientId,
+    required this.hubId,
   });
 
   final Uri baseUrl;
   final String cookie;
   final String clientId;
+  final String hubId;
 
   String get origin => _origin(baseUrl);
 
@@ -751,6 +656,7 @@ class _StationBackendClient implements BackendClient {
     final baseUrl = parsed.replace(path: '', query: '', fragment: '');
     final origin = _StationConfig._origin(baseUrl);
     final client = HttpClient();
+    client.findProxy = (_) => 'DIRECT';
     try {
       final request = await client.postUrl(
         baseUrl.replace(path: '/api/v1/bootstrap'),
@@ -765,7 +671,16 @@ class _StationBackendClient implements BackendClient {
       );
       await response.drain<void>();
       if (response.statusCode != HttpStatus.noContent) {
-        throw HttpException('Hub rejected the pairing URL.');
+        final hint = switch (response.statusCode) {
+          HttpStatus.unauthorized =>
+            'The QR code is stale. Open a fresh pairing QR code in PlushBuddy Hub and scan again.',
+          HttpStatus.forbidden =>
+            'This phone was forgotten by the Hub. Open a fresh pairing QR code and scan again.',
+          _ => 'Keep PlushBuddy Hub open and scan the latest QR code.',
+        };
+        throw HttpException(
+          'Hub rejected the pairing URL with HTTP ${response.statusCode}. $hint',
+        );
       }
       final cookie =
           response.cookies
@@ -780,10 +695,17 @@ class _StationBackendClient implements BackendClient {
       if (cookie == null || cookie.isEmpty) {
         throw const HttpException('Hub did not return a session cookie.');
       }
+      final hubId = response.headers.value('x-plushbuddy-hub-id')?.trim();
+      if (hubId == null ||
+          hubId.isEmpty ||
+          !RegExp(r'^hub-[a-f0-9-]{36}$').hasMatch(hubId)) {
+        throw const HttpException('Hub did not return a valid Hub ID.');
+      }
       return _StationConfig(
         baseUrl: Uri.parse(origin),
         cookie: cookie,
         clientId: clientId,
+        hubId: hubId,
       );
     } finally {
       client.close(force: true);
@@ -800,13 +722,26 @@ class _StationBackendClient implements BackendClient {
     bool mutating = true,
   }) async {
     final client = HttpClient();
+    client.findProxy = (_) => 'DIRECT';
     try {
       final request = await client.openUrl(method, _uri(path));
       if (authenticated) {
         request.headers.set(HttpHeaders.cookieHeader, config.cookie);
       }
       request.headers.set('X-PlushBuddy-Client-Id', config.clientId);
-      if (mutating) request.headers.set('origin', config.origin);
+      request.headers.set('X-PlushBuddy-Hub-Id', config.hubId);
+      final clientLabel = await channel
+          .invokeMethod<String>('stationClientLabel')
+          .catchError((_) => null);
+      if (clientLabel != null && clientLabel.trim().isNotEmpty) {
+        request.headers.set('X-PlushBuddy-Client-Label', clientLabel.trim());
+      }
+      // Dart/Android HttpClient is not a browser and does not add Origin
+      // automatically. PlushBuddy Hub validates API requests against the
+      // paired Hub origin for both reads and writes, so send it on every
+      // request. Without this, startup GET readiness checks are rejected and
+      // the app clears an otherwise valid pairing.
+      request.headers.set('origin', config.origin);
       if (body != null) {
         request.headers.contentType = ContentType.json;
         request.write(jsonEncode(body));
@@ -816,12 +751,20 @@ class _StationBackendClient implements BackendClient {
       );
       final bytes = await consolidateHttpClientResponseBytes(response);
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        var message = 'Hub request failed.';
+        if (response.statusCode == HttpStatus.unauthorized ||
+            response.statusCode == HttpStatus.forbidden) {
+          await channel.invokeMethod<void>('clearStationPairing');
+        }
+        var message = 'Hub request failed with HTTP ${response.statusCode}.';
         try {
           final decoded =
               jsonDecode(utf8.decode(bytes)) as Map<String, Object?>;
           message = decoded['message'] as String? ?? message;
         } catch (_) {}
+        if (response.statusCode == HttpStatus.unauthorized ||
+            response.statusCode == HttpStatus.forbidden) {
+          throw HubAuthenticationRejectedException(message);
+        }
         throw HttpException(message, uri: _uri(path));
       }
       return bytes;
@@ -1053,6 +996,7 @@ class _StationBackendClient implements BackendClient {
     int? characterPlayAgeYears,
   }) async {
     final requestId = 'android-${DateTime.now().microsecondsSinceEpoch}';
+    final turnStartedAt = DateTime.now();
     final wsUri = config.baseUrl.replace(
       scheme: 'ws',
       path: '/api/v1/events',
@@ -1064,6 +1008,8 @@ class _StationBackendClient implements BackendClient {
       headers: {
         HttpHeaders.cookieHeader: config.cookie,
         'origin': config.origin,
+        'X-PlushBuddy-Client-Id': config.clientId,
+        'X-PlushBuddy-Hub-Id': config.hubId,
       },
     ).timeout(const Duration(seconds: 10));
     try {
@@ -1073,6 +1019,15 @@ class _StationBackendClient implements BackendClient {
         final event = jsonDecode(message) as Map<String, Object?>;
         if (event['request_id'] != requestId) return;
         if (event['event'] == 'response_ready') {
+          final totalMs = DateTime.now()
+              .difference(turnStartedAt)
+              .inMilliseconds;
+          debugPrint(
+            'PlushBuddy latency request_id=$requestId phase=android_turn '
+            'status=ok total_ms=$totalMs '
+            'hub_generate_ms=${event['conversation_generate_ms']} '
+            'hub_total_ms=${event['total_ms']}',
+          );
           completer.complete(
             BackendResponse(
               speech: event['speech']! as String,
@@ -1080,6 +1035,15 @@ class _StationBackendClient implements BackendClient {
             ),
           );
         } else if (event['event'] == 'turn_failed') {
+          final totalMs = DateTime.now()
+              .difference(turnStartedAt)
+              .inMilliseconds;
+          debugPrint(
+            'PlushBuddy latency request_id=$requestId phase=android_turn '
+            'status=failed total_ms=$totalMs '
+            'hub_generate_ms=${event['conversation_generate_ms']} '
+            'hub_total_ms=${event['total_ms']}',
+          );
           completer.completeError(
             const HttpException('Local generation failed.'),
           );
@@ -1103,6 +1067,10 @@ class _StationBackendClient implements BackendClient {
             'character_play_age_years': characterPlayAgeYears,
           },
         },
+      );
+      debugPrint(
+        'PlushBuddy latency request_id=$requestId phase=android_command '
+        'accepted_ms=${DateTime.now().difference(turnStartedAt).inMilliseconds}',
       );
       final response = await completer.future.timeout(
         const Duration(seconds: 45),
@@ -1298,6 +1266,29 @@ class _StationBackendClient implements BackendClient {
   );
 
   @override
+  Future<void> renameCharacter({
+    required String pin,
+    required String currentCharacterAlias,
+    required String newCharacterAlias,
+    required List<String> characterTraits,
+    required String? parentGuidance,
+    String? kidId,
+    int? personaAgeYears,
+  }) => _requestBytes(
+    'POST',
+    '/api/v1/characters/rename',
+    body: {
+      'pin': pin,
+      'current_character_alias': currentCharacterAlias,
+      'new_character_alias': newCharacterAlias,
+      'character_traits': characterTraits,
+      'parent_guidance': parentGuidance,
+      'kid_id': kidId,
+      'persona_age_years': personaAgeYears,
+    },
+  );
+
+  @override
   Future<PickedCharacterPhoto> pickCharacterPhoto() async {
     final picked = await channel.invokeMapMethod<Object?, Object?>(
       'pickCharacterPhoto',
@@ -1450,16 +1441,45 @@ class _StationBackendClient implements BackendClient {
       );
 
   @override
-  Future<Uint8List> synthesizeVoice(String text, {String? characterAlias}) =>
-      _requestBytes(
-        'POST',
-        '/api/v1/voice/speak',
-        body: {'text': text, 'character_alias': characterAlias},
-      );
+  Future<Uint8List> synthesizeVoice(String text, {String? characterAlias}) {
+    final requestId = 'android-voice-${DateTime.now().microsecondsSinceEpoch}';
+    final startedAt = DateTime.now();
+    return _requestBytes(
+          'POST',
+          '/api/v1/voice/speak',
+          body: {
+            'text': text,
+            'character_alias': characterAlias,
+            'request_id': requestId,
+          },
+        )
+        .then((bytes) {
+          debugPrint(
+            'PlushBuddy latency request_id=$requestId phase=android_voice_download '
+            'status=ok total_ms=${DateTime.now().difference(startedAt).inMilliseconds} '
+            'wav_bytes=${bytes.length}',
+          );
+          return bytes;
+        })
+        .catchError((Object error) {
+          debugPrint(
+            'PlushBuddy latency request_id=$requestId phase=android_voice_download '
+            'status=failed total_ms=${DateTime.now().difference(startedAt).inMilliseconds} '
+            'error=$error',
+          );
+          throw error;
+        });
+  }
 
   @override
   Future<void> speakWithVoice(String text, {String? characterAlias}) async {
+    final startedAt = DateTime.now();
     final bytes = await synthesizeVoice(text, characterAlias: characterAlias);
     await _playWav(bytes);
+    debugPrint(
+      'PlushBuddy latency phase=android_voice_playback '
+      'status=started total_ms=${DateTime.now().difference(startedAt).inMilliseconds} '
+      'wav_bytes=${bytes.length}',
+    );
   }
 }

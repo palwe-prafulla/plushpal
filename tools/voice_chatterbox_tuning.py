@@ -59,7 +59,7 @@ def env(output_dir: Path) -> dict[str, str]:
             "XDG_CACHE_HOME": str(output_dir / "cache"),
         }
     )
-    bundled_hf = ROOT / "dist/macos/PlushPal.app/Contents/Resources/model-cache/huggingface"
+    bundled_hf = ROOT / "dist/macos/PlushBuddy.app/Contents/Resources/model-cache/huggingface"
     if bundled_hf.exists():
         result.update(
             {

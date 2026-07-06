@@ -8,7 +8,7 @@ default.
 
 ```text
 qa/
-  automation/   Device, simulator, browser, and MacStation E2E/smoke scripts
+  automation/   Device, simulator, browser, and Hub E2E/smoke scripts
   unit/         Index of unit-test suites that live near their source code
 ```
 

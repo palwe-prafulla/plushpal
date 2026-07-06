@@ -22,6 +22,8 @@ enum ChildMessageAuthor { child, character, system }
 
 const appDisplayName = 'PlushBuddy';
 const _themePreferenceKey = 'plushbuddy.theme_mode';
+const _themePreferenceMigrationKey =
+    'plushbuddy.theme_mode.v2_system_default_migrated';
 
 enum AppThemePreference {
   system('system', 'System', Icons.brightness_auto),
@@ -50,10 +52,30 @@ enum AppThemePreference {
 typedef CharacterVoiceAction = Future<bool> Function({String? characterAlias});
 
 String get _thisClientLabel => kIsWeb ? 'this browser' : 'this phone';
-String get _thisDeviceLabel => kIsWeb ? 'this browser' : 'this device';
 String get _voiceSampleStorageLabel => kIsWeb
     ? 'not saved in the browser after profiling.'
     : 'not saved on Android after profiling.';
+
+List<CharacterConfiguration> _uniqueCharactersByAlias(
+  Iterable<CharacterConfiguration> characters,
+) {
+  final byAlias = <String, CharacterConfiguration>{};
+  for (final character in characters) {
+    final alias = character.alias.trim();
+    if (alias.isEmpty) continue;
+    byAlias.putIfAbsent(alias, () => character);
+  }
+  return byAlias.values.toList();
+}
+
+String? _safeCharacterDropdownValue(
+  List<CharacterConfiguration> characters,
+  String selectedAlias,
+) {
+  final aliases = characters.map((character) => character.alias).toSet();
+  if (aliases.contains(selectedAlias)) return selectedAlias;
+  return characters.isEmpty ? null : characters.first.alias;
+}
 
 class ChildAgeDetails {
   const ChildAgeDetails({
@@ -108,6 +130,27 @@ String birthdateToUsDisplay(String value) {
   return '$month/$day/${parsed.year}';
 }
 
+class UsBirthdateInputFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final digits = newValue.text.replaceAll(RegExp(r'\D'), '');
+    final clipped = digits.length > 8 ? digits.substring(0, 8) : digits;
+    final buffer = StringBuffer();
+    for (var index = 0; index < clipped.length; index += 1) {
+      if (index == 2 || index == 4) buffer.write('/');
+      buffer.write(clipped[index]);
+    }
+    final formatted = buffer.toString();
+    return TextEditingValue(
+      text: formatted,
+      selection: TextSelection.collapsed(offset: formatted.length),
+    );
+  }
+}
+
 ChildAgeDetails? childAgeFromBirthdate(String birthdateIso) {
   final birthdate = parseBirthdateInput(birthdateIso);
   if (birthdate == null) return null;
@@ -157,6 +200,13 @@ class _PlushPalAppState extends State<PlushPalApp> {
 
   Future<void> _loadThemePreference() async {
     final preferences = await SharedPreferences.getInstance();
+    if (preferences.getBool(_themePreferenceMigrationKey) != true) {
+      await preferences.setString(
+        _themePreferenceKey,
+        AppThemePreference.system.storageValue,
+      );
+      await preferences.setBool(_themePreferenceMigrationKey, true);
+    }
     if (!mounted) return;
     setState(() {
       themePreference = AppThemePreference.fromStorage(
@@ -168,6 +218,7 @@ class _PlushPalAppState extends State<PlushPalApp> {
   Future<void> _setThemePreference(AppThemePreference next) async {
     setState(() => themePreference = next);
     final preferences = await SharedPreferences.getInstance();
+    await preferences.setBool(_themePreferenceMigrationKey, true);
     await preferences.setString(_themePreferenceKey, next.storageValue);
   }
 
@@ -452,28 +503,30 @@ class _PlushPalRootState extends State<PlushPalRoot>
         characterPlayAgeYears: selectedCharacterPersonaAge,
       );
     } catch (error) {
-      debugPrint('PlushPal turn generation failed: $error');
+      debugPrint('PlushBuddy turn generation failed: $error');
       if (!mounted) return;
       setState(
         () => message = userFacingError(
           error,
           fallback:
-              'I could not think of an answer. Check the LLM setup in PlushBuddy Hub and try again.',
+              'I could not think of an answer. Check Cloud AI or Local AI setup in PlushBuddy Hub and try again.',
         ),
       );
       dispatch(const ConversationFailed());
       return;
     }
-    if (!mounted ||
-        state.step != AppStep.childMode ||
-        state.conversationStatus != ConversationStatus.thinking) {
+    if (!mounted || state.step != AppStep.childMode) {
       return;
     }
     var responseShown = false;
     void showResponse({String? overrideMessage}) {
       if (responseShown || !mounted) return;
       responseShown = true;
-      dispatch(const ResponseReady());
+      if (state.conversationStatus == ConversationStatus.thinking) {
+        dispatch(const ResponseReady());
+      } else if (state.step == AppStep.childMode) {
+        state = state.copyWith(conversationStatus: ConversationStatus.speaking);
+      }
       setState(() {
         latestSpeech = response.speech;
         childMessages = [
@@ -498,9 +551,7 @@ class _PlushPalRootState extends State<PlushPalRoot>
           response.speech,
           characterAlias: state.characterName,
         );
-        if (!mounted ||
-            state.step != AppStep.childMode ||
-            state.conversationStatus != ConversationStatus.thinking) {
+        if (!mounted || state.step != AppStep.childMode) {
           return;
         }
         showResponse();
@@ -518,17 +569,17 @@ class _PlushPalRootState extends State<PlushPalRoot>
         dispatch(const PlaybackCompleted());
       }
     } catch (error) {
-      debugPrint('PlushPal voice playback failed: $error');
+      debugPrint('PlushBuddy voice playback failed: $error');
       if (!mounted) return;
       showResponse(
         overrideMessage:
-            'I answered below, but the buddy voice could not play. Check the Magic Voice Box and try again.',
+            'I answered below, but the buddy voice could not play. Check the PlushBuddy Hub and try again.',
       );
       if (widget.platform.supportsSpeech) {
         try {
           await widget.platform.speak(response.speech);
         } catch (fallbackError) {
-          debugPrint('PlushPal fallback speech failed: $fallbackError');
+          debugPrint('PlushBuddy fallback speech failed: $fallbackError');
         }
       }
       if (!mounted) return;
@@ -595,6 +646,27 @@ class _PlushPalRootState extends State<PlushPalRoot>
   }
 
   Future<void> enterChildMode() async {
+    if (!voiceApproved) {
+      setState(
+        () => message =
+            'Preview and save ${state.characterName}’s buddy voice before starting child mode.',
+      );
+      return;
+    }
+    if (!voiceRuntimeReady) {
+      setState(
+        () => message =
+            'PlushBuddy Hub voice support is still waking up. Keep Hub open and try again.',
+      );
+      return;
+    }
+    if (await requestVerifiedParentPin(
+          'Start child mode',
+          allowCached: false,
+        ) ==
+        null) {
+      return;
+    }
     if (widget.platform.supportsSpeech) {
       final hasMicrophonePermission = await widget.platform
           .ensureMicrophonePermission();
@@ -706,10 +778,13 @@ class _PlushPalRootState extends State<PlushPalRoot>
         kidName.text = activeKid.name;
         kidBirthdate.text = birthdateToUsDisplay(activeKid.birthdateIso);
       }
+      final restoredCharacterAlias =
+          activeCharacter?.alias ?? readiness.characterAlias;
       if (readiness.parentConfigured &&
           state.step == AppStep.onboarding &&
           (activeAge != null || readiness.ageBand != null) &&
-          readiness.characterAlias != null) {
+          restoredCharacterAlias != null &&
+          restoredCharacterAlias.trim().isNotEmpty) {
         final restoredAge =
             activeAge?.ageBand ??
             switch (readiness.ageBand) {
@@ -721,7 +796,7 @@ class _PlushPalRootState extends State<PlushPalRoot>
         if (restoredAge != null) {
           CharacterConfiguration? preferredCharacter;
           for (final character in loadedCharacters) {
-            if (character.alias == readiness.characterAlias!) {
+            if (character.alias == restoredCharacterAlias) {
               preferredCharacter = character;
               break;
             }
@@ -729,7 +804,7 @@ class _PlushPalRootState extends State<PlushPalRoot>
           if (preferredCharacter != null) {
             applyCharacter(preferredCharacter);
           } else {
-            characterName.text = readiness.characterAlias!;
+            characterName.text = restoredCharacterAlias;
             parentGuidance.text = readiness.parentGuidance ?? '';
             selectedTraits
               ..clear()
@@ -737,31 +812,38 @@ class _PlushPalRootState extends State<PlushPalRoot>
           }
           retentionDays = readiness.retentionDays;
           dispatch(AgeSelected(restoredAge));
-          dispatch(CharacterNamed(readiness.characterAlias!));
-          if (readiness.ready) dispatch(const OnboardingCompleted());
+          dispatch(CharacterNamed(restoredCharacterAlias));
+          if (readiness.ready && !showSetupSettings) {
+            dispatch(const OnboardingCompleted());
+          }
         }
       }
       if (!readiness.ready) {
         setState(
           () => message = stationPaired
-              ? 'The Hub is connected. Configure Cloud LLM or local reasoning in PlushBuddy Hub, then tap Check again.'
+              ? 'PlushBuddy Hub is connected. Configure Cloud AI or Local AI in Hub, then tap Check again.'
               : 'Pair this app with PlushBuddy Hub so it can use buddy voices and conversations.',
         );
       }
     } catch (_) {
       if (!mounted) return;
-      setState(() => message = 'Could not check PlushBuddy Hub.');
+      setState(() {
+        stationPaired = false;
+        stationBaseUrl = null;
+        message =
+            'Could not reach the paired PlushBuddy Hub. Reconnect this app from the Hub QR code.';
+      });
     }
   }
 
   Future<void> pairWithStation() async {
     if (kIsWeb) {
-      setState(() => message = 'Checking the local Magic Voice Box...');
+      setState(() => message = 'Checking the local PlushBuddy Hub...');
       await assessDevice();
       if (!mounted) return;
       setState(
         () => message = stationPaired
-            ? 'Magic Voice Box connected automatically.'
+            ? 'PlushBuddy Hub connected automatically.'
             : 'Open PlushBuddy from Hub, then refresh this client.',
       );
       return;
@@ -771,20 +853,24 @@ class _PlushPalRootState extends State<PlushPalRoot>
       MaterialPageRoute(builder: (_) => const StationQrScannerScreen()),
     );
     if (pairingUrl == null || !mounted) return;
-    setState(() => message = 'Connecting the Magic Voice Box...');
+    setState(() => message = 'Connecting the PlushBuddy Hub...');
     try {
       await widget.backend.pairStation(pairingUrl.trim());
       if (!mounted) return;
-      setState(() => message = 'Magic Voice Box connected.');
+      setState(() => message = 'PlushBuddy Hub connected.');
       await assessDevice();
     } catch (error) {
       if (!mounted) return;
-      setState(
-        () => message = userFacingError(
-          error,
-          fallback:
-              'Pairing failed. Keep the Mac awake, on the same Wi‑Fi, and scan a fresh QR code.',
-        ),
+      final text = userFacingError(
+        error,
+        fallback:
+            'Pairing failed. Keep the Mac awake, on the same Wi‑Fi, and scan a fresh QR code.',
+      );
+      setState(() => message = text);
+      await showErrorDialog(
+        title: 'Pairing failed',
+        message:
+            '$text\n\nOpen PlushBuddy Hub, tap “Pair phone with QR code”, and scan the latest QR code.',
       );
     }
   }
@@ -795,87 +881,33 @@ class _PlushPalRootState extends State<PlushPalRoot>
     setState(() {
       stationPaired = false;
       stationBaseUrl = null;
-      message = 'Magic Voice Box connection was removed.';
+      message = 'PlushBuddy Hub connection was removed.';
     });
     await assessDevice();
   }
 
   Future<void> configureGeminiKey() async {
-    final controller = TextEditingController();
-    var provider = reasoningProvider.provider;
     final submitted = await showDialog<bool>(
       context: context,
-      barrierDismissible: false,
-      builder: (context) => StatefulBuilder(
-        builder: (context, update) => AlertDialog(
-          title: const Text('Configure reasoning provider'),
-          content: SizedBox(
-            width: 520,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                DropdownButtonFormField<String>(
-                  initialValue: provider,
-                  decoration: const InputDecoration(
-                    border: OutlineInputBorder(),
-                    labelText: 'Provider',
-                  ),
-                  items: const [
-                    DropdownMenuItem(value: 'gemini', child: Text('Gemini')),
-                    DropdownMenuItem(value: 'openai', child: Text('OpenAI')),
-                  ],
-                  onChanged: (value) => update(() {
-                    provider = value ?? 'gemini';
-                  }),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: controller,
-                  autofocus: true,
-                  obscureText: true,
-                  decoration: InputDecoration(
-                    border: const OutlineInputBorder(),
-                    labelText: provider == 'openai'
-                        ? 'OpenAI API key'
-                        : 'Gemini API key',
-                    helperText: 'Stored locally on $_thisDeviceLabel.',
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Save'),
-            ),
-          ],
+      builder: (context) => AlertDialog(
+        title: const Text('Cloud AI is managed in Hub'),
+        content: const Text(
+          'Open PlushBuddy Hub on the Mac to add or change Gemini/OpenAI keys. '
+          'This phone only stores pairing information and UI preferences.',
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Close'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Check Hub status'),
+          ),
+        ],
       ),
     );
-    if (submitted != true || !mounted) return;
-    try {
-      await widget.backend.configureApiKey(
-        pin: parentPin.text,
-        provider: provider,
-        apiKey: controller.text,
-      );
-      if (!mounted) return;
-      setState(() => message = 'Reasoning API key saved on this device.');
-      await assessDevice();
-    } catch (error) {
-      if (!mounted) return;
-      setState(
-        () => message = userFacingError(
-          error,
-          fallback: 'Could not save the API key.',
-        ),
-      );
-    }
+    if (submitted == true && mounted) await assessDevice();
   }
 
   Future<void> installModel() async {
@@ -904,6 +936,48 @@ class _PlushPalRootState extends State<PlushPalRoot>
     });
   }
 
+  Future<void> saveKidProfileOnly() async {
+    final trimmedName = kidName.text.trim();
+    final kidBirthdateIso = birthdateToIso(kidBirthdate.text);
+    final childAge = childAgeFromBirthdate(kidBirthdateIso);
+    if (trimmedName.isEmpty || childAge == null) {
+      setState(() {
+        message = trimmedName.isEmpty
+            ? 'Add your kid’s name first.'
+            : 'Enter birthdate as MM/DD/YYYY before saving the kid profile.';
+      });
+      return;
+    }
+    final pin = await requestVerifiedParentPin('Save kid profile');
+    if (pin == null) return;
+    try {
+      final kidId =
+          selectedKidId ?? 'kid-${DateTime.now().microsecondsSinceEpoch}';
+      await widget.backend.saveKid(
+        pin: pin,
+        kidId: kidId,
+        name: trimmedName,
+        birthdateIso: kidBirthdateIso,
+      );
+      if (!mounted) return;
+      setState(() {
+        selectedKidId = kidId;
+      });
+      dispatch(AgeSelected(childAge.ageBand));
+      await assessDevice();
+      if (!mounted) return;
+      showActionMessage('Kid profile saved. Now add a toy buddy.');
+    } catch (error) {
+      if (!mounted) return;
+      setState(
+        () => message = userFacingError(
+          error,
+          fallback: 'Could not save the kid profile.',
+        ),
+      );
+    }
+  }
+
   Future<void> exitChildMode() async {
     await widget.backend.cancelTurn();
     await widget.platform.cancelSpeech();
@@ -916,20 +990,26 @@ class _PlushPalRootState extends State<PlushPalRoot>
   Future<void> completeOnboarding({bool addVoiceAfterSave = false}) async {
     final kidBirthdateIso = birthdateToIso(kidBirthdate.text);
     final childAge = childAgeFromBirthdate(kidBirthdateIso);
+    final trimmedKidName = kidName.text.trim();
     if (childAge != null && state.ageBand != childAge.ageBand) {
       dispatch(AgeSelected(childAge.ageBand));
     }
-    if (childAge == null || state.recommendation?.installed != true) {
+    if (trimmedKidName.isEmpty ||
+        childAge == null ||
+        state.recommendation?.installed != true) {
       await assessDevice();
       if (!mounted) return;
     }
-    if (childAge == null || state.recommendation?.installed != true) {
+    if (trimmedKidName.isEmpty ||
+        childAge == null ||
+        state.recommendation?.installed != true) {
       setState(() {
-        if (kidName.text.trim().isEmpty || childAge == null) {
-          message = 'Add a kid profile with name and birthdate first.';
+        if (trimmedKidName.isEmpty || childAge == null) {
+          message =
+              'Save the kid profile first: add name and birthdate as MM/DD/YYYY.';
         } else if (state.recommendation?.installed != true) {
           message =
-              'Finish Cloud LLM or local reasoning setup in PlushBuddy Hub before continuing.';
+              'Finish Cloud AI or Local AI setup in PlushBuddy Hub before continuing.';
         } else {
           message = 'Finish the required setup items before continuing.';
         }
@@ -956,21 +1036,10 @@ class _PlushPalRootState extends State<PlushPalRoot>
       final newKidId =
           selectedKidId ?? 'kid-${DateTime.now().microsecondsSinceEpoch}';
       final savedCharacterAlias = characterName.text.trim();
-      await widget.backend.configureParentPin(
-        pin: pin,
-        ageBand: childAge.ageBandCode,
-        characterAlias: savedCharacterAlias,
-        characterTraits: selectedTraits.toList()..sort(),
-        parentGuidance: parentGuidance.text.trim().isEmpty
-            ? null
-            : parentGuidance.text.trim(),
-        retentionDays: retentionDays,
-        kidId: newKidId,
-      );
       await widget.backend.saveKid(
         pin: pin,
         kidId: newKidId,
-        name: kidName.text.trim(),
+        name: trimmedKidName,
         birthdateIso: kidBirthdateIso,
       );
       selectedKidId = newKidId;
@@ -987,15 +1056,13 @@ class _PlushPalRootState extends State<PlushPalRoot>
       if (!mounted) return;
       dispatch(AgeSelected(childAge.ageBand));
       dispatch(CharacterNamed(savedCharacterAlias));
-      dispatch(const OnboardingCompleted());
-      await assessDevice();
       if (addVoiceAfterSave && mounted) {
+        setState(() => showSetupSettings = true);
         unlockedParentPin = pin;
-        try {
-          await enrollVoice(characterAlias: savedCharacterAlias);
-        } finally {
-          unlockedParentPin = null;
-        }
+        await enrollVoice(characterAlias: savedCharacterAlias);
+      } else {
+        dispatch(const OnboardingCompleted());
+        await assessDevice();
       }
     } catch (error) {
       if (mounted) {
@@ -1043,15 +1110,105 @@ class _PlushPalRootState extends State<PlushPalRoot>
     return promptParentPin(title);
   }
 
-  Future<bool> unlockParentPortal() async {
-    final pin = await promptParentPin('Open parent settings');
-    if (pin == null) return false;
-    final authorized = await widget.backend.authorizeParentPin(pin);
-    if (!mounted) return false;
-    if (!authorized) {
-      setState(() => message = 'Incorrect PIN or parent access is locked.');
+  Future<bool> ensureHubParentPinConfigured() async {
+    Future<bool> showHubSetupNeeded(
+      String text, {
+      bool offerPair = false,
+    }) async {
+      if (!mounted) return false;
+      setState(() => message = text);
+      final action = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Hub setup needed'),
+          content: Text(text),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(offerPair ? 'Not now' : 'OK'),
+            ),
+            if (offerPair)
+              FilledButton.icon(
+                onPressed: () => Navigator.pop(context, true),
+                icon: const Icon(Icons.qr_code_2),
+                label: const Text('Pair now'),
+              ),
+          ],
+        ),
+      );
+      return action == true;
+    }
+
+    try {
+      var pairing = await widget.backend.stationPairingStatus();
+      if (!mounted) return false;
+      if (!pairing.paired) {
+        setState(() {
+          stationPaired = false;
+          stationBaseUrl = null;
+        });
+        final shouldPair = await showHubSetupNeeded(
+          'This app is not paired with the current PlushBuddy Hub. Pair this phone with the Hub to open Parent Settings.',
+          offerPair: true,
+        );
+        if (!shouldPair || !mounted) return false;
+        await pairWithStation();
+        if (!mounted) return false;
+        pairing = await widget.backend.stationPairingStatus();
+        if (!mounted) return false;
+        if (!pairing.paired) {
+          await showHubSetupNeeded(
+            'Pairing did not complete. Keep PlushBuddy Hub open on the Mac and scan the Hub QR code again.',
+            offerPair: true,
+          );
+          return false;
+        }
+      }
+      final readiness = await widget.backend.localModelReadiness();
+      if (!mounted) return false;
+      if (!readiness.parentConfigured) {
+        await showHubSetupNeeded(
+          'Parent PIN is not set yet. Open PlushBuddy Hub on the Mac, set the parent PIN, then pair or reconnect this phone.',
+        );
+        return false;
+      }
+      return true;
+    } catch (error) {
+      if (mounted) {
+        await showHubSetupNeeded(
+          userFacingError(
+            error,
+            fallback:
+                'Could not check the Hub parent PIN. Make sure PlushBuddy Hub is running and paired.',
+          ),
+        );
+      }
       return false;
     }
+  }
+
+  Future<String?> requestVerifiedParentPin(
+    String title, {
+    bool allowCached = true,
+  }) async {
+    if (allowCached) {
+      if (unlockedParentPin case final pin?) return pin;
+    }
+    if (!await ensureHubParentPinConfigured()) return null;
+    final pin = await promptParentPin(title);
+    if (pin == null) return null;
+    final authorized = await widget.backend.authorizeParentPin(pin);
+    if (!mounted) return null;
+    if (!authorized) {
+      setState(() => message = 'Incorrect PIN or parent access is locked.');
+      return null;
+    }
+    return pin;
+  }
+
+  Future<bool> unlockParentPortal() async {
+    final pin = await requestVerifiedParentPin('Open parent settings');
+    if (pin == null) return false;
     unlockedParentPin = pin;
     return true;
   }
@@ -1095,6 +1252,26 @@ class _PlushPalRootState extends State<PlushPalRoot>
     ScaffoldMessenger.maybeOf(context)
       ?..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(text)));
+  }
+
+  Future<void> showErrorDialog({
+    required String title,
+    required String message,
+  }) async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
 
   String userFacingError(Object error, {required String fallback}) {
@@ -1310,6 +1487,8 @@ class _PlushPalRootState extends State<PlushPalRoot>
   }
 
   Future<void> editCurrentCharacterDetails() async {
+    final originalAlias = state.characterName;
+    final name = TextEditingController(text: originalAlias);
     final guidance = TextEditingController(text: parentGuidance.text);
     final childAge = selectedChildAge?.years;
     final personaAge = TextEditingController(
@@ -1332,12 +1511,22 @@ class _PlushPalRootState extends State<PlushPalRoot>
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Text(
-                    'Only this character’s personality and parent guidance are changed here.',
+                    'Update this buddy’s display name, personality, and parent guidance. PlushBuddy keeps the internal voice/profile ID stable.',
                     style: TextStyle(
                       color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
                   ),
                   const SizedBox(height: 16),
+                  TextField(
+                    controller: name,
+                    maxLength: 40,
+                    textCapitalization: TextCapitalization.words,
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                      labelText: 'Buddy name',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
                   const Text('Personality'),
                   const SizedBox(height: 8),
                   Wrap(
@@ -1422,6 +1611,12 @@ class _PlushPalRootState extends State<PlushPalRoot>
         setState(() => message = 'Select a kid before editing characters.');
         return;
       }
+      final newAlias = name.text.trim();
+      final named = AppReducer.reduce(state, CharacterNamed(newAlias));
+      if (named.error != null) {
+        setState(() => message = named.error);
+        return;
+      }
       final parsedPersonaAge =
           int.tryParse(personaAge.text.trim()) ?? age.years;
       if (parsedPersonaAge < 2 || parsedPersonaAge > age.years) {
@@ -1431,35 +1626,49 @@ class _PlushPalRootState extends State<PlushPalRoot>
         );
         return;
       }
+      final sortedTraits = traits.toList()..sort();
+      final trimmedGuidance = guidance.text.trim().isEmpty
+          ? null
+          : guidance.text.trim();
       await widget.backend.configureParentPin(
         pin: pinText,
         ageBand: age.ageBandCode,
-        characterAlias: state.characterName,
-        characterTraits: traits.toList()..sort(),
-        parentGuidance: guidance.text.trim().isEmpty
-            ? null
-            : guidance.text.trim(),
+        characterAlias: newAlias,
+        characterTraits: sortedTraits,
+        parentGuidance: trimmedGuidance,
         retentionDays: retentionDays,
         kidId: selectedKidCharacterId,
       );
-      await widget.backend.saveCharacter(
-        pin: pinText,
-        characterAlias: state.characterName,
-        characterTraits: traits.toList()..sort(),
-        parentGuidance: guidance.text.trim().isEmpty
-            ? null
-            : guidance.text.trim(),
-        kidId: selectedKidCharacterId,
-        personaAgeYears: parsedPersonaAge,
-      );
+      if (newAlias == originalAlias) {
+        await widget.backend.saveCharacter(
+          pin: pinText,
+          characterAlias: newAlias,
+          characterTraits: sortedTraits,
+          parentGuidance: trimmedGuidance,
+          kidId: selectedKidCharacterId,
+          personaAgeYears: parsedPersonaAge,
+        );
+      } else {
+        await widget.backend.renameCharacter(
+          pin: pinText,
+          currentCharacterAlias: originalAlias,
+          newCharacterAlias: newAlias,
+          characterTraits: sortedTraits,
+          parentGuidance: trimmedGuidance,
+          kidId: selectedKidCharacterId,
+          personaAgeYears: parsedPersonaAge,
+        );
+      }
       if (!mounted) return;
       setState(() {
+        state = named.state;
+        characterName.text = newAlias;
         selectedTraits
           ..clear()
           ..addAll(traits);
         parentGuidance.text = guidance.text.trim();
       });
-      showActionMessage('${state.characterName} was updated.');
+      showActionMessage('$newAlias was updated.');
       await assessDevice();
     } catch (error) {
       if (mounted) {
@@ -1551,8 +1760,6 @@ class _PlushPalRootState extends State<PlushPalRoot>
             reasoningProvider: reasoningProvider,
             stationPaired: stationPaired,
             stationBaseUrl: stationBaseUrl,
-            loadPairedClients: loadPairedClients,
-            revokePairedClient: revokePairedClient,
             voiceEnrolled: voiceEnrolled,
             voiceApproved: voiceApproved,
             voicePreviewed: voicePreviewed,
@@ -1561,7 +1768,6 @@ class _PlushPalRootState extends State<PlushPalRoot>
             retentionDays: retentionDays,
             configureGeminiKey: configureGeminiKey,
             pairWithStation: pairWithStation,
-            clearStationPairing: clearStationPairing,
             selectKid: selectKid,
             addOrEditKid: addOrEditKid,
             uploadKidPhoto: uploadKidPhoto,
@@ -1578,8 +1784,6 @@ class _PlushPalRootState extends State<PlushPalRoot>
             deleteCurrentCharacter: deleteCurrentCharacter,
             reviewSavedHistory: reviewSavedHistory,
             deleteAllConversations: deleteAllConversations,
-            exportEncryptedBackup: exportEncryptedBackup,
-            importEncryptedBackup: importEncryptedBackup,
             deleteAllLocalData: deleteAllLocalData,
             themePreference: widget.themePreference,
             onThemePreferenceChanged: widget.onThemePreferenceChanged,
@@ -1590,6 +1794,18 @@ class _PlushPalRootState extends State<PlushPalRoot>
       unlockedParentPin = null;
     }
     if (mounted) unawaited(assessDevice());
+  }
+
+  Future<void> openSetupSettings() async {
+    if (!await unlockParentPortal() || !mounted) return;
+    setState(() => showSetupSettings = true);
+  }
+
+  void closeSetupSettings() {
+    setState(() {
+      showSetupSettings = false;
+      unlockedParentPin = null;
+    });
   }
 
   Future<List<PairedClientInfo>> loadPairedClients() async {
@@ -1603,7 +1819,7 @@ class _PlushPalRootState extends State<PlushPalRoot>
     final confirmed = await confirmAction(
       title: 'Forget this device?',
       message:
-          'This removes ${client.label ?? client.platform} from the Magic Voice Box. The device will need to pair again before it can use buddy voices.',
+          'This removes ${client.label ?? client.platform} from the PlushBuddy Hub. The device will need to pair again before it can use buddy voices.',
       confirmLabel: 'Forget device',
       destructive: true,
     );
@@ -1616,7 +1832,7 @@ class _PlushPalRootState extends State<PlushPalRoot>
         clientId: client.clientId,
       );
       if (!mounted) return;
-      showActionMessage('Device was removed from the Magic Voice Box.');
+      showActionMessage('Device was removed from the PlushBuddy Hub.');
     } catch (error) {
       if (!mounted) return;
       showActionMessage(
@@ -2004,14 +2220,14 @@ class _PlushPalRootState extends State<PlushPalRoot>
     if (!stationPaired && !voiceRuntimeReady) {
       setState(
         () => message =
-            'Connect the Magic Voice Box before uploading a voice sample.',
+            'Connect the PlushBuddy Hub before uploading a voice sample.',
       );
       return false;
     }
     if (!voiceRuntimeReady) {
       setState(
         () => message =
-            'The Magic Voice Box is connected, but not awake yet. Keep the Mac app open and try again.',
+            'The PlushBuddy Hub is connected, but not awake yet. Keep the Mac app open and try again.',
       );
       return false;
     }
@@ -2033,7 +2249,7 @@ class _PlushPalRootState extends State<PlushPalRoot>
                   Text(
                     'Choose a clean 15-second to 3-minute M4A, WAV, MP3, AAC, OGG, or '
                     'WebM recording. PlushBuddy sends it over the paired local connection '
-                    'to the Magic Voice Box to create the buddy voice. Raw upload bytes are '
+                    'to the PlushBuddy Hub to create the buddy voice. Raw upload bytes are '
                     '$_voiceSampleStorageLabel',
                   ),
                   CheckboxListTile(
@@ -2079,7 +2295,7 @@ class _PlushPalRootState extends State<PlushPalRoot>
     setState(() {
       voiceEnrolling = true;
       voicePreviewed = false;
-      message = 'Sending the voice sample to the Magic Voice Box...';
+      message = 'Sending the voice sample to the PlushBuddy Hub...';
     });
     try {
       await widget.backend.enrollVoiceSample(
@@ -2277,8 +2493,8 @@ class _PlushPalRootState extends State<PlushPalRoot>
         state: state,
         message: message,
         showSettings: showSetupSettings,
-        openSettings: () => setState(() => showSetupSettings = true),
-        closeSettings: () => setState(() => showSetupSettings = false),
+        openSettings: () => unawaited(openSetupSettings()),
+        closeSettings: closeSetupSettings,
         dispatch: dispatch,
         assessDevice: assessDevice,
         installModel: installModel,
@@ -2295,11 +2511,23 @@ class _PlushPalRootState extends State<PlushPalRoot>
         }),
         retentionDays: retentionDays,
         retentionChanged: (value) => setState(() => retentionDays = value),
+        saveKidProfile: saveKidProfileOnly,
+        kidProfileSaved: selectedKidId != null,
         completeOnboarding: completeOnboarding,
+        voiceEnrolled: voiceEnrolled,
+        voiceApproved: voiceApproved,
+        voicePreviewed: voicePreviewed,
+        voiceEnrolling: voiceEnrolling,
+        voicePreviewing: voicePreviewing,
+        voiceRuntimeReady: voiceRuntimeReady,
+        voiceDurationMilliseconds: voiceDurationMilliseconds,
+        previewVoice: previewVoice,
+        approveVoice: approveVoice,
+        removeVoice: removeVoice,
+        refreshSetupFields: () => setState(() {}),
         stationPaired: stationPaired,
         stationBaseUrl: stationBaseUrl,
         pairWithStation: pairWithStation,
-        clearStationPairing: clearStationPairing,
         configureGeminiKey: configureGeminiKey,
         themePreference: widget.themePreference,
         onThemePreferenceChanged: widget.onThemePreferenceChanged,
@@ -2338,7 +2566,6 @@ class _PlushPalRootState extends State<PlushPalRoot>
         stationPaired: stationPaired,
         stationBaseUrl: stationBaseUrl,
         pairWithStation: pairWithStation,
-        clearStationPairing: clearStationPairing,
         configureGeminiKey: configureGeminiKey,
         assessDevice: assessDevice,
         themePreference: widget.themePreference,
@@ -2389,11 +2616,23 @@ class OnboardingScreen extends StatelessWidget {
     required this.toggleTrait,
     required this.retentionDays,
     required this.retentionChanged,
+    required this.saveKidProfile,
+    required this.kidProfileSaved,
     required this.completeOnboarding,
+    required this.voiceEnrolled,
+    required this.voiceApproved,
+    required this.voicePreviewed,
+    required this.voiceEnrolling,
+    required this.voicePreviewing,
+    required this.voiceRuntimeReady,
+    required this.voiceDurationMilliseconds,
+    required this.previewVoice,
+    required this.approveVoice,
+    required this.removeVoice,
+    required this.refreshSetupFields,
     required this.stationPaired,
     required this.stationBaseUrl,
     required this.pairWithStation,
-    required this.clearStationPairing,
     required this.configureGeminiKey,
     required this.themePreference,
     required this.onThemePreferenceChanged,
@@ -2419,11 +2658,23 @@ class OnboardingScreen extends StatelessWidget {
   final ValueChanged<String> toggleTrait;
   final int? retentionDays;
   final ValueChanged<int?> retentionChanged;
+  final Future<void> Function() saveKidProfile;
+  final bool kidProfileSaved;
   final Future<void> Function({bool addVoiceAfterSave}) completeOnboarding;
+  final bool voiceEnrolled;
+  final bool voiceApproved;
+  final bool voicePreviewed;
+  final bool voiceEnrolling;
+  final bool voicePreviewing;
+  final bool voiceRuntimeReady;
+  final int? voiceDurationMilliseconds;
+  final CharacterVoiceAction previewVoice;
+  final CharacterVoiceAction approveVoice;
+  final CharacterVoiceAction removeVoice;
+  final VoidCallback refreshSetupFields;
   final bool stationPaired;
   final String? stationBaseUrl;
   final Future<void> Function() pairWithStation;
-  final Future<void> Function() clearStationPairing;
   final Future<void> Function() configureGeminiKey;
   final AppThemePreference themePreference;
   final ValueChanged<AppThemePreference> onThemePreferenceChanged;
@@ -2441,6 +2692,10 @@ class OnboardingScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final kidProfileComplete =
+        kidName.text.trim().isNotEmpty &&
+        childAgeFromBirthdate(birthdateToIso(kidBirthdate.text)) != null;
+    final characterStarted = characterName.text.trim().isNotEmpty;
     if (!showSettings) {
       return Scaffold(
         appBar: AppBar(
@@ -2490,42 +2745,34 @@ class OnboardingScreen extends StatelessWidget {
                         ),
                         const SizedBox(height: 8),
                         _StatusLine(
-                          ok:
-                              kidName.text.trim().isNotEmpty &&
-                              childAgeFromBirthdate(kidBirthdate.text.trim()) !=
-                                  null,
-                          label:
-                              kidName.text.trim().isEmpty ||
-                                  childAgeFromBirthdate(
-                                        kidBirthdate.text.trim(),
-                                      ) ==
-                                      null
-                              ? 'Add kid name and birthdate'
-                              : 'Kid profile started',
+                          ok: kidProfileComplete,
+                          label: kidProfileComplete
+                              ? 'Kid profile ready'
+                              : 'Add kid name + birthdate',
                         ),
                         _StatusLine(
                           ok: stationPaired,
                           label: stationPaired
-                              ? 'Magic Voice Box connected'
+                              ? 'Hub connected'
                               : kIsWeb
-                              ? 'Open from Hub to connect Magic Voice Box'
-                              : 'Connect Magic Voice Box',
+                              ? 'Open from PlushBuddy Hub'
+                              : 'Pair with Hub',
                         ),
                         _StatusLine(
                           ok: state.recommendation?.installed == true,
                           label: state.recommendation?.installed == true
-                              ? 'Hub conversations ready'
-                              : 'Finish LLM setup in Hub',
+                              ? 'AI ready'
+                              : 'Set up Cloud AI in Hub',
                         ),
                         _StatusLine(
-                          ok: retentionDays != null,
+                          ok: true,
                           label: retentionDays == null
-                              ? 'Conversation history: session only'
-                              : 'Conversation history configured',
+                              ? 'History: session only'
+                              : 'History: encrypted',
                         ),
                         const _StatusLine(
                           ok: true,
-                          label: 'Buddy personalities can be added anytime',
+                          label: 'Toy buddies can be added anytime',
                         ),
                       ],
                     ),
@@ -2572,8 +2819,8 @@ class OnboardingScreen extends StatelessWidget {
               const SizedBox(height: 8),
               Text(
                 kIsWeb
-                    ? 'Complete these grown-up steps once. Parent data stays in this browser; the Magic Voice Box is used only for buddy voices.'
-                    : 'Complete these grown-up steps once. Parent data stays encrypted on this device; the Magic Voice Box is used only for buddy voices.',
+                    ? 'Complete these grown-up steps once. This browser is a UI shell; PlushBuddy Hub stores family setup, Cloud AI keys, conversations, and buddy voices.'
+                    : 'Complete these grown-up steps once. This app is a UI shell; PlushBuddy Hub stores family setup, Cloud AI keys, conversations, and buddy voices.',
               ),
               if (state.recommendation != null) ...[
                 const SizedBox(height: 16),
@@ -2585,17 +2832,16 @@ class OnboardingScreen extends StatelessWidget {
               _SettingsCard(
                 icon: Icons.child_care,
                 title: 'Kid profile',
-                status:
-                    kidName.text.trim().isNotEmpty &&
-                        childAgeFromBirthdate(kidBirthdate.text.trim()) != null
-                    ? 'Ready'
+                status: kidProfileSaved
+                    ? 'Saved'
+                    : kidProfileComplete
+                    ? 'Ready to save'
                     : 'Required',
-                complete:
-                    kidName.text.trim().isNotEmpty &&
-                    childAgeFromBirthdate(kidBirthdate.text.trim()) != null,
+                complete: kidProfileSaved || kidProfileComplete,
                 children: [
                   TextField(
                     controller: kidName,
+                    onChanged: (_) => refreshSetupFields(),
                     decoration: const InputDecoration(
                       border: OutlineInputBorder(),
                       labelText: 'Kid name',
@@ -2605,13 +2851,22 @@ class OnboardingScreen extends StatelessWidget {
                   const SizedBox(height: 12),
                   TextField(
                     controller: kidBirthdate,
+                    onChanged: (_) => refreshSetupFields(),
                     keyboardType: TextInputType.datetime,
+                    inputFormatters: [UsBirthdateInputFormatter()],
                     decoration: const InputDecoration(
                       border: OutlineInputBorder(),
                       labelText: 'Birthdate',
                       helperText:
-                          'Use MM/DD/YYYY. PlushBuddy derives age guardrails from this.',
+                          'Type digits only, like 11232020. PlushBuddy fills MM/DD/YYYY.',
                     ),
+                  ),
+                  const SizedBox(height: 12),
+                  FilledButton.tonalIcon(
+                    onPressed: saveKidProfile,
+                    style: _leftAlignedButtonStyle(context),
+                    icon: const Icon(Icons.save),
+                    label: const Text('Save kid profile'),
                   ),
                 ],
               ),
@@ -2629,7 +2884,7 @@ class OnboardingScreen extends StatelessWidget {
                     state.recommendation?.installed == true
                         ? 'Connected to ${stationBaseUrl ?? 'PlushBuddy Hub'} and ready for conversations.'
                         : stationPaired
-                        ? 'Connected to Hub. Finish Cloud LLM or local reasoning setup in the Hub app, then check again here.'
+                        ? 'Connected to Hub. Finish Cloud AI or Local AI setup in the Hub app, then check again here.'
                         : kIsWeb
                         ? 'Open this browser or Mac app from PlushBuddy Hub. It connects automatically.'
                         : 'Scan the QR code from PlushBuddy Hub on the Mac.',
@@ -2656,12 +2911,6 @@ class OnboardingScreen extends StatelessWidget {
                         style: _leftAlignedTextButtonStyle(context),
                         child: const Text('Check again'),
                       ),
-                      if (stationPaired && !kIsWeb)
-                        TextButton(
-                          onPressed: clearStationPairing,
-                          style: _leftAlignedTextButtonStyle(context),
-                          child: const Text('Disconnect'),
-                        ),
                     ],
                   ),
                 ],
@@ -2703,13 +2952,14 @@ class OnboardingScreen extends StatelessWidget {
               _SettingsCard(
                 icon: Icons.pets,
                 title: 'First character',
-                status: characterName.text.trim().isEmpty
-                    ? 'Required'
-                    : characterName.text.trim(),
-                complete: characterName.text.trim().isNotEmpty,
+                status: characterStarted
+                    ? characterName.text.trim()
+                    : 'Required',
+                complete: characterStarted,
                 children: [
                   TextField(
                     controller: characterName,
+                    onChanged: (_) => refreshSetupFields(),
                     maxLength: 40,
                     decoration: const InputDecoration(
                       border: OutlineInputBorder(),
@@ -2745,14 +2995,26 @@ class OnboardingScreen extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  FilledButton.tonalIcon(
-                    onPressed: () =>
+                  _InlineVoiceSetupCard(
+                    characterAlias: characterName.text.trim().isEmpty
+                        ? 'this buddy'
+                        : characterName.text.trim(),
+                    enabled: kidProfileComplete && characterStarted,
+                    voiceEnrolled: voiceEnrolled,
+                    voiceApproved: voiceApproved,
+                    voicePreviewed: voicePreviewed,
+                    voiceEnrolling: voiceEnrolling,
+                    voicePreviewing: voicePreviewing,
+                    voiceRuntimeReady: voiceRuntimeReady,
+                    voiceDurationMilliseconds: voiceDurationMilliseconds,
+                    uploadVoice: () =>
                         completeOnboarding(addVoiceAfterSave: true),
-                    style: _leftAlignedButtonStyle(context),
-                    icon: const Icon(Icons.graphic_eq),
-                    label: const Text(
-                      'Save first character and add voice sample',
-                    ),
+                    previewVoice: ({String? characterAlias}) =>
+                        previewVoice(characterAlias: characterName.text.trim()),
+                    approveVoice: ({String? characterAlias}) =>
+                        approveVoice(characterAlias: characterName.text.trim()),
+                    removeVoice: ({String? characterAlias}) =>
+                        removeVoice(characterAlias: characterName.text.trim()),
                   ),
                 ],
               ),
@@ -2767,10 +3029,214 @@ class OnboardingScreen extends StatelessWidget {
               FilledButton(
                 onPressed: completeOnboarding,
                 style: _leftAlignedButtonStyle(context),
-                child: const Text('Continue to parent home'),
+                child: const Text('Save setup and go to parent home'),
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _InlineVoiceSetupCard extends StatefulWidget {
+  const _InlineVoiceSetupCard({
+    required this.characterAlias,
+    required this.enabled,
+    required this.voiceEnrolled,
+    required this.voiceApproved,
+    required this.voicePreviewed,
+    required this.voiceEnrolling,
+    required this.voicePreviewing,
+    required this.voiceRuntimeReady,
+    required this.voiceDurationMilliseconds,
+    required this.uploadVoice,
+    required this.previewVoice,
+    required this.approveVoice,
+    required this.removeVoice,
+  });
+
+  final String characterAlias;
+  final bool enabled;
+  final bool voiceEnrolled;
+  final bool voiceApproved;
+  final bool voicePreviewed;
+  final bool voiceEnrolling;
+  final bool voicePreviewing;
+  final bool voiceRuntimeReady;
+  final int? voiceDurationMilliseconds;
+  final Future<void> Function() uploadVoice;
+  final CharacterVoiceAction previewVoice;
+  final CharacterVoiceAction approveVoice;
+  final CharacterVoiceAction removeVoice;
+
+  @override
+  State<_InlineVoiceSetupCard> createState() => _InlineVoiceSetupCardState();
+}
+
+class _InlineVoiceSetupCardState extends State<_InlineVoiceSetupCard> {
+  bool actionInProgress = false;
+  String? localMessage;
+
+  bool get busy =>
+      actionInProgress || widget.voiceEnrolling || widget.voicePreviewing;
+
+  String get durationLabel {
+    final duration = widget.voiceDurationMilliseconds;
+    if (duration == null) return '';
+    return ' • ${(duration / 1000).toStringAsFixed(1)}s sample';
+  }
+
+  String get statusText {
+    if (!widget.enabled) {
+      return 'Add kid name, birthday, and character name first.';
+    }
+    if (!widget.voiceRuntimeReady) {
+      return 'PlushBuddy Hub voice support is still waking up.';
+    }
+    if (!widget.voiceEnrolled) {
+      return 'Upload a voice sample for ${widget.characterAlias}.';
+    }
+    if (widget.voiceApproved) {
+      return '${widget.characterAlias} voice is saved for playtime$durationLabel.';
+    }
+    if (widget.voicePreviewed) {
+      return 'Preview played. Save only if it sounds right$durationLabel.';
+    }
+    return 'Voice sample uploaded. Preview it before saving$durationLabel.';
+  }
+
+  Future<void> runAction(
+    String workingMessage,
+    Future<void> Function() action,
+  ) async {
+    if (busy) return;
+    setState(() {
+      actionInProgress = true;
+      localMessage = workingMessage;
+    });
+    try {
+      await action();
+    } finally {
+      if (mounted) {
+        setState(() {
+          actionInProgress = false;
+          localMessage = null;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final complete = widget.voiceApproved;
+    final needsPreview = widget.voiceEnrolled && !widget.voicePreviewed;
+    final needsApproval =
+        widget.voiceEnrolled && widget.voicePreviewed && !widget.voiceApproved;
+    final primaryLabel = !widget.voiceEnrolled
+        ? 'Add voice sample'
+        : needsPreview
+        ? 'Preview voice'
+        : needsApproval
+        ? 'Save this voice'
+        : 'Replace voice sample';
+    final primaryIcon = !widget.voiceEnrolled
+        ? Icons.upload_file
+        : needsPreview
+        ? Icons.play_circle_outline
+        : needsApproval
+        ? Icons.verified
+        : Icons.upload_file;
+    final primaryAction = !widget.voiceEnrolled
+        ? () => runAction('Opening audio picker...', widget.uploadVoice)
+        : needsPreview
+        ? () => runAction(
+            'Creating preview audio on PlushBuddy Hub...',
+            () => widget.previewVoice(characterAlias: widget.characterAlias),
+          )
+        : needsApproval
+        ? () => runAction(
+            'Saving this buddy voice...',
+            () => widget.approveVoice(characterAlias: widget.characterAlias),
+          )
+        : () => runAction('Opening audio picker...', widget.uploadVoice);
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerLowest,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: colorScheme.outlineVariant),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _PlayfulStatusIcon(ok: complete),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Buddy voice',
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        statusText,
+                        style: TextStyle(color: colorScheme.onSurfaceVariant),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            if (busy) ...[
+              const SizedBox(height: 12),
+              const LinearProgressIndicator(),
+            ],
+            if (localMessage != null || widget.voiceEnrolling) ...[
+              const SizedBox(height: 8),
+              Text(
+                widget.voiceEnrolling
+                    ? 'Sending the voice sample to PlushBuddy Hub...'
+                    : localMessage!,
+                style: TextStyle(color: colorScheme.onSurfaceVariant),
+              ),
+            ],
+            const SizedBox(height: 12),
+            FilledButton.tonalIcon(
+              onPressed: widget.enabled && widget.voiceRuntimeReady && !busy
+                  ? primaryAction
+                  : null,
+              style: _leftAlignedButtonStyle(context),
+              icon: Icon(primaryIcon),
+              label: Text(primaryLabel),
+            ),
+            if (widget.voiceEnrolled && !widget.voiceApproved) ...[
+              const SizedBox(height: 8),
+              TextButton.icon(
+                onPressed: busy
+                    ? null
+                    : () => runAction(
+                        'Removing this voice sample...',
+                        () => widget.removeVoice(
+                          characterAlias: widget.characterAlias,
+                        ),
+                      ),
+                style: _leftAlignedTextButtonStyle(context),
+                icon: const Icon(Icons.delete_outline),
+                label: const Text('Remove sample'),
+              ),
+            ],
+          ],
         ),
       ),
     );
@@ -2819,7 +3285,7 @@ class _StationQrScannerScreenState extends State<StationQrScannerScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Scan Voice Box QR')),
+    appBar: AppBar(title: const Text('Scan Hub QR')),
     body: Stack(
       children: [
         MobileScanner(controller: controller, onDetect: _handleDetection),
@@ -2889,7 +3355,6 @@ class ParentHomeScreen extends StatelessWidget {
     required this.stationPaired,
     required this.stationBaseUrl,
     required this.pairWithStation,
-    required this.clearStationPairing,
     required this.configureGeminiKey,
     required this.assessDevice,
     required this.themePreference,
@@ -2929,7 +3394,6 @@ class ParentHomeScreen extends StatelessWidget {
   final bool stationPaired;
   final String? stationBaseUrl;
   final Future<void> Function() pairWithStation;
-  final Future<void> Function() clearStationPairing;
   final Future<void> Function() configureGeminiKey;
   final Future<void> Function() assessDevice;
   final AppThemePreference themePreference;
@@ -2937,13 +3401,19 @@ class ParentHomeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final characterOptions = _uniqueCharactersByAlias(characters);
+    final selectedCharacterValue = _safeCharacterDropdownValue(
+      characterOptions,
+      state.characterName,
+    );
     final reasoningReady = state.recommendation?.installed == true;
     final childModeReady =
         selectedKid != null &&
         reasoningReady &&
+        stationPaired &&
         voiceRuntimeReady &&
         voiceApproved;
-    final activeCharacter = characters
+    final activeCharacter = characterOptions
         .where((character) => character.alias == state.characterName)
         .firstOrNull;
     final activePhotoBytes = activeCharacter?.photoBytes ?? characterPhotoBytes;
@@ -2955,43 +3425,57 @@ class ParentHomeScreen extends StatelessWidget {
         : !reasoningReady
         ? 'Finish Hub setup'
         : !stationPaired
-        ? 'Connect the Magic Voice Box'
-        : !voiceRuntimeReady
-        ? 'Wake up the Magic Voice Box'
+        ? 'Connect the PlushBuddy Hub'
         : !voiceEnrolled
-        ? 'Make ${state.characterName} sound magical'
+        ? 'Add ${state.characterName}’s voice'
         : !voicePreviewed
-        ? 'Listen to ${state.characterName}'
+        ? 'Preview ${state.characterName}’s voice'
         : !voiceApproved
         ? 'Save ${state.characterName}’s voice'
-        : 'Almost ready';
+        : !voiceRuntimeReady
+        ? 'Wake voice support'
+        : 'Ready to play';
     final setupActionLabel = childModeReady
-        ? null
+        ? 'Start Playing'
         : selectedKid == null
-        ? 'Add kid'
+        ? 'Add kid profile'
         : !reasoningReady
         ? 'Check Hub'
         : !stationPaired
         ? kIsWeb
-              ? 'Check Voice Box'
-              : 'Pair Voice Box'
+              ? 'Check Hub'
+              : 'Pair Hub'
         : !voiceRuntimeReady
-        ? 'Check Voice Box'
+        ? 'Check Hub'
         : !voiceEnrolled
-        ? 'Create buddy voice'
+        ? 'Add voice sample'
         : !voicePreviewed
-        ? 'Preview buddy voice'
+        ? 'Preview voice'
         : !voiceApproved
-        ? 'Approve buddy voice'
+        ? 'Save voice'
         : 'Open Settings';
-    final Future<void> Function()? setupAction = childModeReady
-        ? null
+    final Future<void> Function() setupAction = childModeReady
+        ? enterChildMode
+        : selectedKid == null
+        ? editCharacterAndPrivacy
         : !reasoningReady
         ? assessDevice
         : !stationPaired
         ? pairWithStation
         : !voiceRuntimeReady
         ? assessDevice
+        : !voiceEnrolled
+        ? () async {
+            await enrollVoice(characterAlias: state.characterName);
+          }
+        : !voicePreviewed
+        ? () async {
+            await previewVoice(characterAlias: state.characterName);
+          }
+        : !voiceApproved
+        ? () async {
+            await approveVoice(characterAlias: state.characterName);
+          }
         : editCharacterAndPrivacy;
     final readinessIcon = childModeReady
         ? Icons.check_circle
@@ -3132,7 +3616,7 @@ class ParentHomeScreen extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 16),
-              if (kids.isNotEmpty || characters.length > 1)
+              if (kids.isNotEmpty || characterOptions.length > 1)
                 Card(
                   child: Padding(
                     padding: const EdgeInsets.all(16),
@@ -3160,17 +3644,18 @@ class ParentHomeScreen extends StatelessWidget {
                               if (value != null) selectKid(value);
                             },
                           ),
-                          if (characters.length > 1) const SizedBox(height: 12),
+                          if (characterOptions.length > 1)
+                            const SizedBox(height: 12),
                         ],
-                        if (characters.length > 1)
+                        if (characterOptions.length > 1)
                           DropdownButtonFormField<String>(
-                            initialValue: state.characterName,
+                            initialValue: selectedCharacterValue,
                             decoration: const InputDecoration(
                               labelText: 'Toy buddy',
                               border: OutlineInputBorder(),
                               prefixIcon: Icon(Icons.toys),
                             ),
-                            items: characters
+                            items: characterOptions
                                 .map(
                                   (character) => DropdownMenuItem(
                                     value: character.alias,
@@ -3188,15 +3673,17 @@ class ParentHomeScreen extends StatelessWidget {
                 ),
               const SizedBox(height: 18),
               FilledButton.icon(
-                onPressed: childModeReady ? enterChildMode : null,
+                onPressed: voiceEnrolling || voicePreviewing
+                    ? null
+                    : () => unawaited(setupAction()),
                 style: FilledButton.styleFrom(
                   minimumSize: const Size.fromHeight(58),
                   textStyle: Theme.of(context).textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w800,
                   ),
                 ),
-                icon: const Icon(Icons.auto_awesome),
-                label: const Text('Start Playing'),
+                icon: Icon(childModeReady ? Icons.auto_awesome : readinessIcon),
+                label: Text(setupActionLabel),
               ),
               if (!childModeReady) ...[
                 const SizedBox(height: 14),
@@ -3231,25 +3718,26 @@ class ParentHomeScreen extends StatelessWidget {
                         _PlaySetupStep(
                           complete: stationPaired && voiceRuntimeReady,
                           label: stationPaired && voiceRuntimeReady
-                              ? 'Magic Voice Box is awake'
-                              : 'Connect the Magic Voice Box',
+                              ? 'PlushBuddy Hub is awake'
+                              : 'Connect the PlushBuddy Hub',
                         ),
                         _PlaySetupStep(
                           complete: voiceApproved,
                           label: voiceApproved
                               ? '${state.characterName} has a buddy voice'
-                              : 'Create ${state.characterName}’s buddy voice',
+                              : !voiceEnrolled
+                              ? 'Add ${state.characterName}’s voice sample'
+                              : !voicePreviewed
+                              ? 'Preview ${state.characterName}’s voice'
+                              : 'Save ${state.characterName}’s voice',
                         ),
                         const SizedBox(height: 12),
                         FilledButton.tonalIcon(
-                          onPressed:
-                              setupAction == null ||
-                                  voiceEnrolling ||
-                                  voicePreviewing
+                          onPressed: voiceEnrolling || voicePreviewing
                               ? null
                               : () => unawaited(setupAction()),
                           icon: Icon(readinessIcon),
-                          label: Text(setupActionLabel ?? 'Open Settings'),
+                          label: Text(setupActionLabel),
                         ),
                       ],
                     ),
@@ -3314,8 +3802,6 @@ class SettingsMenuScreen extends StatelessWidget {
     required this.reasoningProvider,
     required this.stationPaired,
     required this.stationBaseUrl,
-    required this.loadPairedClients,
-    required this.revokePairedClient,
     required this.voiceEnrolled,
     required this.voiceApproved,
     required this.voicePreviewed,
@@ -3324,7 +3810,6 @@ class SettingsMenuScreen extends StatelessWidget {
     required this.retentionDays,
     required this.configureGeminiKey,
     required this.pairWithStation,
-    required this.clearStationPairing,
     required this.selectKid,
     required this.addOrEditKid,
     required this.uploadKidPhoto,
@@ -3341,8 +3826,6 @@ class SettingsMenuScreen extends StatelessWidget {
     required this.deleteCurrentCharacter,
     required this.reviewSavedHistory,
     required this.deleteAllConversations,
-    required this.exportEncryptedBackup,
-    required this.importEncryptedBackup,
     required this.deleteAllLocalData,
     required this.themePreference,
     required this.onThemePreferenceChanged,
@@ -3357,8 +3840,6 @@ class SettingsMenuScreen extends StatelessWidget {
   final ReasoningProviderStatus reasoningProvider;
   final bool stationPaired;
   final String? stationBaseUrl;
-  final Future<List<PairedClientInfo>> Function() loadPairedClients;
-  final Future<void> Function(PairedClientInfo client) revokePairedClient;
   final bool voiceEnrolled;
   final bool voiceApproved;
   final bool voicePreviewed;
@@ -3367,7 +3848,6 @@ class SettingsMenuScreen extends StatelessWidget {
   final int? retentionDays;
   final Future<void> Function() configureGeminiKey;
   final Future<void> Function() pairWithStation;
-  final Future<void> Function() clearStationPairing;
   final Future<void> Function(String kidId) selectKid;
   final Future<void> Function([KidProfile? existing]) addOrEditKid;
   final Future<void> Function(KidProfile kid) uploadKidPhoto;
@@ -3384,8 +3864,6 @@ class SettingsMenuScreen extends StatelessWidget {
   final Future<bool> Function() deleteCurrentCharacter;
   final Future<void> Function() reviewSavedHistory;
   final Future<void> Function() deleteAllConversations;
-  final Future<void> Function() exportEncryptedBackup;
-  final Future<void> Function() importEncryptedBackup;
   final Future<void> Function() deleteAllLocalData;
   final AppThemePreference themePreference;
   final ValueChanged<AppThemePreference> onThemePreferenceChanged;
@@ -3416,23 +3894,8 @@ class SettingsMenuScreen extends StatelessWidget {
             title: 'Get ready',
             children: [
               _SettingsTile(
-                icon: Icons.lock,
-                title: 'Hub parent PIN',
-                subtitle:
-                    'Managed in PlushBuddy Hub • protects settings and cleanup',
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => _push(
-                  context,
-                  _ParentSetupSettingsScreen(
-                    reasoningReady: reasoningReady,
-                    reasoningProvider: reasoningProvider,
-                    configureGeminiKey: configureGeminiKey,
-                  ),
-                ),
-              ),
-              _SettingsTile(
                 icon: Icons.computer,
-                title: 'Magic Voice Box',
+                title: 'PlushBuddy Hub',
                 subtitle: stationPaired
                     ? 'Connected to the Mac voice helper.'
                     : kIsWeb
@@ -3441,13 +3904,10 @@ class SettingsMenuScreen extends StatelessWidget {
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () => _push(
                   context,
-                  _MacStationSettingsScreen(
+                  _HubSettingsScreen(
                     stationPaired: stationPaired,
                     stationBaseUrl: stationBaseUrl,
                     pairWithStation: pairWithStation,
-                    clearStationPairing: clearStationPairing,
-                    loadPairedClients: loadPairedClients,
-                    revokePairedClient: revokePairedClient,
                   ),
                 ),
               ),
@@ -3500,20 +3960,6 @@ class SettingsMenuScreen extends StatelessWidget {
             title: 'Privacy & cleanup',
             children: [
               _SettingsTile(
-                icon: Icons.ios_share,
-                title: 'Export encrypted backup',
-                subtitle:
-                    'Copy an encrypted backup of kids, buddies, settings, history, and voices.',
-                onTap: exportEncryptedBackup,
-              ),
-              _SettingsTile(
-                icon: Icons.restore,
-                title: 'Import encrypted backup',
-                subtitle:
-                    'Restore a backup from clipboard. Requires the parent PIN used for export.',
-                onTap: importEncryptedBackup,
-              ),
-              _SettingsTile(
                 icon: Icons.delete_sweep,
                 title: 'Clear all conversations',
                 subtitle:
@@ -3542,71 +3988,20 @@ class SettingsMenuScreen extends StatelessWidget {
   }
 }
 
-class _ParentSetupSettingsScreen extends StatelessWidget {
-  const _ParentSetupSettingsScreen({
-    required this.reasoningReady,
-    required this.reasoningProvider,
-    required this.configureGeminiKey,
-  });
-
-  final bool reasoningReady;
-  final ReasoningProviderStatus reasoningProvider;
-  final Future<void> Function() configureGeminiKey;
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Hub parent PIN')),
-    body: ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        _SettingsGroup(
-          title: 'Hub parent PIN',
-          children: const [
-            _SettingsTile(
-              icon: Icons.lock,
-              title: 'Parent PIN is managed in Hub',
-              subtitle:
-                  'This app asks for the Hub PIN only when saving protected changes.',
-              trailing: Icon(Icons.check_circle, color: Colors.green),
-            ),
-          ],
-        ),
-      ],
-    ),
-  );
-}
-
-class _MacStationSettingsScreen extends StatelessWidget {
-  const _MacStationSettingsScreen({
+class _HubSettingsScreen extends StatelessWidget {
+  const _HubSettingsScreen({
     required this.stationPaired,
     required this.stationBaseUrl,
     required this.pairWithStation,
-    required this.clearStationPairing,
-    required this.loadPairedClients,
-    required this.revokePairedClient,
   });
 
   final bool stationPaired;
   final String? stationBaseUrl;
   final Future<void> Function() pairWithStation;
-  final Future<void> Function() clearStationPairing;
-  final Future<List<PairedClientInfo>> Function() loadPairedClients;
-  final Future<void> Function(PairedClientInfo client) revokePairedClient;
-
-  void _openPairedClients(BuildContext context) {
-    Navigator.of(context).push<void>(
-      MaterialPageRoute(
-        builder: (_) => _PairedClientsSettingsScreen(
-          loadPairedClients: loadPairedClients,
-          revokePairedClient: revokePairedClient,
-        ),
-      ),
-    );
-  }
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Magic Voice Box')),
+    appBar: AppBar(title: const Text('PlushBuddy Hub')),
     body: ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -3616,10 +4011,10 @@ class _MacStationSettingsScreen extends StatelessWidget {
             _SettingsTile(
               icon: Icons.computer,
               title: stationPaired
-                  ? 'Voice Box connected'
+                  ? 'Hub connected'
                   : kIsWeb
-                  ? 'Check Voice Box'
-                  : 'Connect Voice Box',
+                  ? 'Check Hub'
+                  : 'Connect Hub',
               subtitle: stationPaired
                   ? 'Your Mac is ready to make buddy voices.'
                   : kIsWeb
@@ -3646,18 +4041,6 @@ class _MacStationSettingsScreen extends StatelessWidget {
                           : 'Pair phone',
                     ),
                   ),
-                  if (stationPaired)
-                    OutlinedButton.icon(
-                      onPressed: () => _openPairedClients(context),
-                      icon: const Icon(Icons.devices_other),
-                      label: const Text('Manage paired devices'),
-                    ),
-                  if (stationPaired && !kIsWeb)
-                    TextButton.icon(
-                      onPressed: clearStationPairing,
-                      icon: const Icon(Icons.link_off),
-                      label: const Text('Forget'),
-                    ),
                 ],
               ),
             ),
@@ -3665,7 +4048,7 @@ class _MacStationSettingsScreen extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                 child: Text(
-                  'Manage shows every phone, app, and browser allowed to use this Magic Voice Box.',
+                  'Paired devices and backups are managed in PlushBuddy Hub. If Hub forgets this phone, the app will clear this connection the next time it checks in.',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ),
@@ -3738,7 +4121,7 @@ class _PairedClientsSettingsScreenState
           return _SettingsEmptyState(
             icon: Icons.error_outline,
             title: 'Could not load paired devices',
-            subtitle: 'Check the Magic Voice Box, then try again.',
+            subtitle: 'Check the PlushBuddy Hub, then try again.',
             actionLabel: 'Try again',
             onAction: _reload,
           );
@@ -3749,7 +4132,7 @@ class _PairedClientsSettingsScreenState
             icon: Icons.devices_other,
             title: 'No paired devices yet',
             subtitle:
-                'Pair this phone, a Mac app, or a browser from the Magic Voice Box.',
+                'Pair this phone, a Mac app, or a browser from the PlushBuddy Hub.',
             actionLabel: 'Refresh',
             onAction: _reload,
           );
@@ -4423,9 +4806,11 @@ class _CharacterDetailSettingsScreenState
       widget.voiceRuntimeReady || widget.character.voice.runtimeReady;
   late int? voiceDurationMilliseconds =
       widget.character.voice.durationMilliseconds;
+  bool voiceActionInProgress = false;
+  String? voiceActionMessage;
 
   String get voiceLifecycleSummary {
-    if (!voiceRuntimeReady) return 'Magic Voice Box is not ready.';
+    if (!voiceRuntimeReady) return 'PlushBuddy Hub is not ready.';
     final duration = voiceDurationMilliseconds == null
         ? ''
         : ' • ${(voiceDurationMilliseconds! / 1000).toStringAsFixed(1)}s sample';
@@ -4438,10 +4823,22 @@ class _CharacterDetailSettingsScreenState
   }
 
   Future<void> handleEnrollVoice() async {
+    if (voiceActionInProgress) return;
+    setState(() {
+      voiceActionInProgress = true;
+      voiceActionMessage = 'Opening audio picker...';
+    });
     final enrolled = await widget.enrollVoice(
       characterAlias: widget.character.alias,
     );
-    if (!mounted || !enrolled) return;
+    if (!mounted) return;
+    setState(() {
+      voiceActionInProgress = false;
+      voiceActionMessage = enrolled
+          ? 'Voice sample uploaded. Preview it before saving.'
+          : null;
+    });
+    if (!enrolled) return;
     setState(() {
       voiceEnrolled = true;
       voiceApproved = false;
@@ -4451,22 +4848,44 @@ class _CharacterDetailSettingsScreenState
   }
 
   Future<void> handlePreviewVoice() async {
+    if (voiceActionInProgress) return;
     if (!voiceEnrolled) {
       await handleEnrollVoice();
       return;
     }
+    setState(() {
+      voiceActionInProgress = true;
+      voiceActionMessage =
+          'Creating preview audio on PlushBuddy Hub. This can take a little while...';
+    });
     final previewed = await widget.previewVoice(
       characterAlias: widget.character.alias,
     );
-    if (!mounted || !previewed) return;
-    setState(() => voicePreviewed = true);
+    if (!mounted) return;
+    setState(() {
+      voiceActionInProgress = false;
+      voiceActionMessage = previewed
+          ? 'Preview finished. Save it only if it sounds right.'
+          : null;
+      if (previewed) voicePreviewed = true;
+    });
   }
 
   Future<void> handleApproveVoice() async {
+    if (voiceActionInProgress) return;
+    setState(() {
+      voiceActionInProgress = true;
+      voiceActionMessage = 'Saving this buddy voice...';
+    });
     final approved = await widget.approveVoice(
       characterAlias: widget.character.alias,
     );
-    if (!mounted || !approved) return;
+    if (!mounted) return;
+    setState(() {
+      voiceActionInProgress = false;
+      voiceActionMessage = approved ? 'Buddy voice saved for playtime.' : null;
+    });
+    if (!approved) return;
     setState(() {
       voiceEnrolled = true;
       voicePreviewed = true;
@@ -4475,6 +4894,7 @@ class _CharacterDetailSettingsScreenState
   }
 
   Future<void> handleRemoveVoice() async {
+    if (voiceActionInProgress) return;
     final removed = await widget.removeVoice(
       characterAlias: widget.character.alias,
     );
@@ -4522,6 +4942,25 @@ class _CharacterDetailSettingsScreenState
                   : const Icon(Icons.chevron_right),
               onTap: voiceEnrolled ? handlePreviewVoice : handleEnrollVoice,
             ),
+            if (voiceActionInProgress || voiceActionMessage != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (voiceActionInProgress) const LinearProgressIndicator(),
+                    if (voiceActionMessage != null) ...[
+                      if (voiceActionInProgress) const SizedBox(height: 8),
+                      Text(
+                        voiceActionMessage!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
             if (voiceEnrolled)
               _SettingsTile(
                 icon: Icons.upload_file,
@@ -4633,8 +5072,8 @@ class _SettingsStatusSummary extends StatelessWidget {
           _StatusLine(
             ok: stationPaired,
             label: stationPaired
-                ? 'Magic Voice Box connected'
-                : 'Magic Voice Box not connected',
+                ? 'PlushBuddy Hub connected'
+                : 'PlushBuddy Hub not connected',
           ),
           _StatusLine(
             ok: voiceRuntimeReady,
@@ -5009,13 +5448,13 @@ class _RuntimeModeBanner extends StatelessWidget {
           )
         : isLocalFirst
         ? (
-            'Privacy local-first mode',
-            'The Hub avoids cloud LLM calls and uses local models when installed. If local reasoning is not ready, configure Cloud LLM mode in Hub.',
+            'Local AI mode',
+            'The Hub is set to Local AI. Conversations use the installed Local AI model on this Mac; switch Hub to Cloud AI if you want Gemini/OpenAI.',
             Icons.lock,
             colorScheme.secondaryContainer,
           )
         : (
-            'Cloud LLM mode',
+            'Cloud AI mode',
             'Gemini/OpenAI answers run through the Hub with redaction and child-safety guardrails. Voice, profiles, audio, and history stay local.',
             Icons.cloud_done,
             colorScheme.primaryContainer,
@@ -5244,6 +5683,11 @@ class ChildModeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final characterOptions = _uniqueCharactersByAlias(characters);
+    final selectedCharacterValue = _safeCharacterDropdownValue(
+      characterOptions,
+      state.characterName,
+    );
     final visibleMessages = messages.isNotEmpty
         ? messages
         : [
@@ -5302,17 +5746,17 @@ class ChildModeScreen extends StatelessWidget {
             constraints: const BoxConstraints(maxWidth: 720),
             child: Column(
               children: [
-                if (characters.length > 1 &&
+                if (characterOptions.length > 1 &&
                     state.conversationStatus == ConversationStatus.idle)
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
                     child: DropdownButtonFormField<String>(
-                      initialValue: state.characterName,
+                      initialValue: selectedCharacterValue,
                       decoration: const InputDecoration(
                         labelText: 'Toy buddy',
                         border: OutlineInputBorder(),
                       ),
-                      items: characters
+                      items: characterOptions
                           .map(
                             (character) => DropdownMenuItem(
                               value: character.alias,

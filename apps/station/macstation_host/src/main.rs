@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+#[cfg(feature = "native-runtime")]
+use std::collections::HashSet;
 use std::{
     env,
     net::{IpAddr, Ipv4Addr},
@@ -58,6 +60,7 @@ impl RuntimeMode {
         }
     }
 
+    #[cfg_attr(not(feature = "native-runtime"), allow(dead_code))]
     fn default_voice_engine(self) -> Option<&'static str> {
         match self {
             Self::Mock | Self::Demo => Some("demo"),
@@ -70,6 +73,7 @@ impl RuntimeMode {
         }
     }
 
+    #[cfg_attr(not(feature = "native-runtime"), allow(dead_code))]
     fn uses_demo_conversation(self) -> bool {
         matches!(self, Self::Mock | Self::Demo | Self::LocalVoice)
     }
@@ -159,10 +163,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             NativeModelInstaller, NativeParentProfileStore, OpenAiConversationEngine,
             PocketVoiceEngine, WhisperCliSpeechToTextEngine,
         };
-
         let runtime_mode = RuntimeMode::from_env();
-        eprintln!("PlushPal runtime mode: {runtime_mode:?}");
-        let state = state.with_runtime_mode(runtime_mode.as_str());
+        eprintln!("PlushBuddy Hub runtime mode: {runtime_mode:?}");
+        let hub_client_id = env::var("PLUSHPAL_HUB_CLIENT_ID")
+            .unwrap_or_else(|_| "hub-00000000-0000-0000-0000-000000000000".to_owned());
+        let state = state
+            .with_runtime_mode(runtime_mode.as_str())
+            .with_hub_client_id(hub_client_id.clone())
+            .map_err(|error| std::io::Error::other(format!("{error:?}")))?;
         let data_directory = application_data_directory()?;
         let profile_key = token_source
             .generate()
@@ -171,11 +179,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map_err(|error| std::io::Error::other(format!("{error:?}")))?;
         if let Err(error) = profile_store.preflight_keychain_access() {
             eprintln!(
-                "PlushPal voice keychain preflight did not complete; existing voice profiles may need to be re-created: {error:?}"
+                "PlushBuddy Hub voice preflight did not complete; existing voice profiles may need to be re-created: {error:?}"
             );
         }
         let profile_store = Arc::new(profile_store);
-        let installer = Arc::new(NativeModelInstaller::new(model_directory()?));
+        let recommendation = local_model_recommendation_from_env();
+        if let Some((model_id, note)) = &recommendation {
+            eprintln!("PlushBuddy Hub local AI recommendation: {model_id}; {note}");
+        }
+        let installer = Arc::new(
+            NativeModelInstaller::new_with_recommendation(
+                model_directory()?,
+                recommendation
+                    .as_ref()
+                    .map(|(model_id, _)| model_id.clone()),
+                recommendation.as_ref().map(|(_, note)| note.clone()),
+            )
+            .map_err(|error| std::io::Error::other(format!("{error:?}")))?,
+        );
         let configured = env::var_os("PLUSHPAL_MODEL_PATH").map(PathBuf::from);
         let model_path = if let Some(path) = configured {
             NativeModelInstaller::verify_model_path(&path)
@@ -190,17 +211,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .with_model_installer(installer)
             .with_parent_profile_store(profile_store.clone())
             .map_err(|error| std::io::Error::other(format!("{error:?}")))?;
-        let saved_cloud_provider = profile_store
-            .reasoning_provider_status()
+        let hub_profile_store = profile_store
+            .scoped_store(Some(&hub_client_id))
             .ok()
-            .filter(|status| status.configured)
-            .and_then(|status| {
-                profile_store
-                    .load_provider_api_key(&status.provider)
-                    .ok()
-                    .flatten()
-                    .map(|api_key| (status.provider, api_key))
-            });
+            .flatten();
+        let legacy_cloud_provider = saved_provider_from_store(profile_store.as_ref());
+        let saved_cloud_provider = if let Some(hub_store) = hub_profile_store.as_deref() {
+            saved_provider_from_store(hub_store).or_else(|| {
+                let (provider, api_key) = legacy_cloud_provider.clone()?;
+                let _ = hub_store.save_provider_api_key(&provider, &api_key);
+                let _ = hub_store.select_provider(&provider);
+                Some((provider, api_key))
+            })
+        } else {
+            legacy_cloud_provider
+        };
         let requested_voice_engine = env::var("PLUSHPAL_VOICE_ENGINE").unwrap_or_else(|_| {
             runtime_mode
                 .default_voice_engine()
@@ -209,7 +234,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
         if requested_voice_engine.eq_ignore_ascii_case("demo") {
             state = state.with_voice_engine(Arc::new(DemoVoiceEngine));
-            eprintln!("PlushPal demo voice engine enabled; this validates flow but does not clone voices.");
+            eprintln!("PlushBuddy Hub demo voice engine enabled; this validates flow but does not clone voices.");
         } else if requested_voice_engine.eq_ignore_ascii_case("luxtts") {
             let python_executable = env::var_os("PLUSHPAL_LUXTTS_PYTHON")
                 .map(PathBuf::from)
@@ -256,7 +281,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 Err(error) => {
                     eprintln!(
-                        "PlushPal local LuxTTS voice runtime is unavailable; starting without voice cloning: {error:?}"
+                        "PlushBuddy Hub LuxTTS voice runtime is unavailable; starting without voice cloning: {error:?}"
                     );
                 }
             }
@@ -306,7 +331,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 Err(error) => {
                     eprintln!(
-                        "PlushPal local Chatterbox voice runtime is unavailable; starting without voice cloning: {error:?}"
+                        "PlushBuddy Hub Chatterbox voice runtime is unavailable; starting without voice cloning: {error:?}"
                     );
                 }
             }
@@ -323,19 +348,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Some(command_path) = env::var_os("PLUSHPAL_STT_COMMAND").map(PathBuf::from) {
             match WhisperCliSpeechToTextEngine::new(command_path, &data_directory) {
                 Ok(engine) => {
-                    eprintln!("PlushPal local STT fallback enabled.");
+                    eprintln!("PlushBuddy Hub local listening fallback enabled.");
                     state = state.with_speech_to_text_engine(Arc::new(engine));
                 }
                 Err(error) => {
                     eprintln!(
-                        "PlushPal local STT fallback is unavailable; native clients must use verified on-device STT: {error:?}"
+                        "PlushBuddy Hub local listening fallback is unavailable; native clients must use verified on-device listening: {error:?}"
                     );
                 }
             }
         }
         if runtime_mode.uses_demo_conversation() {
             eprintln!(
-                "PlushPal demo conversation engine enabled; no cloud reasoning calls will be made."
+                "PlushBuddy Hub demo conversation engine enabled; no cloud reasoning calls will be made."
             );
             state = state.with_conversation_engine(Arc::new(DemoConversationEngine));
         } else if !runtime_mode.suppress_cloud_and_local_model() {
@@ -351,14 +376,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             match OpenAiConversationEngine::new(api_key, model.clone()) {
                                 Ok(engine) => {
                                     eprintln!(
-                                        "PlushPal OpenAI reasoning enabled with model {model}"
+                                        "PlushBuddy Hub OpenAI reasoning enabled with model {model}"
                                     );
                                     state = state.with_conversation_engine(Arc::new(engine));
                                     loaded_conversation = true;
                                 }
                                 Err(error) => {
                                     eprintln!(
-                                        "PlushPal OpenAI reasoning is unavailable: {error:?}"
+                                        "PlushBuddy Hub OpenAI reasoning is unavailable: {error:?}"
                                     );
                                 }
                             }
@@ -369,14 +394,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             match GeminiConversationEngine::new(api_key, model.clone()) {
                                 Ok(engine) => {
                                     eprintln!(
-                                        "PlushPal Gemini reasoning enabled with model {model}"
+                                        "PlushBuddy Hub Gemini reasoning enabled with model {model}"
                                     );
                                     state = state.with_conversation_engine(Arc::new(engine));
                                     loaded_conversation = true;
                                 }
                                 Err(error) => {
                                     eprintln!(
-                                        "PlushPal Gemini reasoning is unavailable: {error:?}"
+                                        "PlushBuddy Hub Gemini reasoning is unavailable: {error:?}"
                                     );
                                 }
                             }
@@ -393,7 +418,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         Err(error) => {
                             eprintln!(
-                                "PlushPal local conversation model is unavailable: {error:?}"
+                                "PlushBuddy Hub local conversation model is unavailable: {error:?}"
                             );
                         }
                     }
@@ -411,13 +436,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             match OpenAiConversationEngine::new(api_key, model.clone()) {
                                 Ok(engine) => {
                                     eprintln!(
-                                        "PlushPal OpenAI reasoning enabled with model {model}"
+                                        "PlushBuddy Hub OpenAI reasoning enabled with model {model}"
                                     );
                                     state = state.with_conversation_engine(Arc::new(engine));
                                 }
                                 Err(error) => {
                                     eprintln!(
-                                        "PlushPal OpenAI reasoning is unavailable: {error:?}"
+                                        "PlushBuddy Hub OpenAI reasoning is unavailable: {error:?}"
                                     );
                                 }
                             }
@@ -428,13 +453,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             match GeminiConversationEngine::new(api_key, model.clone()) {
                                 Ok(engine) => {
                                     eprintln!(
-                                        "PlushPal Gemini reasoning enabled with model {model}"
+                                        "PlushBuddy Hub Gemini reasoning enabled with model {model}"
                                     );
                                     state = state.with_conversation_engine(Arc::new(engine));
                                 }
                                 Err(error) => {
                                     eprintln!(
-                                        "PlushPal Gemini reasoning is unavailable: {error:?}"
+                                        "PlushBuddy Hub Gemini reasoning is unavailable: {error:?}"
                                     );
                                 }
                             }
@@ -446,14 +471,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         state
     };
     let url = format!("{}/#bootstrap={}", endpoint.origin(false), bootstrap);
-    println!(
-        "PlushPal local host listening on {}",
-        endpoint.origin(false)
-    );
+    println!("PlushBuddy Hub listening on {}", endpoint.origin(false));
     if env::var_os("PLUSHPAL_PRINT_BOOTSTRAP_URL").is_some() {
-        println!("PlushPal test bootstrap URL: {url}");
+        println!("PlushBuddy Hub test bootstrap URL: {url}");
         if let Some(host_header) = public_host_header {
-            println!("PlushPal LAN bootstrap URL: http://{host_header}/#bootstrap={bootstrap}");
+            println!(
+                "PlushBuddy Hub LAN bootstrap URL: http://{host_header}/#bootstrap={bootstrap}"
+            );
         }
     }
     if env::var_os("PLUSHPAL_NO_BROWSER").is_none() {
@@ -476,6 +500,21 @@ fn cloud_provider_api_key() -> Option<(String, String)> {
         }
         _ => provider_api_key("PLUSHPAL_GEMINI_API_KEY").map(|key| ("gemini".to_owned(), key)),
     }
+}
+
+#[cfg(feature = "native-runtime")]
+fn saved_provider_from_store(store: &dyn ParentProfileStore) -> Option<(String, String)> {
+    store
+        .reasoning_provider_status()
+        .ok()
+        .filter(|status| status.configured)
+        .and_then(|status| {
+            store
+                .load_provider_api_key(&status.provider)
+                .ok()
+                .flatten()
+                .map(|api_key| (status.provider, api_key))
+        })
 }
 
 #[cfg(feature = "native-runtime")]
@@ -519,6 +558,86 @@ fn application_data_directory() -> Result<PathBuf, Box<dyn std::error::Error>> {
         .ok_or_else(|| "No local application data directory is available".into())
 }
 
+#[cfg(feature = "native-runtime")]
+fn local_model_recommendation_from_env() -> Option<(String, String)> {
+    let total_memory_mib = parse_env_u64("PLUSHPAL_DEVICE_TOTAL_MEMORY_MIB")?;
+    let available_memory_mib =
+        parse_env_u64("PLUSHPAL_DEVICE_AVAILABLE_MEMORY_MIB").unwrap_or(total_memory_mib);
+    let free_storage_mib = parse_env_u64("PLUSHPAL_DEVICE_FREE_STORAGE_MIB").unwrap_or(0);
+    let logical_cores = parse_env_u64("PLUSHPAL_DEVICE_LOGICAL_CORES")
+        .and_then(|value| u16::try_from(value).ok())
+        .unwrap_or(1);
+    let os_major = parse_env_u64("PLUSHPAL_DEVICE_OS_MAJOR")
+        .and_then(|value| u16::try_from(value).ok())
+        .unwrap_or(13);
+    local_model_recommendation_for_profile(
+        total_memory_mib,
+        available_memory_mib,
+        free_storage_mib,
+        logical_cores,
+        os_major,
+        &env::var("PLUSHPAL_DEVICE_ARCH").unwrap_or_default(),
+        &env::var("PLUSHPAL_DEVICE_ACCELERATION").unwrap_or_default(),
+    )
+}
+
+#[cfg(feature = "native-runtime")]
+fn local_model_recommendation_for_profile(
+    total_memory_mib: u64,
+    available_memory_mib: u64,
+    free_storage_mib: u64,
+    logical_cores: u16,
+    os_major: u16,
+    architecture_name: &str,
+    acceleration_name: &str,
+) -> Option<(String, String)> {
+    let architecture = match architecture_name.trim().to_ascii_lowercase().as_str() {
+        "x86_64" | "amd64" => plushpal_device_capability::Architecture::X86_64,
+        _ => plushpal_device_capability::Architecture::Arm64,
+    };
+    let acceleration = match acceleration_name.trim().to_ascii_lowercase().as_str() {
+        "metal" => plushpal_device_capability::Acceleration::Metal,
+        "vulkan" => plushpal_device_capability::Acceleration::Vulkan,
+        _ => plushpal_device_capability::Acceleration::None,
+    };
+    let device = plushpal_device_capability::DeviceProfile {
+        platform: plushpal_device_capability::Platform::MacOs,
+        architecture,
+        os_major,
+        total_memory_mib,
+        // macOS "available" memory is highly transient and includes pressure/reclaim behavior
+        // that can make a capable Apple Silicon Mac look temporarily ineligible. Local model
+        // tiering is based on stable hardware configuration; loading failures are still handled
+        // by the runtime and users can switch to cloud mode if memory pressure is real.
+        available_memory_mib: total_memory_mib,
+        free_storage_mib,
+        logical_cores,
+        acceleration,
+    };
+    let installable_model_ids = plushpal_model_lifecycle::trusted_private_beta_manifests()
+        .ok()?
+        .into_iter()
+        .map(|manifest| manifest.model_id)
+        .collect::<HashSet<_>>();
+    let installable_candidates = plushpal_device_capability::initial_model_candidates()
+        .into_iter()
+        .filter(|candidate| installable_model_ids.contains(&candidate.model_id))
+        .collect::<Vec<_>>();
+    let assessment = plushpal_device_capability::CapabilityAssessor::default()
+        .assess(&device, &installable_candidates);
+    let recommended = assessment.recommended_model_id?;
+    let note = format!(
+        "Mac profile: {} MiB total memory, {} MiB available memory, {} MiB free storage, {} cores, {:?} acceleration.",
+        total_memory_mib, available_memory_mib, free_storage_mib, logical_cores, acceleration
+    );
+    Some((recommended, note))
+}
+
+#[cfg(feature = "native-runtime")]
+fn parse_env_u64(name: &str) -> Option<u64> {
+    env::var(name).ok()?.trim().parse().ok()
+}
+
 fn launch_browser(url: &str) {
     #[cfg(target_os = "macos")]
     let mut command = Command::new("open");
@@ -536,6 +655,9 @@ fn launch_browser(url: &str) {
 #[cfg(test)]
 mod tests {
     use super::RuntimeMode;
+
+    #[cfg(feature = "native-runtime")]
+    use super::local_model_recommendation_for_profile;
 
     #[test]
     fn runtime_mode_defaults_to_custom() {
@@ -597,5 +719,38 @@ mod tests {
         assert!(RuntimeMode::PrivacyLocalFirst.local_model_allowed());
         assert!(RuntimeMode::CloudLlm.cloud_allowed());
         assert!(!RuntimeMode::CloudLlm.local_model_allowed());
+    }
+
+    #[cfg(feature = "native-runtime")]
+    #[test]
+    fn mac_profile_recommends_strongest_trusted_installable_local_model() {
+        let recommendation = local_model_recommendation_for_profile(
+            32_768, 16_384, 128_000, 10, 15, "arm64", "metal",
+        )
+        .expect("strong Mac profile should be eligible for a local model");
+
+        assert_eq!(recommendation.0, "gemma-4-26b-a4b-q4");
+        assert!(recommendation.1.contains("32768 MiB total memory"));
+        assert!(recommendation.1.contains("Metal acceleration"));
+    }
+
+    #[cfg(feature = "native-runtime")]
+    #[test]
+    fn mac_profile_falls_back_to_smaller_local_model_on_modest_memory() {
+        let recommendation =
+            local_model_recommendation_for_profile(12_288, 7_373, 64_000, 8, 14, "arm64", "metal")
+                .expect("modest Mac profile should still be eligible for local AI");
+
+        assert_eq!(recommendation.0, "gemma-4-e4b-q4");
+    }
+
+    #[cfg(feature = "native-runtime")]
+    #[test]
+    fn mac_profile_without_metal_does_not_recommend_local_model() {
+        let recommendation = local_model_recommendation_for_profile(
+            32_768, 16_384, 128_000, 10, 15, "arm64", "none",
+        );
+
+        assert!(recommendation.is_none());
     }
 }

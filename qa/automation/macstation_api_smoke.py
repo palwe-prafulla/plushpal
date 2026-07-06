@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""MacStation API smoke/E2E test.
+"""PlushBuddy Hub API smoke/E2E test.
 
-This starts the Rust MacStation host in an isolated temporary data directory,
+This starts the Rust Hub host in an isolated temporary data directory,
 exchanges the bootstrap token for a session cookie, validates health/status,
 configures the parent PIN, creates characters, and optionally enrolls voice
 samples for each character.
@@ -120,9 +120,9 @@ def main() -> int:
     args = parser.parse_args()
 
     RESULTS_ROOT.mkdir(parents=True, exist_ok=True)
-    result_dir = RESULTS_ROOT / f"macstation-api-{time.strftime('%Y%m%d-%H%M%S')}"
+    result_dir = RESULTS_ROOT / f"hub-api-{time.strftime('%Y%m%d-%H%M%S')}"
     result_dir.mkdir()
-    data_dir = Path(tempfile.mkdtemp(prefix="plushbuddy-station-e2e-"))
+    data_dir = Path(tempfile.mkdtemp(prefix="plushbuddy-hub-e2e-"))
 
     env = os.environ.copy()
     env.update(
@@ -152,7 +152,7 @@ def main() -> int:
             / "macos"
             / "PlushBuddy Hub.app"
         )
-        packaged_station = packaged_hub.with_name("PlushBuddy Station.app")
+        packaged_station = packaged_hub.with_name("PlushBuddy Hub.app")
         packaged_app = packaged_hub if packaged_hub.exists() else packaged_station
         env.update(
             {
@@ -200,9 +200,9 @@ def main() -> int:
     }
 
     try:
-        output = read_line_until(process, r"PlushPal test bootstrap URL:", timeout=180)
+        output = read_line_until(process, r"PlushBuddy Hub test bootstrap URL:", timeout=180)
         (result_dir / "host-startup.log").write_text(output + "\n")
-        match = re.search(r"PlushPal test bootstrap URL: (http://[^\s]+)", output)
+        match = re.search(r"PlushBuddy Hub test bootstrap URL: (http://[^\s]+)", output)
         if not match:
             raise AssertionError("Could not parse bootstrap URL")
         bootstrap_url = match.group(1)
@@ -411,7 +411,7 @@ def main() -> int:
 
         report["status"] = "pass"
         (result_dir / "report.json").write_text(json.dumps(report, indent=2))
-        print(f"PASS: MacStation API smoke completed. Results: {result_dir}")
+        print(f"PASS: PlushBuddy Hub API smoke completed. Results: {result_dir}")
         return 0
     except Exception as exc:  # noqa: BLE001
         report["status"] = "fail"

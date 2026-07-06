@@ -7,10 +7,10 @@ rust-version.workspace = true
 
 [dependencies]
 plushpal-core-domain = { path = "../core_domain" }
+plushpal-policy-engine = { path = "../policy_engine" }
 plushpal-provider-api = { path = "../provider_api" }
 serde.workspace = true
 serde_json.workspace = true
 
 [lints]
 workspace = true
-

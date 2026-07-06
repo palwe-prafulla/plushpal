@@ -1,99 +1,14 @@
 (() => {
-  const STORE_KEY = 'plushbuddy-web-client-v1';
   const CLIENT_ID_KEY = 'plushbuddy-web-client-id-v1';
-  const SESSION_REASONING_KEY = 'plushbuddy-web-reasoning-session-v1';
+  const HUB_ID_KEY = 'plushbuddy-web-hub-id-v1';
   const DEFAULT_TRAITS = ['gentle', 'curious'];
   let activeAudio = null;
-  let volatileReasoning = null;
 
-  const defaultState = () => ({
-    parent: null,
-    kids: [],
-    characters: [],
-    history: [],
-    reasoning: {
-      provider: 'gemini',
-      apiKey: null,
-    },
-  });
-
-  const readSessionReasoning = () => {
-    try {
-      const raw = window.sessionStorage?.getItem(SESSION_REASONING_KEY);
-      if (!raw) return volatileReasoning;
-      const parsed = JSON.parse(raw);
-      if (!parsed?.apiKey) return volatileReasoning;
-      return {
-        provider: parsed.provider === 'openai' ? 'openai' : 'gemini',
-        apiKey: String(parsed.apiKey),
-      };
-    } catch (_) {
-      return volatileReasoning;
-    }
-  };
-
-  const writeSessionReasoning = (provider, apiKey) => {
-    const normalized = provider === 'openai' ? 'openai' : 'gemini';
-    volatileReasoning = {provider: normalized, apiKey};
-    try {
-      window.sessionStorage?.setItem(
-        SESSION_REASONING_KEY,
-        JSON.stringify(volatileReasoning),
-      );
-    } catch (_) {}
-  };
-
-  const clearSessionReasoning = () => {
-    volatileReasoning = null;
-    try {
-      window.sessionStorage?.removeItem(SESSION_REASONING_KEY);
-    } catch (_) {}
-  };
-
-  const loadState = () => {
-    try {
-      const raw = window.localStorage.getItem(STORE_KEY);
-      const persisted = raw ? JSON.parse(raw) : defaultState();
-      const sessionReasoning = readSessionReasoning();
-      const provider =
-        persisted?.reasoning?.provider ||
-        sessionReasoning?.provider ||
-        defaultState().reasoning.provider;
-      return {
-        ...defaultState(),
-        ...persisted,
-        reasoning: {
-          provider,
-          apiKey: sessionReasoning?.provider === provider
-            ? sessionReasoning.apiKey
-            : null,
-        },
-      };
-    } catch (_) {
-      return defaultState();
-    }
-  };
-
-  const saveState = (state) => {
-    const persisted = {
-      ...state,
-      reasoning: {
-        provider: state.reasoning?.provider || 'gemini',
-        apiKey: null,
-      },
-    };
-    window.localStorage.setItem(STORE_KEY, JSON.stringify(persisted));
-  };
-
-  const textEncoder = new TextEncoder();
   const bytesToBase64 = (bytes) => {
     let binary = '';
     for (const byte of bytes) binary += String.fromCharCode(byte);
     return btoa(binary);
   };
-
-  const base64ToBytes = (base64) =>
-    Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
 
   const encodeWavBase64 = (samples, sampleRate) => {
     const bytesPerSample = 2;
@@ -228,11 +143,6 @@
     });
   };
 
-  const sha256Base64 = async (text) => {
-    const digest = await crypto.subtle.digest('SHA-256', textEncoder.encode(text));
-    return bytesToBase64(new Uint8Array(digest));
-  };
-
   const newId = (prefix) => `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
 
   const stableClientId = () => {
@@ -254,17 +164,20 @@
     return `Browser on ${String(platform).slice(0, 60)}`;
   };
 
-  const providerDisplayName = (provider) =>
-    provider === 'openai' ? 'OpenAI' : 'Gemini';
-
-  const requirePin = async (pin) => {
-    const state = loadState();
-    if (!state.parent) throw new Error('Set up a parent PIN first.');
-    const hash = await sha256Base64(`${state.parent.pin_salt}:${pin}`);
-    if (hash !== state.parent.pin_hash) {
-      throw new Error('Parent PIN is incorrect.');
+  const storedHubId = () => {
+    try {
+      const existing = window.localStorage.getItem(HUB_ID_KEY);
+      return /^hub-[a-f0-9-]{36}$/.test(existing || '') ? existing : null;
+    } catch (_) {
+      return null;
     }
-    return state;
+  };
+
+  const rememberHubId = (hubId) => {
+    if (!/^hub-[a-f0-9-]{36}$/.test(hubId || '')) return;
+    try {
+      window.localStorage.setItem(HUB_ID_KEY, hubId);
+    } catch (_) {}
   };
 
   const currentBootstrapToken = () => {
@@ -297,6 +210,7 @@
         },
       });
       if (!response.ok) throw new Error('Hub session expired. Open PlushBuddy from Hub again.');
+      rememberHubId(response.headers.get('x-plushbuddy-hub-id'));
       history.replaceState(null, document.title, `${window.location.pathname}${window.location.search}`);
       return;
     }
@@ -312,6 +226,7 @@
       headers: {
         ...(options.body ? {'Content-Type': 'application/json'} : {}),
         'X-PlushBuddy-Client-Id': stableClientId(),
+        ...(storedHubId() ? {'X-PlushBuddy-Hub-Id': storedHubId()} : {}),
         ...(options.headers || {}),
       },
     });
@@ -395,124 +310,6 @@
     }
   };
 
-  const selectedCharacter = (alias) => {
-    const state = loadState();
-    return state.characters.find((character) => character.alias === alias) || null;
-  };
-
-  const recentTurns = (kidId, characterAlias) => {
-    const state = loadState();
-    return state.history
-      .filter((turn) =>
-        (!kidId || turn.kid_id === kidId) &&
-        (!characterAlias || turn.character_alias === characterAlias))
-      .slice(-6);
-  };
-
-  const buildPrompt = ({
-    ageBand,
-    characterAlias,
-    text,
-    kidId,
-    kidName,
-    childAgeYears,
-    childAgeMonths,
-    characterPlayAgeYears,
-  }) => {
-    const character = selectedCharacter(characterAlias);
-    const traits = character?.traits?.length ? character.traits : DEFAULT_TRAITS;
-    const guidance = character?.parent_guidance || 'cheerful, gentle, playful';
-    const playAge = Math.max(2, Math.min(
-      characterPlayAgeYears || character?.persona_age_years || childAgeYears || 4,
-      childAgeYears || characterPlayAgeYears || 4,
-    ));
-    const ageContext = childAgeYears != null
-      ? `${childAgeYears} years and ${childAgeMonths || 0} months old`
-      : `age band ${ageBand}`;
-    const safeText = kidName ? text.replaceAll(kidName, 'my friend') : text;
-    const continuity = recentTurns(kidId, characterAlias)
-      .map((turn) => `Child: ${turn.child_text}\n${characterAlias}: ${turn.character_text}`)
-      .join('\n') || 'No prior turns in this active chat.';
-
-    return `You are a fictional plush toy character named ${characterAlias}.
-Child profile: ${ageContext}
-Character style: ${characterAlias} talks like a playful ${playAge}-year-old pretend-play toy, never older than the child. Use tiny sentences, simple toddler words, giggles/sound effects sparingly, and a gentle toy-like point of view. Do not narrate feelings like "I can't wait to hear"; just respond as the toy would in play.
-Knowledge rule: still answer factual questions correctly. The toy age controls wording, sentence length, and playfulness only; it must not reduce factual accuracy. Explain concepts at the child's age level.
-Toy memory and parent guidance: Personality traits: ${traits.join(', ')}. ${guidance}. Treat likes, favorite things, personality notes, and pretend-play details here as true for ${characterAlias}. Use them naturally when relevant, but do not force them into every answer.
-Safety rules: be age-appropriate; do not ask for private identifying information, addresses, school, secrets, photos, purchases, meetings, or unsafe actions. Never encourage secrecy from a trusted adult.
-If the child asks about danger, injury, self-harm, violence, secrets, or anything unsafe, give a very short supportive answer and set suggest_trusted_adult=true.
-Keep normal replies warm, playful, concrete, and easy for a young child. Prefer 2-4 tiny sentences, usually 25-45 words total. Short answers are fine for simple prompts, but do not sound clipped or robotic. Let the toy ask one gentle follow-up when it feels natural.
-Recent conversation for continuity:
-${continuity}
-Return only JSON with exactly these fields: speech string, suggest_trusted_adult boolean.
-Current child message: ${safeText}`;
-  };
-
-  const extractJsonObject = (text) => {
-    const start = text.indexOf('{');
-    const end = text.lastIndexOf('}');
-    if (start < 0 || end <= start) return null;
-    return text.slice(start, end + 1);
-  };
-
-  const parseStructuredSpeech = (text) => {
-    const json = extractJsonObject(text) || text;
-    const decoded = JSON.parse(json);
-    if (!decoded.speech || typeof decoded.speech !== 'string') {
-      throw new Error('Reasoning response was missing speech text');
-    }
-    return {
-      speech: decoded.speech.trim(),
-      suggest_trusted_adult: Boolean(decoded.suggest_trusted_adult),
-    };
-  };
-
-  const callGemini = async (apiKey, prompt) => {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`,
-      {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-          contents: [{parts: [{text: prompt}]}],
-          generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 220,
-            responseMimeType: 'application/json',
-          },
-        }),
-      },
-    );
-    if (!response.ok) throw new Error(`Gemini HTTP ${response.status}`);
-    const decoded = await response.json();
-    const text = decoded?.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) throw new Error('Gemini response was empty');
-    return parseStructuredSpeech(text);
-  };
-
-  const callOpenAI = async (apiKey, prompt) => {
-    const response = await fetch('https://api.openai.com/v1/responses', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'gpt-4.1-mini',
-        input: prompt,
-        max_output_tokens: 220,
-      }),
-    });
-    if (!response.ok) throw new Error(`OpenAI HTTP ${response.status}`);
-    const decoded = await response.json();
-    const text =
-      decoded.output_text ||
-      decoded.output?.flatMap((item) => item.content || [])
-        ?.find((item) => item.type === 'output_text')?.text;
-    if (!text) throw new Error('OpenAI response was empty');
-    return parseStructuredSpeech(text);
-  };
-
   window.plushpalReasoningProviderStatus = async () => {
     const response = await stationFetch('/api/v1/provider/status');
     if (!response.ok) {
@@ -535,7 +332,6 @@ Current child message: ${safeText}`;
     if (!response.ok) {
       throw new Error(await responseErrorMessage(response, 'Could not save the API key'));
     }
-    clearSessionReasoning();
   };
 
   window.plushpalModelStatus = async () => {
@@ -663,10 +459,6 @@ Current child message: ${safeText}`;
     if (!response.ok) {
       throw new Error(await responseErrorMessage(response, 'Could not delete local data'));
     }
-    try {
-      window.localStorage?.removeItem(STORE_KEY);
-    } catch (_) {}
-    clearSessionReasoning();
   };
 
   window.plushpalExportBackup = async (pin) => {
@@ -782,6 +574,30 @@ Current child message: ${safeText}`;
       }),
     });
     if (!response.ok) throw new Error(await responseErrorMessage(response, 'Could not save character'));
+  };
+
+  window.plushpalRenameCharacter = async (
+    pin,
+    currentCharacterAlias,
+    newCharacterAlias,
+    characterTraits,
+    parentGuidance,
+    kidId,
+    personaAgeYears,
+  ) => {
+    const response = await stationFetch('/api/v1/characters/rename', {
+      method: 'POST',
+      body: JSON.stringify({
+        pin,
+        current_character_alias: currentCharacterAlias.trim(),
+        new_character_alias: newCharacterAlias.trim(),
+        character_traits: Array.from(characterTraits || DEFAULT_TRAITS),
+        parent_guidance: parentGuidance || null,
+        kid_id: kidId || null,
+        persona_age_years: personaAgeYears || null,
+      }),
+    });
+    if (!response.ok) throw new Error(await responseErrorMessage(response, 'Could not rename character'));
   };
 
   window.plushpalDeleteCharacter = async (pin, characterAlias, kidId) => {

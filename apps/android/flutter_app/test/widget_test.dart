@@ -64,6 +64,7 @@ class FakeBackend implements BackendClient {
     this.restoredTraits = const [],
     this.restoredGuidance,
     this.restoredRetentionDays,
+    this.seedFixtureKid = true,
   }) : configuredPin = parentConfigured ? '4826' : null,
        configuredCharacterAlias = restoredCharacterAlias ?? 'Teddy',
        configuredTraits = restoredTraits;
@@ -75,6 +76,7 @@ class FakeBackend implements BackendClient {
   final List<String> restoredTraits;
   final String? restoredGuidance;
   final int? restoredRetentionDays;
+  final bool seedFixtureKid;
   String? receivedText;
   bool sessionEnded = false;
   bool localDataDeleted = false;
@@ -85,6 +87,7 @@ class FakeBackend implements BackendClient {
   String? clonedSpeech;
   Completer<void>? enrollCompleter;
   Completer<void>? previewCompleter;
+  Completer<void>? synthesizeCompleter;
   int enrollVoiceCalls = 0;
   int previewVoiceCalls = 0;
   String? lastEnrolledAlias;
@@ -92,8 +95,8 @@ class FakeBackend implements BackendClient {
   String? lastApprovedAlias;
   String? lastDeletedVoiceAlias;
   int? receivedCharacterPlayAgeYears;
-  bool stationPaired = false;
-  String? stationBaseUrl;
+  bool stationPaired = true;
+  String? stationBaseUrl = 'http://127.0.0.1:3210';
   final savedKids = <KidProfile>[];
   final additionalCharacters = <CharacterConfiguration>[];
   final characterVoices = <String, VoiceProfileStatus>{};
@@ -166,7 +169,7 @@ class FakeBackend implements BackendClient {
   }
 
   @override
-  Future<List<KidProfile>> kids() async => savedKids.isEmpty
+  Future<List<KidProfile>> kids() async => savedKids.isEmpty && seedFixtureKid
       ? [
           const KidProfile(
             id: 'kid-fixture',
@@ -249,6 +252,7 @@ class FakeBackend implements BackendClient {
   String? configuredGuidance;
   int? configuredPersonaAgeYears;
   int? configuredRetentionDays;
+  int configureParentPinCalls = 0;
 
   @override
   Future<void> configureParentPin({
@@ -263,6 +267,7 @@ class FakeBackend implements BackendClient {
     if (configuredPin != null && configuredPin != pin) {
       throw StateError('unauthorized');
     }
+    configureParentPinCalls += 1;
     configuredPin = pin;
     configuredCharacterAlias = characterAlias;
     configuredTraits = List.of(characterTraits);
@@ -342,6 +347,29 @@ class FakeBackend implements BackendClient {
   }) async {
     if (pin != configuredPin) throw StateError('unauthorized');
     configuredCharacterAlias = characterAlias;
+    configuredTraits = List.of(characterTraits);
+    configuredGuidance = parentGuidance;
+    configuredPersonaAgeYears = personaAgeYears;
+  }
+
+  @override
+  Future<void> renameCharacter({
+    required String pin,
+    required String currentCharacterAlias,
+    required String newCharacterAlias,
+    required List<String> characterTraits,
+    required String? parentGuidance,
+    String? kidId,
+    int? personaAgeYears,
+  }) async {
+    if (pin != configuredPin) {
+      throw StateError('unauthorized');
+    }
+    final voice = characterVoices.remove(currentCharacterAlias);
+    if (voice != null) {
+      characterVoices[newCharacterAlias] = voice;
+    }
+    configuredCharacterAlias = newCharacterAlias;
     configuredTraits = List.of(characterTraits);
     configuredGuidance = parentGuidance;
     configuredPersonaAgeYears = personaAgeYears;
@@ -474,6 +502,7 @@ class FakeBackend implements BackendClient {
     String text, {
     String? characterAlias,
   }) async {
+    await synthesizeCompleter?.future;
     clonedSpeech = text;
     return Uint8List.fromList(const [82, 73, 70, 70]);
   }
@@ -490,7 +519,7 @@ class FakeBackend implements BackendClient {
         ready: modelReady,
         installSupported: true,
         installing: false,
-        parentConfigured: parentConfigured,
+        parentConfigured: configuredPin != null,
         ageBand: restoredAgeBand,
         characterAlias: restoredCharacterAlias,
         characterTraits: restoredTraits,
@@ -546,8 +575,12 @@ Future<void> tapVisible(WidgetTester tester, String text) async {
 
 Future<void> unlockSettingsIfNeeded(WidgetTester tester) async {
   await tester.pumpAndSettle();
-  if (find.text('Open parent settings').evaluate().isEmpty) return;
-  await tester.enterText(find.byType(TextField).last, '4826');
+  final parentPin = find.byWidgetPredicate(
+    (widget) =>
+        widget is TextField && widget.decoration?.labelText == 'Parent PIN',
+  );
+  if (parentPin.evaluate().isEmpty) return;
+  await tester.enterText(parentPin, '4826');
   await tester.tap(find.text('Confirm'));
   await tester.pumpAndSettle();
 }
@@ -555,6 +588,18 @@ Future<void> unlockSettingsIfNeeded(WidgetTester tester) async {
 Future<void> openSettings(WidgetTester tester) async {
   await tapVisible(tester, 'Parent Settings');
   await unlockSettingsIfNeeded(tester);
+}
+
+Future<void> startChildMode(WidgetTester tester) async {
+  await tapVisible(tester, 'Start Playing');
+  await tester.pumpAndSettle();
+  final parentPin = find.byWidgetPredicate(
+    (widget) =>
+        widget is TextField && widget.decoration?.labelText == 'Parent PIN',
+  );
+  if (parentPin.evaluate().isNotEmpty) {
+    await enterParentPin(tester);
+  }
 }
 
 Future<void> openCharacterSettings(
@@ -591,7 +636,12 @@ Future<void> completeBasicOnboarding(
   WidgetTester tester, {
   String birthdate = '01/01/2021',
 }) async {
+  await tester.pumpAndSettle();
+  if (find.text('Welcome to PlushBuddy').evaluate().isEmpty) {
+    return;
+  }
   await tapVisible(tester, 'Parent Settings');
+  await unlockSettingsIfNeeded(tester);
   await tester.pumpAndSettle();
   final kidNameField = find.byWidgetPredicate(
     (widget) =>
@@ -606,8 +656,8 @@ Future<void> completeBasicOnboarding(
   await tester.ensureVisible(birthdateField);
   await tester.enterText(birthdateField, birthdate);
   await assessIfNeeded(tester);
-  await tapVisible(tester, 'Continue to parent home');
-  await enterParentPin(tester);
+  await tapVisible(tester, 'Save setup and go to parent home');
+  await unlockSettingsIfNeeded(tester);
   await tester.pumpAndSettle();
 }
 
@@ -681,12 +731,47 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(
-      PlushPalApp(backend: FakeBackend(), platform: FakePlatform()),
+      PlushPalApp(
+        backend: FakeBackend(seedFixtureKid: false),
+        platform: FakePlatform(),
+      ),
     );
     expect(find.text('Welcome to PlushBuddy'), findsOneWidget);
     await completeBasicOnboarding(tester);
     expect(find.text('Ready to play'), findsOneWidget);
+    await startChildMode(tester);
+    expect(find.text('Tap to talk'), findsOneWidget);
+  });
+
+  testWidgets('entering child mode requires a fresh Hub parent PIN', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      PlushPalApp(
+        backend: FakeBackend(seedFixtureKid: false),
+        platform: FakePlatform(),
+      ),
+    );
+    await completeBasicOnboarding(tester);
+    expect(find.text('Ready to play'), findsOneWidget);
+
     await tapVisible(tester, 'Start Playing');
+    expect(find.text('Start child mode'), findsOneWidget);
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is TextField && widget.decoration?.labelText == 'Parent PIN',
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(find.text('Ready to play'), findsOneWidget);
+    expect(find.text('Tap to talk'), findsNothing);
+
+    await tapVisible(tester, 'Start Playing');
+    await enterParentPin(tester);
     expect(find.text('Tap to talk'), findsOneWidget);
   });
 
@@ -720,14 +805,178 @@ void main() {
     expect(find.byIcon(Icons.check_circle), findsNothing);
   });
 
+  testWidgets('welcome parent settings requires Hub parent PIN', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      PlushPalApp(
+        backend: FakeBackend(seedFixtureKid: false),
+        platform: FakePlatform(),
+      ),
+    );
+
+    await tapVisible(tester, 'Parent Settings');
+
+    expect(find.text('Open parent settings'), findsOneWidget);
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is TextField && widget.decoration?.labelText == 'Parent PIN',
+      ),
+      findsOneWidget,
+    );
+
+    await enterParentPin(tester);
+    expect(find.text('Parent Settings'), findsAtLeastNWidgets(1));
+  });
+
+  testWidgets('first-run kid profile can be saved before adding voice', (
+    tester,
+  ) async {
+    final backend = FakeBackend(seedFixtureKid: false)
+      ..voiceEnrolled = false
+      ..voiceApproved = false;
+    backend.savedKids.clear();
+    await tester.pumpWidget(
+      PlushPalApp(backend: backend, platform: FakePlatform()),
+    );
+
+    await tapVisible(tester, 'Parent Settings');
+    await unlockSettingsIfNeeded(tester);
+    final kidNameField = find.byWidgetPredicate(
+      (widget) =>
+          widget is TextField && widget.decoration?.labelText == 'Kid name',
+    );
+    final birthdateField = find.byWidgetPredicate(
+      (widget) =>
+          widget is TextField && widget.decoration?.labelText == 'Birthdate',
+    );
+    await tester.ensureVisible(kidNameField);
+    await tester.enterText(kidNameField, 'Mia');
+    await tester.ensureVisible(birthdateField);
+    await tester.enterText(birthdateField, '02/03/2021');
+
+    await tapVisible(tester, 'Save kid profile');
+
+    expect(
+      find.text('Kid profile saved. Now add a toy buddy.'),
+      findsOneWidget,
+    );
+    expect(backend.savedKids.single.name, 'Mia');
+    expect(backend.savedKids.single.birthdateIso, '2021-02-03');
+    await tester.ensureVisible(find.text('First character'));
+    expect(find.text('Add voice sample'), findsOneWidget);
+  });
+
+  testWidgets(
+    'birthdate digits auto-format and first voice save skips PIN setup',
+    (tester) async {
+      final backend = FakeBackend(seedFixtureKid: false)
+        ..voiceEnrolled = false
+        ..voiceApproved = false;
+      backend.savedKids.clear();
+      await tester.pumpWidget(
+        PlushPalApp(backend: backend, platform: FakePlatform()),
+      );
+
+      await tapVisible(tester, 'Parent Settings');
+      await unlockSettingsIfNeeded(tester);
+      final kidNameField = find.byWidgetPredicate(
+        (widget) =>
+            widget is TextField && widget.decoration?.labelText == 'Kid name',
+      );
+      final birthdateField = find.byWidgetPredicate(
+        (widget) =>
+            widget is TextField && widget.decoration?.labelText == 'Birthdate',
+      );
+      final characterNameField = find.byWidgetPredicate(
+        (widget) =>
+            widget is TextField &&
+            widget.decoration?.labelText == 'Character name',
+      );
+
+      await tester.ensureVisible(kidNameField);
+      await tester.enterText(kidNameField, 'Mia');
+      await tester.ensureVisible(birthdateField);
+      await tester.enterText(birthdateField, '02032021');
+      await tester.pumpAndSettle();
+      expect(find.text('02/03/2021'), findsOneWidget);
+
+      await tester.drag(find.byType(ListView), const Offset(0, -700));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(characterNameField);
+      await tester.enterText(characterNameField, 'Buddy');
+      await tester.ensureVisible(find.text('First character'));
+      await tester.pumpAndSettle();
+      final addVoiceButton = find.widgetWithText(
+        FilledButton,
+        'Add voice sample',
+      );
+      await tester.scrollUntilVisible(
+        addVoiceButton,
+        220,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(addVoiceButton);
+      await tester.pump();
+      expect(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is TextField &&
+              widget.decoration?.labelText == 'Parent PIN',
+        ),
+        findsNothing,
+      );
+      await tester.tap(find.byType(CheckboxListTile));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.tap(find.widgetWithText(FilledButton, 'Choose audio file'));
+      await tester.pumpAndSettle();
+
+      expect(backend.savedKids.single.birthdateIso, '2021-02-03');
+      expect(backend.configuredCharacterAlias, 'Buddy');
+      expect(backend.configureParentPinCalls, 0);
+      expect(backend.enrollVoiceCalls, 1);
+      expect(find.text('Parent Settings'), findsAtLeastNWidgets(1));
+      expect(
+        find.text(
+          'Buddy voice created. Listen and save it only if it sounds right.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Preview voice'), findsOneWidget);
+    },
+  );
+
+  testWidgets('welcome parent settings explains when Hub PIN is missing', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      PlushPalApp(
+        backend: FakeBackend(parentConfigured: false),
+        platform: FakePlatform(),
+      ),
+    );
+
+    await tapVisible(tester, 'Parent Settings');
+
+    expect(find.text('Hub setup needed'), findsOneWidget);
+    expect(
+      find.textContaining('Parent PIN is not set yet'),
+      findsAtLeastNWidgets(1),
+    );
+    expect(find.text('Parent Settings'), findsOneWidget);
+  });
+
   testWidgets('child screen hides transcripts and exposes large talk state', (
     tester,
   ) async {
     await tester.pumpWidget(
       PlushPalApp(backend: FakeBackend(), platform: FakePlatform()),
     );
-    await completeBasicOnboarding(tester, birthdate: '2017-01-01');
-    await tapVisible(tester, 'Start Playing');
+    await completeBasicOnboarding(tester, birthdate: '01/01/2017');
+    await startChildMode(tester);
 
     await tester.tap(find.byIcon(Icons.mic));
     await tester.pumpAndSettle();
@@ -742,7 +991,7 @@ void main() {
     final platform = FakePlatform();
     await tester.pumpWidget(PlushPalApp(backend: backend, platform: platform));
     await completeBasicOnboarding(tester);
-    await tapVisible(tester, 'Start Playing');
+    await startChildMode(tester);
 
     await tester.enterText(find.byType(TextField), 'Why is the sky blue?');
     await tester.pumpAndSettle();
@@ -754,6 +1003,53 @@ void main() {
     expect(find.text('Tap to talk'), findsOneWidget);
   });
 
+  testWidgets(
+    'child answer waits for cloned voice preview work and then appears',
+    (tester) async {
+      final backend = FakeBackend()..synthesizeCompleter = Completer<void>();
+      await tester.pumpWidget(
+        PlushPalApp(backend: backend, platform: FakePlatform()),
+      );
+      await completeBasicOnboarding(tester);
+      await startChildMode(tester);
+
+      await tester.enterText(find.byType(TextField), 'Can we play?');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Send message'));
+      await tester.pump();
+
+      expect(find.text('Can we play?'), findsOneWidget);
+      expect(find.text('Preparing Teddy voice...'), findsOneWidget);
+      expect(find.text('Blue light scatters more in the sky.'), findsNothing);
+
+      backend.synthesizeCompleter!.complete();
+      await tester.pumpAndSettle();
+
+      expect(backend.clonedSpeech, 'Blue light scatters more in the sky.');
+      expect(find.text('Blue light scatters more in the sky.'), findsOneWidget);
+      expect(find.text('Tap to talk'), findsOneWidget);
+    },
+  );
+
+  testWidgets('child mode is blocked until buddy voice is approved', (
+    tester,
+  ) async {
+    final backend = FakeBackend()
+      ..voiceEnrolled = true
+      ..voiceApproved = false
+      ..voiceRuntimeReady = true;
+    await tester.pumpWidget(
+      PlushPalApp(backend: backend, platform: FakePlatform()),
+    );
+    await completeBasicOnboarding(tester);
+
+    expect(find.text('Preview Teddy’s voice'), findsAtLeastNWidgets(1));
+    expect(find.text('Preview voice'), findsAtLeastNWidgets(1));
+    expect(find.text('Start Playing'), findsNothing);
+    expect(find.text('Tap to talk'), findsNothing);
+    expect(backend.receivedText, isNull);
+  });
+
   testWidgets('empty typed child question shows a visible hint', (
     tester,
   ) async {
@@ -761,7 +1057,7 @@ void main() {
       PlushPalApp(backend: FakeBackend(), platform: FakePlatform()),
     );
     await completeBasicOnboarding(tester);
-    await tapVisible(tester, 'Start Playing');
+    await startChildMode(tester);
 
     await tester.enterText(find.byType(TextField), '   ');
     await tester.testTextInput.receiveAction(TextInputAction.done);
@@ -777,7 +1073,7 @@ void main() {
     final platform = FakePlatform(transcript: 'Tell me about rainbows');
     await tester.pumpWidget(PlushPalApp(backend: backend, platform: platform));
     await completeBasicOnboarding(tester);
-    await tapVisible(tester, 'Start Playing');
+    await startChildMode(tester);
 
     await tester.tap(find.byIcon(Icons.mic));
     await tester.pumpAndSettle();
@@ -797,7 +1093,7 @@ void main() {
     );
     await tester.pumpWidget(PlushPalApp(backend: backend, platform: platform));
     await completeBasicOnboarding(tester);
-    await tapVisible(tester, 'Start Playing');
+    await startChildMode(tester);
 
     await tester.tap(find.byIcon(Icons.mic));
     await tester.pumpAndSettle();
@@ -824,7 +1120,7 @@ void main() {
     );
     await tester.pumpWidget(PlushPalApp(backend: backend, platform: platform));
     await completeBasicOnboarding(tester);
-    await tapVisible(tester, 'Start Playing');
+    await startChildMode(tester);
 
     await tester.tap(find.byIcon(Icons.mic));
     await tester.pumpAndSettle();
@@ -849,6 +1145,7 @@ void main() {
       ),
     );
     await tapVisible(tester, 'Parent Settings');
+    await unlockSettingsIfNeeded(tester);
     await tester.pumpAndSettle();
     final birthdateField = find.byWidgetPredicate(
       (widget) =>
@@ -864,11 +1161,11 @@ void main() {
     await tester.enterText(birthdateField, '01/01/2021');
     await assessIfNeeded(tester);
 
-    await tapVisible(tester, 'Continue to parent home');
+    await tapVisible(tester, 'Save setup and go to parent home');
     await tester.pumpAndSettle();
     expect(
       find.text(
-        'Finish Cloud LLM or local reasoning setup in PlushBuddy Hub before continuing.',
+        'Finish Cloud AI or Local AI setup in PlushBuddy Hub before continuing.',
       ),
       findsOneWidget,
     );
@@ -892,7 +1189,7 @@ void main() {
       PlushPalApp(backend: FakeBackend(), platform: FakePlatform()),
     );
     await completeBasicOnboarding(tester);
-    await tapVisible(tester, 'Start Playing');
+    await startChildMode(tester);
 
     await tapVisible(tester, 'Done');
     await tester.pumpAndSettle();
@@ -926,7 +1223,7 @@ void main() {
       PlushPalApp(backend: backend, platform: FakePlatform()),
     );
     await tester.pumpAndSettle();
-    await tapVisible(tester, 'Start Playing');
+    await startChildMode(tester);
 
     await tester.enterText(find.byType(TextField), 'Can we play?');
     await tester.pumpAndSettle();
@@ -967,23 +1264,45 @@ void main() {
   });
 
   testWidgets(
-    'paired device management is next to pairing only after pairing',
+    'completed Hub setup opens parent home with Start Playing without resaving settings',
     (tester) async {
       await tester.pumpWidget(
         PlushPalApp(
           backend: FakeBackend(
             parentConfigured: true,
-            restoredAgeBand: '6-8',
-            restoredCharacterAlias: 'Mochi',
+            restoredAgeBand: null,
+            restoredCharacterAlias: null,
           ),
           platform: FakePlatform(),
         ),
       );
       await tester.pumpAndSettle();
 
-      await openSettings(tester);
-      await tapVisible(tester, 'Magic Voice Box');
-      expect(find.text('Pair phone'), findsOneWidget);
+      expect(find.text('Welcome to PlushBuddy'), findsNothing);
+      expect(find.text('Ready to play'), findsOneWidget);
+      expect(find.text('Start Playing'), findsOneWidget);
+      expect(find.text('Parent Settings'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'phone hub settings expose reconnect only and leave device management to Hub',
+    (tester) async {
+      await tester.pumpWidget(
+        PlushPalApp(
+          backend:
+              FakeBackend(
+                  parentConfigured: true,
+                  restoredAgeBand: '6-8',
+                  restoredCharacterAlias: 'Mochi',
+                )
+                ..stationPaired = false
+                ..stationBaseUrl = null,
+          platform: FakePlatform(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
       expect(find.text('Manage paired devices'), findsNothing);
 
       await tester.pumpWidget(const SizedBox.shrink());
@@ -1002,13 +1321,14 @@ void main() {
       await tester.pumpAndSettle();
 
       await openSettings(tester);
-      await tapVisible(tester, 'Magic Voice Box');
+      await tapVisible(tester, 'PlushBuddy Hub');
       expect(find.text('Reconnect'), findsOneWidget);
-      expect(find.text('Manage paired devices'), findsOneWidget);
-      await tapVisible(tester, 'Manage paired devices');
-      await tester.pumpAndSettle();
-      expect(find.text('Google Pixel Test'), findsOneWidget);
-      expect(find.textContaining('ID 14174000'), findsOneWidget);
+      expect(find.text('Forget this phone'), findsNothing);
+      expect(find.text('Manage paired devices'), findsNothing);
+      expect(
+        find.textContaining('Paired devices and backups are managed'),
+        findsOneWidget,
+      );
     },
   );
 
@@ -1072,11 +1392,14 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('Make Mochi sound magical'), findsOneWidget);
+    expect(find.text('Almost ready'), findsOneWidget);
     await openCharacterSettings(tester, 'Mochi');
-    await tapVisible(tester, 'Buddy voice');
+    final buddyVoiceTile = find.text('Buddy voice').first;
+    await tester.ensureVisible(buddyVoiceTile);
+    await tester.tap(buddyVoiceTile);
+    await tester.pump();
     await tester.tap(find.byType(Checkbox).last);
-    await tester.pumpAndSettle();
+    await tester.pump();
     if (find.byType(TextField).evaluate().isNotEmpty) {
       await tester.enterText(find.byType(TextField).last, '4826');
     }
@@ -1093,11 +1416,17 @@ void main() {
       findsOneWidget,
     );
 
-    await tapVisible(tester, 'Buddy voice');
+    final previewVoiceTile = find.text('Buddy voice').first;
+    await tester.ensureVisible(previewVoiceTile);
+    await tester.tap(previewVoiceTile);
     await tester.pump();
     expect(backend.enrollVoiceCalls, 1);
     expect(backend.previewVoiceCalls, 1);
     expect(find.text('Choose audio file'), findsNothing);
+    expect(
+      find.textContaining('Creating preview audio on PlushBuddy Hub'),
+      findsOneWidget,
+    );
     backend.previewCompleter!.complete();
     await tester.pumpAndSettle();
 
@@ -1106,7 +1435,7 @@ void main() {
     expect(backend.voiceApproved, isTrue);
 
     await returnToHome(tester, depth: 4);
-    await tapVisible(tester, 'Start Playing');
+    await startChildMode(tester);
     expect(find.text('Tap to talk'), findsOneWidget);
   });
 
@@ -1195,9 +1524,12 @@ void main() {
     await openCharacterSettings(tester, 'Buddy');
     expect(find.textContaining('No voice sample uploaded yet'), findsOneWidget);
 
-    await tapVisible(tester, 'Buddy voice');
+    final buddyVoiceTile = find.text('Buddy voice').first;
+    await tester.ensureVisible(buddyVoiceTile);
+    await tester.tap(buddyVoiceTile);
+    await tester.pump();
     await tester.tap(find.byType(Checkbox).last);
-    await tester.pumpAndSettle();
+    await tester.pump();
     await tester.tap(find.text('Choose audio file'));
     await tester.pumpAndSettle();
 
@@ -1280,6 +1612,44 @@ void main() {
     expect(backend.configuredRetentionDays, 7);
   });
 
+  testWidgets('character detail can rename buddy without losing voice status', (
+    tester,
+  ) async {
+    final backend =
+        FakeBackend(
+            parentConfigured: true,
+            restoredAgeBand: '6-8',
+            restoredCharacterAlias: 'Mochi',
+            restoredTraits: const ['gentle'],
+          )
+          ..characterVoices['Mochi'] = const VoiceProfileStatus(
+            enrolled: true,
+            approved: true,
+            runtimeReady: true,
+            durationMilliseconds: 21_000,
+          );
+    await tester.pumpWidget(
+      PlushPalApp(backend: backend, platform: FakePlatform()),
+    );
+    await tester.pumpAndSettle();
+
+    await openCharacterSettings(tester, 'Mochi');
+    await tapVisible(tester, 'Name, personality, and guidance');
+    final nameField = find.byWidgetPredicate(
+      (widget) =>
+          widget is TextField && widget.decoration?.labelText == 'Buddy name',
+    );
+    await tester.ensureVisible(nameField);
+    await tester.enterText(nameField, 'Sheru');
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    expect(backend.configuredCharacterAlias, 'Sheru');
+    expect(backend.characterVoices['Sheru']?.approved, isTrue);
+    expect(backend.characterVoices['Mochi'], isNull);
+    expect(find.textContaining('Sheru was updated'), findsOneWidget);
+  });
+
   testWidgets('parent can change app theme from home screens', (tester) async {
     final backend = FakeBackend(modelReady: true)
       ..voiceApproved = true
@@ -1313,5 +1683,60 @@ void main() {
 
     expect(find.byTooltip('Theme'), findsOneWidget);
     expect(find.byTooltip('Parent Settings'), findsOneWidget);
+  });
+
+  testWidgets('duplicate backend character aliases do not crash home screen', (
+    tester,
+  ) async {
+    final backend =
+        FakeBackend(
+            modelReady: true,
+            restoredAgeBand: '4-5',
+            restoredCharacterAlias: 'QABuddy',
+            restoredTraits: const ['gentle'],
+          )
+          ..voiceApproved = true
+          ..voiceRuntimeReady = true
+          ..stationPaired = true
+          ..additionalCharacters.add(
+            const CharacterConfiguration(
+              alias: 'QABuddy',
+              traits: ['gentle'],
+              parentGuidance: null,
+              voice: VoiceProfileStatus(
+                enrolled: true,
+                approved: true,
+                runtimeReady: true,
+              ),
+              kidId: 'kid-fixture',
+              personaAgeYears: 4,
+            ),
+          );
+
+    await tester.pumpWidget(
+      PlushPalApp(backend: backend, platform: FakePlatform()),
+    );
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('QABuddy'), findsWidgets);
+  });
+
+  testWidgets('first launch migrates old theme choice back to system default', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({'plushbuddy.theme_mode': 'light'});
+
+    await tester.pumpWidget(
+      PlushPalApp(backend: FakeBackend(), platform: FakePlatform()),
+    );
+    await tester.pumpAndSettle();
+
+    final preferences = await SharedPreferences.getInstance();
+    expect(preferences.getString('plushbuddy.theme_mode'), 'system');
+    expect(
+      preferences.getBool('plushbuddy.theme_mode.v2_system_default_migrated'),
+      isTrue,
+    );
   });
 }

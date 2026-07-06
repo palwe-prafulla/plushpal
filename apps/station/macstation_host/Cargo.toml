@@ -17,10 +17,13 @@ plushpal-desktop-gateway = { path = "../../../crates/desktop_gateway" }
 plushpal-core-domain = { path = "../../../crates/core_domain" }
 plushpal-parent-controls = { path = "../../../crates/parent_controls" }
 plushpal-character-voice = { path = "../../../crates/character_voice" }
+plushpal-policy-engine = { path = "../../../crates/policy_engine" }
 plushpal-application = { path = "../../../crates/application", optional = true }
+plushpal-provider-api = { path = "../../../crates/provider_api", optional = true }
 plushpal-llama-native-ffi = { path = "../../../crates/llama_native_ffi", optional = true }
 plushpal-local-llm-llamacpp = { path = "../../../crates/local_llm_llamacpp", optional = true }
 plushpal-model-lifecycle = { path = "../../../crates/model_lifecycle", optional = true }
+plushpal-device-capability = { path = "../../../crates/device_capability", optional = true }
 plushpal-encrypted-storage = { path = "../../../crates/encrypted_storage", optional = true }
 plushpal-platform-key-vault = { path = "../../../crates/platform_key_vault", optional = true }
 serde.workspace = true
@@ -34,13 +37,20 @@ tokio.workspace = true
 default = []
 native-runtime = [
     "dep:plushpal-application",
+    "dep:plushpal-provider-api",
     "dep:plushpal-llama-native-ffi",
     "dep:plushpal-local-llm-llamacpp",
     "dep:plushpal-model-lifecycle",
+    "dep:plushpal-device-capability",
     "dep:plushpal-encrypted-storage",
     "dep:plushpal-platform-key-vault",
     "dep:sherpa-onnx",
 ]
+
+[[bin]]
+name = "model_bakeoff"
+path = "src/bin/model_bakeoff.rs"
+required-features = ["native-runtime"]
 
 [dev-dependencies]
 http-body-util.workspace = true
