@@ -106,28 +106,27 @@ flowchart TB
 
 In both modes, raw voice samples and generated toy voice audio stay local.
 
-## Download the current prerelease
+## Download the current release
 
 Large app binaries are not committed into the git repository. The source repo
 stays lightweight, while downloadable dev artifacts are published on GitHub
 Releases:
 
-**[Download PlushBuddy v0.1.0-dev.1 artifacts](https://github.com/palwe-prafulla/plushpal/releases/tag/v0.1.0-dev.1)**
+**[Download PlushBuddy v2 artifacts](https://github.com/palwe-prafulla/plushpal/releases/tag/v2)**
 
 That release includes:
 
-- macOS Hub + Mac client DMG, split into `.part-aa`, `.part-ab`, ... files
-  because the DMG is large;
+- macOS PlushBuddy Hub DMG;
 - Android debug APK;
 - iPhone simulator app archive;
 - unsigned iPhone device app archive;
 - release notes and SHA-256 checksums.
 
-To reassemble the macOS DMG after downloading all DMG parts:
+Older historical snapshots are kept as separate Git refs:
 
-```sh
-cat PlushBuddy-*.dmg.part-* > PlushBuddy-0.1.0-macos.dmg
-```
+- `v0` — first development artifact release.
+- `v1` — intermediate Hub architecture checkpoint.
+- `v2` — current lightweight PlushBuddy Hub architecture.
 
 ## Quick start
 
@@ -200,9 +199,9 @@ Start here:
 
 PlushBuddy is released under the [MIT License](LICENSE).
 
-## Current prerelease and Hub architecture
+## Current release and Hub architecture
 
-The current `v0.1.0-dev.1` prerelease is buildable and demonstrates the product
+The current `v2` release is buildable and demonstrates the product
 flow with Android, iPhone simulator, Mac client, local browser, and the macOS
 PlushBuddy Hub runtime.
 
@@ -686,10 +685,10 @@ Generated evidence is written under `~/Downloads/PlushPal/test-results` by defau
 
 ## Remaining production milestones
 
-The current prerelease can be built locally and publishes downloadable dev
+The current release can be built locally and publishes downloadable dev
 artifacts for Hub/Mac, Android, and iPhone simulator/unsigned device
 testing. The items below are still valid because they are product-release
-hardening work beyond the current `v0.1.0-dev.1` release:
+hardening work beyond the current `v2` release:
 
 1. Run physical iPhone E2E with QR pairing, microphone, local-network
    permission, M4A upload, preview, approval, and child conversation.
