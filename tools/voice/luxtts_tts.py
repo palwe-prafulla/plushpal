@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small LuxTTS wrapper for PlushBuddy voice bakeoffs."""
+"""Small LuxTTS wrapper for ToyTalk voice bakeoffs."""
 
 from __future__ import annotations
 

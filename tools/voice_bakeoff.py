@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate local voice-cloning bakeoff artifacts for PlushBuddy.
+"""Generate local voice-cloning bakeoff artifacts for ToyTalk.
 
 This is intentionally outside the app runtime. It compares candidate engines
 against the same toy samples and generated phrases, then writes WAV files and a
@@ -86,7 +86,7 @@ def chatterbox_env(output_dir: Path) -> dict[str, str]:
             "XDG_CACHE_HOME": str(output_dir / "cache"),
         }
     )
-    bundled_hf = ROOT / "dist/macos/PlushBuddy.app/Contents/Resources/model-cache/huggingface"
+    bundled_hf = ROOT / "dist/macos/ToyTalk.app/Contents/Resources/model-cache/huggingface"
     if bundled_hf.exists():
         env.update(
             {
@@ -102,7 +102,7 @@ def chatterbox_env(output_dir: Path) -> dict[str, str]:
 def generate_chatterbox(reference: Path, text: str, output: Path, output_dir: Path) -> None:
     python = ROOT / ".venv-chatterbox/bin/python"
     if not python.exists():
-        python = ROOT / "dist/macos/PlushBuddy.app/Contents/Resources/python/bin/python3"
+        python = ROOT / "dist/macos/ToyTalk.app/Contents/Resources/python/bin/python3"
     script = ROOT / "tools/voice/chatterbox_tts.py"
     run(
         [
@@ -166,7 +166,7 @@ def generate_f5(
     if not cli.exists():
         raise FileNotFoundError(
             f"{cli} is missing. Install with: "
-            "dist/macos/PlushBuddy.app/Contents/Resources/python/bin/python3 -m venv .venv-f5tts "
+            "dist/macos/ToyTalk.app/Contents/Resources/python/bin/python3 -m venv .venv-f5tts "
             "&& .venv-f5tts/bin/python -m pip install f5-tts"
         )
     temporary = output_dir / "tmp" / "f5"
@@ -349,7 +349,7 @@ def write_report(output_dir: Path, results: list[RunResult]) -> None:
     data = output_dir / "summary.json"
     data.write_text(json.dumps([result.__dict__ for result in results], indent=2), encoding="utf-8")
     lines = [
-        "# PlushBuddy voice bakeoff",
+        "# ToyTalk voice bakeoff",
         "",
         "Listen for baby/toy character essence, not only speaker similarity:",
         "",
@@ -373,7 +373,7 @@ def write_report(output_dir: Path, results: list[RunResult]) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run PlushBuddy local voice bakeoff")
+    parser = argparse.ArgumentParser(description="Run ToyTalk local voice bakeoff")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument(
         "--engines",

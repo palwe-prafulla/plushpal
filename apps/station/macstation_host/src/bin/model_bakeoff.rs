@@ -399,6 +399,7 @@ fn call_gemini(
         parent_guidance: Some("Buddy is a tiny plush puppy who talks like a gentle preschool friend. He loves blocks, rainbows, cozy blankets, and pretend puppy adventures.".to_owned()),
         recent_turns: Vec::new(),
         current_text: prompt.text.clone(),
+        repair_instruction: None,
         max_response_characters: policy.max_output_characters,
     };
     let contract = serde_json::to_string(&ModelPromptContract::from_request(
@@ -460,6 +461,7 @@ fn request_for_prompt(prompt: &BakeoffPrompt) -> BoundedConversationRequest {
         parent_guidance: Some("Buddy is a tiny plush puppy who talks like a gentle preschool friend. He loves blocks, rainbows, cozy blankets, and pretend puppy adventures.".to_owned()),
         recent_turns: Vec::new(),
         current_text: prompt.text.clone(),
+        repair_instruction: None,
         max_response_characters: policy.max_output_characters,
     }
 }

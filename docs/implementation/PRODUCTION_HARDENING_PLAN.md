@@ -4,12 +4,12 @@ Last updated: 2026-07-05
 Scope: finish the 10 public-production-readiness items identified after the
 initial GitHub publication.
 
-Architecture note: PlushBuddy now uses the **PlushBuddy Hub** model, where the
+Architecture note: ToyTalk now uses the **ToyTalk Hub** model, where the
 local backend owns storage, business logic, reasoning orchestration, STT
 fallback, and LuxTTS. Some code paths still use the legacy `macstation_host`
 directory name, but product-facing docs call this component the Hub.
 
-This plan is intentionally practical. The goal is not to make PlushBuddy a
+This plan is intentionally practical. The goal is not to make ToyTalk a
 hosted commercial product overnight; the goal is to make the public repo stable,
 tryable, well-instrumented, and honest enough that a stranger can clone it,
 understand it, run checks, and exercise core flows without hand-holding.
@@ -54,7 +54,7 @@ Reasoning:
 ### Already done
 
 - `make doctor` validates local toolchain and repo prerequisites.
-- Public artifacts build outside the repo under `~/Downloads/PlushPal`.
+- Public artifacts build outside the repo under `~/Downloads/ToyTalk`.
 - Public repo hygiene checks prevent common secrets/private artifacts.
 - Packaged LuxTTS installer writes a runtime marker with installer version and
   script/requirements checksums.
@@ -279,7 +279,7 @@ Done for baseline clone health.
 ### Already done
 
 - `make public-artifacts` builds local artifacts outside the repo.
-- `make release-bundle` creates `~/Downloads/PlushPal/release/<version>/`.
+- `make release-bundle` creates `~/Downloads/ToyTalk/release/<version>/`.
 - Release bundles include `SHA256SUMS`.
 - Release bundles include generated `RELEASE_NOTES.md` that labels artifacts as
   local unsigned/dev outputs.
@@ -510,7 +510,7 @@ Deliver:
 - Browser/Mac client scripted journey.
 - Android scripted journey.
 - iOS simulator best-effort journey.
-- Stable result artifacts under `~/Downloads/PlushPal/test-results`.
+- Stable result artifacts under `~/Downloads/ToyTalk/test-results`.
 
 Exit gate:
 
@@ -538,7 +538,7 @@ Exit gate:
 ```sh
 make public-artifacts
 make release-local
-shasum -a 256 -c ~/Downloads/PlushPal/artifacts/SHA256SUMS
+shasum -a 256 -c ~/Downloads/ToyTalk/artifacts/SHA256SUMS
 ```
 
 ### Milestone F — Deeper privacy and safety

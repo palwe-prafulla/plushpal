@@ -1,10 +1,10 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:plushpal_ui/src/platform/platform_bridge.dart';
+import 'package:toytalk_ui/src/platform/platform_bridge.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  const channel = MethodChannel('com.plushpal/test-platform');
+  const channel = MethodChannel('com.toytalk/test-platform');
   const bridge = MethodChannelPlatformBridge(channel: channel);
   final calls = <MethodCall>[];
 

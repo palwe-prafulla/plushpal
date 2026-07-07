@@ -52,7 +52,7 @@ if grep -RIn 'qa/results/' README.md docs/architecture docs/release docs/product
 fi
 
 if grep -RIn 'audio-samples/' README.md docs/architecture docs/release docs/product 2>/dev/null \
-  | grep -v 'Downloads/PlushPal/private/audio-samples' \
+  | grep -v 'Downloads/ToyTalk/private/audio-samples' \
   | grep -v 'Local-only/private folders' \
   | grep -v 'Ignored legacy/dev paths' \
   | grep -v 'ignored' \

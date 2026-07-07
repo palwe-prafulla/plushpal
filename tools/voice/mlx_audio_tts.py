@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small MLX-Audio TTS wrapper for PlushBuddy voice bakeoffs."""
+"""Small MLX-Audio TTS wrapper for ToyTalk voice bakeoffs."""
 
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ def _run(args: argparse.Namespace) -> None:
     if not args.strict:
         model = load_model(args.model, strict=False)
 
-    with tempfile.TemporaryDirectory(prefix="plushpal-mlx-audio-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="toytalk-mlx-audio-") as tmp:
         tmp_path = Path(tmp)
         generate_audio(
             text=args.text,

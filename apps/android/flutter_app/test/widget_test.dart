@@ -3,9 +3,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:plushpal_ui/src/app.dart';
-import 'package:plushpal_ui/src/backend/backend_client.dart';
-import 'package:plushpal_ui/src/platform/platform_bridge.dart';
+import 'package:toytalk_ui/src/app.dart';
+import 'package:toytalk_ui/src/backend/backend_client.dart';
+import 'package:toytalk_ui/src/platform/platform_bridge.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const _fixtureWav = <int>[
@@ -637,7 +637,7 @@ Future<void> completeBasicOnboarding(
   String birthdate = '01/01/2021',
 }) async {
   await tester.pumpAndSettle();
-  if (find.text('Welcome to PlushBuddy').evaluate().isEmpty) {
+  if (find.text('Welcome to ToyTalk').evaluate().isEmpty) {
     return;
   }
   await tapVisible(tester, 'Parent Settings');
@@ -666,14 +666,18 @@ class FakePlatform implements PlatformBridge {
     this.transcript = 'Why is the sky blue?',
     this.listenError,
     this.recordError,
+    this.playWavError,
     Uint8List? recordedWavBytes,
   }) : recordedWavBytes = recordedWavBytes ?? Uint8List.fromList(_fixtureWav);
 
   final String transcript;
   final PlatformException? listenError;
   final PlatformException? recordError;
+  final Object? playWavError;
   final Uint8List recordedWavBytes;
   String? spokenText;
+  int playWavCalls = 0;
+  int speakCalls = 0;
 
   @override
   bool get supportsSpeech => true;
@@ -713,10 +717,19 @@ class FakePlatform implements PlatformBridge {
   }
 
   @override
-  Future<void> playWavBytes(Uint8List wavBytes) async {}
+  Future<void> playWavBytes(Uint8List wavBytes) async {
+    playWavCalls += 1;
+    final error = playWavError;
+    if (error != null) {
+      throw error;
+    }
+  }
 
   @override
-  Future<void> speak(String text) async => spokenText = text;
+  Future<void> speak(String text) async {
+    speakCalls += 1;
+    spokenText = text;
+  }
 
   @override
   Future<String> storeSecret(String label, String value) async => 'secret-ref';
@@ -731,12 +744,12 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(
-      PlushPalApp(
+      ToyTalkApp(
         backend: FakeBackend(seedFixtureKid: false),
         platform: FakePlatform(),
       ),
     );
-    expect(find.text('Welcome to PlushBuddy'), findsOneWidget);
+    expect(find.text('Welcome to ToyTalk'), findsOneWidget);
     await completeBasicOnboarding(tester);
     expect(find.text('Ready to play'), findsOneWidget);
     await startChildMode(tester);
@@ -747,7 +760,7 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(
-      PlushPalApp(
+      ToyTalkApp(
         backend: FakeBackend(seedFixtureKid: false),
         platform: FakePlatform(),
       ),
@@ -775,15 +788,15 @@ void main() {
     expect(find.text('Tap to talk'), findsOneWidget);
   });
 
-  testWidgets('PlushBuddy logo renders the shared teddy mark', (tester) async {
+  testWidgets('ToyTalk logo renders the shared teddy mark', (tester) async {
     await tester.pumpWidget(
-      const MaterialApp(home: Scaffold(body: PlushBuddyLogo())),
+      const MaterialApp(home: Scaffold(body: ToyTalkLogo())),
     );
 
-    expect(find.byType(PlushBuddyLogo), findsOneWidget);
+    expect(find.byType(ToyTalkLogo), findsOneWidget);
     expect(
       find.descendant(
-        of: find.byType(PlushBuddyLogo),
+        of: find.byType(ToyTalkLogo),
         matching: find.byType(CustomPaint),
       ),
       findsAtLeastNWidgets(1),
@@ -793,7 +806,7 @@ void main() {
 
   testWidgets('setup checklist uses playful status badges', (tester) async {
     await tester.pumpWidget(
-      PlushPalApp(
+      ToyTalkApp(
         backend: FakeBackend(modelReady: false),
         platform: FakePlatform(),
       ),
@@ -809,7 +822,7 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(
-      PlushPalApp(
+      ToyTalkApp(
         backend: FakeBackend(seedFixtureKid: false),
         platform: FakePlatform(),
       ),
@@ -838,7 +851,7 @@ void main() {
       ..voiceApproved = false;
     backend.savedKids.clear();
     await tester.pumpWidget(
-      PlushPalApp(backend: backend, platform: FakePlatform()),
+      ToyTalkApp(backend: backend, platform: FakePlatform()),
     );
 
     await tapVisible(tester, 'Parent Settings');
@@ -876,7 +889,7 @@ void main() {
         ..voiceApproved = false;
       backend.savedKids.clear();
       await tester.pumpWidget(
-        PlushPalApp(backend: backend, platform: FakePlatform()),
+        ToyTalkApp(backend: backend, platform: FakePlatform()),
       );
 
       await tapVisible(tester, 'Parent Settings');
@@ -953,7 +966,7 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(
-      PlushPalApp(
+      ToyTalkApp(
         backend: FakeBackend(parentConfigured: false),
         platform: FakePlatform(),
       ),
@@ -973,7 +986,7 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(
-      PlushPalApp(backend: FakeBackend(), platform: FakePlatform()),
+      ToyTalkApp(backend: FakeBackend(), platform: FakePlatform()),
     );
     await completeBasicOnboarding(tester, birthdate: '01/01/2017');
     await startChildMode(tester);
@@ -989,7 +1002,7 @@ void main() {
   ) async {
     final backend = FakeBackend();
     final platform = FakePlatform();
-    await tester.pumpWidget(PlushPalApp(backend: backend, platform: platform));
+    await tester.pumpWidget(ToyTalkApp(backend: backend, platform: platform));
     await completeBasicOnboarding(tester);
     await startChildMode(tester);
 
@@ -1008,7 +1021,7 @@ void main() {
     (tester) async {
       final backend = FakeBackend()..synthesizeCompleter = Completer<void>();
       await tester.pumpWidget(
-        PlushPalApp(backend: backend, platform: FakePlatform()),
+        ToyTalkApp(backend: backend, platform: FakePlatform()),
       );
       await completeBasicOnboarding(tester);
       await startChildMode(tester);
@@ -1031,6 +1044,30 @@ void main() {
     },
   );
 
+  testWidgets(
+    'approved buddy voice playback failure does not fall back to system speech',
+    (tester) async {
+      final backend = FakeBackend();
+      final platform = FakePlatform(playWavError: StateError('aborted'));
+      await tester.pumpWidget(
+        ToyTalkApp(backend: backend, platform: platform),
+      );
+      await completeBasicOnboarding(tester);
+      await startChildMode(tester);
+
+      await tester.enterText(find.byType(TextField), 'Can we play?');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Send message'));
+      await tester.pumpAndSettle();
+
+      expect(backend.clonedSpeech, 'Blue light scatters more in the sky.');
+      expect(platform.playWavCalls, 1);
+      expect(platform.speakCalls, 0);
+      expect(platform.spokenText, isNull);
+      expect(find.text('Blue light scatters more in the sky.'), findsOneWidget);
+    },
+  );
+
   testWidgets('child mode is blocked until buddy voice is approved', (
     tester,
   ) async {
@@ -1039,7 +1076,7 @@ void main() {
       ..voiceApproved = false
       ..voiceRuntimeReady = true;
     await tester.pumpWidget(
-      PlushPalApp(backend: backend, platform: FakePlatform()),
+      ToyTalkApp(backend: backend, platform: FakePlatform()),
     );
     await completeBasicOnboarding(tester);
 
@@ -1054,7 +1091,7 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(
-      PlushPalApp(backend: FakeBackend(), platform: FakePlatform()),
+      ToyTalkApp(backend: FakeBackend(), platform: FakePlatform()),
     );
     await completeBasicOnboarding(tester);
     await startChildMode(tester);
@@ -1071,7 +1108,7 @@ void main() {
   ) async {
     final backend = FakeBackend();
     final platform = FakePlatform(transcript: 'Tell me about rainbows');
-    await tester.pumpWidget(PlushPalApp(backend: backend, platform: platform));
+    await tester.pumpWidget(ToyTalkApp(backend: backend, platform: platform));
     await completeBasicOnboarding(tester);
     await startChildMode(tester);
 
@@ -1091,7 +1128,7 @@ void main() {
         message: 'On-device speech recognition is unavailable.',
       ),
     );
-    await tester.pumpWidget(PlushPalApp(backend: backend, platform: platform));
+    await tester.pumpWidget(ToyTalkApp(backend: backend, platform: platform));
     await completeBasicOnboarding(tester);
     await startChildMode(tester);
 
@@ -1118,7 +1155,7 @@ void main() {
         message: 'Microphone recording failed',
       ),
     );
-    await tester.pumpWidget(PlushPalApp(backend: backend, platform: platform));
+    await tester.pumpWidget(ToyTalkApp(backend: backend, platform: platform));
     await completeBasicOnboarding(tester);
     await startChildMode(tester);
 
@@ -1139,7 +1176,7 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(
-      PlushPalApp(
+      ToyTalkApp(
         backend: FakeBackend(modelReady: false),
         platform: FakePlatform(),
       ),
@@ -1165,7 +1202,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(
       find.text(
-        'Finish Cloud AI or Local AI setup in PlushBuddy Hub before continuing.',
+        'Finish Cloud AI or Local AI setup in ToyTalk Hub before continuing.',
       ),
       findsOneWidget,
     );
@@ -1176,7 +1213,7 @@ void main() {
   ) async {
     final backend = FakeBackend(modelReady: false);
     await tester.pumpWidget(
-      PlushPalApp(backend: backend, platform: FakePlatform()),
+      ToyTalkApp(backend: backend, platform: FakePlatform()),
     );
     await backend.installLocalModel();
 
@@ -1186,14 +1223,14 @@ void main() {
 
   testWidgets('child mode exits directly to parent home', (tester) async {
     await tester.pumpWidget(
-      PlushPalApp(backend: FakeBackend(), platform: FakePlatform()),
+      ToyTalkApp(backend: FakeBackend(), platform: FakePlatform()),
     );
     await completeBasicOnboarding(tester);
     await startChildMode(tester);
 
     await tapVisible(tester, 'Done');
     await tester.pumpAndSettle();
-    expect(find.text('PlushBuddy'), findsOneWidget);
+    expect(find.text('ToyTalk'), findsOneWidget);
     expect(find.text('Tap to talk'), findsNothing);
   });
 
@@ -1220,7 +1257,7 @@ void main() {
             ),
           );
     await tester.pumpWidget(
-      PlushPalApp(backend: backend, platform: FakePlatform()),
+      ToyTalkApp(backend: backend, platform: FakePlatform()),
     );
     await tester.pumpAndSettle();
     await startChildMode(tester);
@@ -1249,7 +1286,7 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(
-      PlushPalApp(
+      ToyTalkApp(
         backend: FakeBackend(
           parentConfigured: true,
           restoredAgeBand: '6-8',
@@ -1259,7 +1296,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('PlushBuddy'), findsOneWidget);
+    expect(find.text('ToyTalk'), findsOneWidget);
     expect(find.text('Mochi'), findsOneWidget);
   });
 
@@ -1267,7 +1304,7 @@ void main() {
     'completed Hub setup opens parent home with Start Playing without resaving settings',
     (tester) async {
       await tester.pumpWidget(
-        PlushPalApp(
+        ToyTalkApp(
           backend: FakeBackend(
             parentConfigured: true,
             restoredAgeBand: null,
@@ -1278,7 +1315,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Welcome to PlushBuddy'), findsNothing);
+      expect(find.text('Welcome to ToyTalk'), findsNothing);
       expect(find.text('Ready to play'), findsOneWidget);
       expect(find.text('Start Playing'), findsOneWidget);
       expect(find.text('Parent Settings'), findsNothing);
@@ -1289,7 +1326,7 @@ void main() {
     'phone hub settings expose reconnect only and leave device management to Hub',
     (tester) async {
       await tester.pumpWidget(
-        PlushPalApp(
+        ToyTalkApp(
           backend:
               FakeBackend(
                   parentConfigured: true,
@@ -1316,12 +1353,12 @@ void main() {
             ..stationPaired = true
             ..voiceRuntimeReady = true;
       await tester.pumpWidget(
-        PlushPalApp(backend: pairedBackend, platform: FakePlatform()),
+        ToyTalkApp(backend: pairedBackend, platform: FakePlatform()),
       );
       await tester.pumpAndSettle();
 
       await openSettings(tester);
-      await tapVisible(tester, 'PlushBuddy Hub');
+      await tapVisible(tester, 'ToyTalk Hub');
       expect(find.text('Reconnect'), findsOneWidget);
       expect(find.text('Forget this phone'), findsNothing);
       expect(find.text('Manage paired devices'), findsNothing);
@@ -1342,7 +1379,7 @@ void main() {
         restoredTraits: const ['gentle'],
       );
       await tester.pumpWidget(
-        PlushPalApp(backend: backend, platform: FakePlatform()),
+        ToyTalkApp(backend: backend, platform: FakePlatform()),
       );
       await tester.pumpAndSettle();
 
@@ -1388,7 +1425,7 @@ void main() {
           ..enrollCompleter = Completer<void>()
           ..previewCompleter = Completer<void>();
     await tester.pumpWidget(
-      PlushPalApp(backend: backend, platform: FakePlatform()),
+      ToyTalkApp(backend: backend, platform: FakePlatform()),
     );
     await tester.pumpAndSettle();
 
@@ -1424,7 +1461,7 @@ void main() {
     expect(backend.previewVoiceCalls, 1);
     expect(find.text('Choose audio file'), findsNothing);
     expect(
-      find.textContaining('Creating preview audio on PlushBuddy Hub'),
+      find.textContaining('Creating preview audio on ToyTalk Hub'),
       findsOneWidget,
     );
     backend.previewCompleter!.complete();
@@ -1475,7 +1512,7 @@ void main() {
           );
 
     await tester.pumpWidget(
-      PlushPalApp(backend: backend, platform: FakePlatform()),
+      ToyTalkApp(backend: backend, platform: FakePlatform()),
     );
     await tester.pumpAndSettle();
 
@@ -1517,7 +1554,7 @@ void main() {
           );
 
     await tester.pumpWidget(
-      PlushPalApp(backend: backend, platform: FakePlatform()),
+      ToyTalkApp(backend: backend, platform: FakePlatform()),
     );
     await tester.pumpAndSettle();
 
@@ -1544,7 +1581,7 @@ void main() {
   ) async {
     final backend = FakeBackend();
     await tester.pumpWidget(
-      PlushPalApp(backend: backend, platform: FakePlatform()),
+      ToyTalkApp(backend: backend, platform: FakePlatform()),
     );
     await completeBasicOnboarding(tester);
 
@@ -1558,7 +1595,7 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Delete all'));
     await tester.pumpAndSettle();
     expect(backend.localDataDeleted, isTrue);
-    expect(find.text('Welcome to PlushBuddy'), findsOneWidget);
+    expect(find.text('Welcome to ToyTalk'), findsOneWidget);
   });
 
   testWidgets('parent edits privacy settings and reviews retained history', (
@@ -1580,7 +1617,7 @@ void main() {
             ),
           );
     await tester.pumpWidget(
-      PlushPalApp(backend: backend, platform: FakePlatform()),
+      ToyTalkApp(backend: backend, platform: FakePlatform()),
     );
     await tester.pumpAndSettle();
 
@@ -1629,7 +1666,7 @@ void main() {
             durationMilliseconds: 21_000,
           );
     await tester.pumpWidget(
-      PlushPalApp(backend: backend, platform: FakePlatform()),
+      ToyTalkApp(backend: backend, platform: FakePlatform()),
     );
     await tester.pumpAndSettle();
 
@@ -1656,7 +1693,7 @@ void main() {
       ..voiceRuntimeReady = true
       ..stationPaired = true;
     await tester.pumpWidget(
-      PlushPalApp(backend: backend, platform: FakePlatform()),
+      ToyTalkApp(backend: backend, platform: FakePlatform()),
     );
     await tester.pumpAndSettle();
 
@@ -1714,7 +1751,7 @@ void main() {
           );
 
     await tester.pumpWidget(
-      PlushPalApp(backend: backend, platform: FakePlatform()),
+      ToyTalkApp(backend: backend, platform: FakePlatform()),
     );
     await tester.pumpAndSettle();
 
@@ -1725,17 +1762,17 @@ void main() {
   testWidgets('first launch migrates old theme choice back to system default', (
     tester,
   ) async {
-    SharedPreferences.setMockInitialValues({'plushbuddy.theme_mode': 'light'});
+    SharedPreferences.setMockInitialValues({'toytalk.theme_mode': 'light'});
 
     await tester.pumpWidget(
-      PlushPalApp(backend: FakeBackend(), platform: FakePlatform()),
+      ToyTalkApp(backend: FakeBackend(), platform: FakePlatform()),
     );
     await tester.pumpAndSettle();
 
     final preferences = await SharedPreferences.getInstance();
-    expect(preferences.getString('plushbuddy.theme_mode'), 'system');
+    expect(preferences.getString('toytalk.theme_mode'), 'system');
     expect(
-      preferences.getBool('plushbuddy.theme_mode.v2_system_default_migrated'),
+      preferences.getBool('toytalk.theme_mode.v2_system_default_migrated'),
       isTrue,
     );
   });

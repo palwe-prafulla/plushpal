@@ -38,6 +38,7 @@ pub struct BoundedConversationRequest {
     pub parent_guidance: Option<String>,
     pub recent_turns: Vec<ConversationTurn>,
     pub current_text: String,
+    pub repair_instruction: Option<String>,
     pub max_response_characters: usize,
 }
 

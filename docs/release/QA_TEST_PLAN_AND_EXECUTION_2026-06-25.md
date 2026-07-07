@@ -1,7 +1,7 @@
-# PlushBuddy QA Test Plan and Execution Report
+# ToyTalk QA Test Plan and Execution Report
 
 Date: 2026-06-25  
-Scope: public-repo artifact build, PlushBuddy Hub, Mac client, browser client,
+Scope: public-repo artifact build, ToyTalk Hub, Mac client, browser client,
 Android real device, iPhone simulator, shared unit tests, and LuxTTS voice E2E.
 
 ## Executive summary
@@ -12,10 +12,10 @@ can run without a cloud provider key.
 The tested release shape is:
 
 - source checkout stays clean;
-- public build/test outputs are written under `~/Downloads/PlushPal`;
-- `make public-artifacts` builds PlushBuddy Hub, Mac client, Android APK, iPhone
+- public build/test outputs are written under `~/Downloads/ToyTalk`;
+- `make public-artifacts` builds ToyTalk Hub, Mac client, Android APK, iPhone
   simulator app, and unsigned iPhone device app;
-- PlushBuddy Hub can enroll/approve/synthesize separate LuxTTS voices for the three
+- ToyTalk Hub can enroll/approve/synthesize separate LuxTTS voices for the three
   current M4A samples;
 - Android real-device install/launch and debug Hub pairing pass;
 - iPhone simulator install/launch passes;
@@ -32,39 +32,39 @@ and Android child-mode typed chat through Hub/Gemini.
 Public artifacts:
 
 ```text
-~/Downloads/PlushPal/artifacts/macos/PlushBuddy Hub.app
-~/Downloads/PlushPal/artifacts/macos/PlushBuddy.app
-~/Downloads/PlushPal/artifacts/macos/PlushBuddy-0.1.0-macos.dmg
-~/Downloads/PlushPal/artifacts/macos/PlushBuddy-0.1.0-macos.zip
-~/Downloads/PlushPal/artifacts/android/PlushBuddy-debug.apk
-~/Downloads/PlushPal/artifacts/ios/PlushBuddy-iPhoneSimulator.app
-~/Downloads/PlushPal/artifacts/ios/PlushBuddy-iPhoneOS-unsigned.app
+~/Downloads/ToyTalk/artifacts/macos/ToyTalk Hub.app
+~/Downloads/ToyTalk/artifacts/macos/ToyTalk.app
+~/Downloads/ToyTalk/artifacts/macos/ToyTalk-v2-macos.dmg
+~/Downloads/ToyTalk/artifacts/macos/ToyTalk-v2-macos.zip
+~/Downloads/ToyTalk/artifacts/android/ToyTalk-debug.apk
+~/Downloads/ToyTalk/artifacts/ios/ToyTalk-iPhoneSimulator.app
+~/Downloads/ToyTalk/artifacts/ios/ToyTalk-iPhoneOS-unsigned.app
 ```
 
 QA evidence:
 
 ```text
-~/Downloads/PlushPal/test-results
+~/Downloads/ToyTalk/test-results
 ```
 
 Private local samples were moved outside the repository:
 
 ```text
-~/Downloads/PlushPal/private/audio-samples
+~/Downloads/ToyTalk/private/audio-samples
 ```
 
 ## Current execution results
 
 | Area | Command / check | Result | Evidence |
 |---|---|---:|---|
-| Public artifact build | `make public-artifacts` | PASS | `~/Downloads/PlushPal/artifacts` |
+| Public artifact build | `make public-artifacts` | PASS | `~/Downloads/ToyTalk/artifacts` |
 | Local quality gate | `qa/automation/run_local_quality_gate.sh` | PASS | `local-quality-20260625-212532` |
 | Hub API smoke | `qa/automation/macstation_api_smoke.py` | PASS | `macstation-api-20260625-181750`; script name is legacy |
 | Hub demo voice E2E | `qa/automation/macstation_api_smoke.py --voice-engine demo --synthesize --sample ...` | PASS | `macstation-api-20260625-212730`; synthetic fast-path validates enrollment/approval/synthesis plumbing without LuxTTS. |
 | Hub LuxTTS E2E | `qa/automation/macstation_api_smoke.py --voice-engine luxtts --synthesize --sample ...` | PASS | `macstation-api-20260625-182107` |
 | Packaged Hub launch/readiness | Packaged app launch/log readiness smoke | PASS | `macstation-packaged-20260625-182639`; evidence folder uses legacy name |
 | Browser client through packaged Hub | Hub-served Flutter UI render smoke | PASS | `packaged-station-clients-20260625-182741/browser-report.json` |
-| Mac client through packaged Hub | Packaged `PlushBuddy.app --station-url ...` | PASS | `packaged-station-clients-20260625-182741/mac-client-status.txt` |
+| Mac client through packaged Hub | Packaged `ToyTalk.app --station-url ...` | PASS | `packaged-station-clients-20260625-182741/mac-client-status.txt` |
 | Android real device install/launch | `qa/automation/android_device_smoke.sh` | PASS | `android-device-20260625-183045` |
 | Android Hub pairing | `qa/automation/android_station_pairing_smoke.sh` | PASS | `android-station-pairing-20260625-183121`; script name is legacy |
 | iPhone simulator install/launch | `qa/automation/ios_simulator_smoke.sh` | PASS | `ios-simulator-20260625-183045` |
@@ -72,7 +72,7 @@ Private local samples were moved outside the repository:
 ## Local quality gate coverage
 
 `qa/automation/run_local_quality_gate.sh` runs from an external test workspace
-and writes logs under `~/Downloads/PlushPal/test-results`.
+and writes logs under `~/Downloads/ToyTalk/test-results`.
 
 It covers:
 
@@ -106,7 +106,7 @@ For each character, the script verified:
 
 The Android real-device smoke was run against the connected Pixel 10 Pro. It
 installed the externally built APK, cleared app data, launched the app, captured
-UI dump/screenshot evidence, and verified expected PlushBuddy welcome/settings
+UI dump/screenshot evidence, and verified expected ToyTalk welcome/settings
 text. The debug Hub-pairing smoke also passed using ADB reverse and the
 debug-only pairing intent.
 
@@ -120,7 +120,7 @@ physical device.
 ### Browser
 
 The browser smoke loaded the packaged Hub bootstrap URL in Google Chrome and
-verified the PlushBuddy title plus Flutter-rendered UI. A previous CSP
+verified the ToyTalk title plus Flutter-rendered UI. A previous CSP
 `base-uri 'none'` warning was fixed by allowing `base-uri 'self'`, which matches
 Flutter's local `<base href="/">` behavior while still blocking external base
 URI injection.
@@ -138,7 +138,7 @@ Completed before this report:
 - moved private audio samples out of the repository;
 - expanded `.gitignore` for secrets, model caches, venvs, local samples, build
   outputs, QA results, and generated platform files;
-- moved generated build/test outputs to `~/Downloads/PlushPal`;
+- moved generated build/test outputs to `~/Downloads/ToyTalk`;
 - added `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`, and `THIRD_PARTY.md`;
 - added/updated public build and QA scripts to use external artifact paths.
 

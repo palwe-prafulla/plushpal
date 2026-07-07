@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>PlushBuddy uses the microphone only while the child taps to talk.</string>
+	<string>ToyTalk uses the microphone only while the child taps to talk.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>PlushBuddy converts the child&apos;s speech to text for the toy conversation.</string>
+	<string>ToyTalk converts the child&apos;s speech to text for the toy conversation.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>PlushBuddy uses the camera only to scan the Hub pairing QR code.</string>
+	<string>ToyTalk uses the camera only to scan the Hub pairing QR code.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>PlushBuddy connects to PlushBuddy Hub on your local Wi-Fi for private toy voice generation.</string>
+	<string>ToyTalk connects to ToyTalk Hub on your local Wi-Fi for private toy voice generation.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
@@ -20,7 +20,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>PlushBuddy</string>
+	<string>ToyTalk</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -28,7 +28,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>PlushBuddy</string>
+	<string>ToyTalk</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

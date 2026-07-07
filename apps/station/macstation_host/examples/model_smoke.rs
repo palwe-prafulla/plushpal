@@ -32,6 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             child_age_years: Some(6),
             child_age_months: None,
             character_play_age_years: Some(3),
+            recent_turns: Vec::new(),
         })
     })
     .await?
@@ -48,6 +49,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             child_age_years: Some(9),
             child_age_months: None,
             character_play_age_years: Some(4),
+            recent_turns: Vec::new(),
         })
     });
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;

@@ -24,7 +24,7 @@ use axum::{
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use plushpal_character_voice::{inspect_wav, CharacterProfile, ProfileError, VoiceSampleFacts};
-use plushpal_core_domain::{AgeBand, StructuredCharacterResponse};
+use plushpal_core_domain::{AgeBand, ConversationTurn, StructuredCharacterResponse, TurnRole};
 #[cfg(feature = "native-runtime")]
 use plushpal_core_domain::{BoundedConversationRequest, ConversationMode};
 use plushpal_desktop_gateway::{
@@ -126,7 +126,7 @@ pub trait ParentProfileStore: fmt::Debug + Send + Sync {
         Ok(ReasoningProviderConfiguration {
             provider: "hub".to_owned(),
             configured: false,
-            display_name: "PlushBuddy Hub".to_owned(),
+            display_name: "ToyTalk Hub".to_owned(),
             configured_providers: Vec::new(),
         })
     }
@@ -180,6 +180,13 @@ pub trait ParentProfileStore: fmt::Debug + Send + Sync {
     }
     fn history(&self, _maximum_turns: usize) -> Result<Vec<ConversationHistoryEntry>, HostError> {
         Ok(Vec::new())
+    }
+    fn history_for_character(
+        &self,
+        _alias: &str,
+        maximum_turns: usize,
+    ) -> Result<Vec<ConversationHistoryEntry>, HostError> {
+        self.history(maximum_turns)
     }
     fn delete_history(&self) -> Result<(), HostError> {
         Ok(())
@@ -308,6 +315,7 @@ pub struct LocalTurnCommand {
     pub child_age_years: Option<u8>,
     pub child_age_months: Option<u8>,
     pub character_play_age_years: Option<u8>,
+    pub recent_turns: Vec<ConversationTurn>,
 }
 
 pub trait ConversationEngine: fmt::Debug + Send + Sync {
@@ -416,6 +424,9 @@ pub trait ModelInstaller: fmt::Debug + Send + Sync {
     fn recommendation_note(&self) -> Option<String> {
         None
     }
+    fn activate_installed(&self) -> Result<Arc<dyn ConversationEngine>, ModelInstallError> {
+        Err(ModelInstallError::Unsupported)
+    }
     fn install(&self) -> Result<Arc<dyn ConversationEngine>, ModelInstallError>;
     fn cancel(&self);
 }
@@ -430,6 +441,10 @@ impl ModelInstaller for UnavailableModelInstaller {
 
     fn installing(&self) -> bool {
         false
+    }
+
+    fn activate_installed(&self) -> Result<Arc<dyn ConversationEngine>, ModelInstallError> {
+        Err(ModelInstallError::Unsupported)
     }
 
     fn install(&self) -> Result<Arc<dyn ConversationEngine>, ModelInstallError> {
@@ -479,6 +494,7 @@ pub struct HostState {
     clock: Arc<dyn Clock>,
     events: broadcast::Sender<String>,
     conversation: Arc<RwLock<Arc<dyn ConversationEngine>>>,
+    local_conversation: Arc<RwLock<Option<Arc<dyn ConversationEngine>>>>,
     model_installer: Arc<dyn ModelInstaller>,
     parent_pin: Arc<Mutex<Option<ParentPinState>>>,
     parent_pin_gates: Arc<Mutex<HashMap<String, ParentGate>>>,
@@ -487,7 +503,7 @@ pub struct HostState {
     voice_engine: Arc<dyn VoiceEngine>,
     speech_to_text_engine: Arc<dyn SpeechToTextEngine>,
     voice_synthesis_busy: Arc<AtomicBool>,
-    runtime_mode: Arc<str>,
+    runtime_mode: Arc<RwLock<String>>,
 }
 
 #[derive(Debug)]
@@ -545,6 +561,7 @@ impl HostState {
             clock,
             events,
             conversation: Arc::new(RwLock::new(Arc::new(UnavailableConversationEngine))),
+            local_conversation: Arc::new(RwLock::new(None)),
             model_installer: Arc::new(UnavailableModelInstaller),
             parent_pin: Arc::new(Mutex::new(None)),
             parent_pin_gates: Arc::new(Mutex::new(HashMap::new())),
@@ -553,13 +570,13 @@ impl HostState {
             voice_engine: Arc::new(UnavailableVoiceEngine),
             speech_to_text_engine: Arc::new(UnavailableSpeechToTextEngine),
             voice_synthesis_busy: Arc::new(AtomicBool::new(false)),
-            runtime_mode: Arc::from("custom"),
+            runtime_mode: Arc::new(RwLock::new("custom".to_owned())),
         }
     }
 
     #[must_use]
     pub fn with_runtime_mode(mut self, runtime_mode: impl Into<String>) -> Self {
-        self.runtime_mode = Arc::from(runtime_mode.into());
+        self.runtime_mode = Arc::new(RwLock::new(runtime_mode.into()));
         self
     }
 
@@ -577,6 +594,9 @@ impl HostState {
 
     #[must_use]
     pub fn with_conversation_engine(mut self, engine: Arc<dyn ConversationEngine>) -> Self {
+        if engine.provider_label() == "local_ai" {
+            self.local_conversation = Arc::new(RwLock::new(Some(Arc::clone(&engine))));
+        }
         self.conversation = Arc::new(RwLock::new(engine));
         self
     }
@@ -618,7 +638,7 @@ impl HostState {
             Ok(None) => {}
             Err(HostError::InvalidPersistedProfile) => {
                 eprintln!(
-                    "PlushBuddy Hub ignored an invalid persisted parent profile and will start setup again."
+                    "ToyTalk Hub ignored an invalid persisted parent profile and will start setup again."
                 );
                 store.delete_all()?;
             }
@@ -659,6 +679,7 @@ pub fn build_router(state: HostState) -> Router {
         .route("/api/v1/provider/status", get(reasoning_provider_status))
         .route("/api/v1/provider/api-key", post(save_provider_api_key))
         .route("/api/v1/provider/select", post(select_provider))
+        .route("/api/v1/runtime/mode", post(select_runtime_mode))
         .route(
             "/api/v1/paired-clients/summary",
             get(paired_clients_summary),
@@ -1500,6 +1521,12 @@ struct ProviderSelectPayload {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct RuntimeModePayload {
+    mode: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PairedClientListPayload {
     pin: String,
 }
@@ -1704,6 +1731,114 @@ async fn select_provider(
     }
 }
 
+async fn select_runtime_mode(
+    State(state): State<HostState>,
+    headers: HeaderMap,
+    Json(payload): Json<RuntimeModePayload>,
+) -> Response {
+    if !is_authenticated(&state, &headers) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let Some(client_id) = client_id_from_headers(&headers) else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    if client_id != state.hub_client_id.as_ref() {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let mode = payload.mode.trim();
+    if !matches!(mode, "cloud_llm" | "privacy_local_first") {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    match activate_runtime_mode(&state, &headers, mode) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(ConversationEngineError::InvalidRequest) => StatusCode::BAD_REQUEST.into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+fn cache_local_conversation_engine(
+    state: &HostState,
+    engine: Arc<dyn ConversationEngine>,
+) -> Result<(), ConversationEngineError> {
+    let mut local = state
+        .local_conversation
+        .write()
+        .map_err(|_| ConversationEngineError::GenerationFailed)?;
+    *local = Some(engine);
+    Ok(())
+}
+
+fn activate_runtime_mode(
+    state: &HostState,
+    _headers: &HeaderMap,
+    mode: &str,
+) -> Result<(), ConversationEngineError> {
+    set_runtime_mode_for_state(state, mode)?;
+    match mode {
+        "privacy_local_first" | "cloud_llm" => Ok(()),
+        _ => Err(ConversationEngineError::InvalidRequest),
+    }
+}
+
+fn resolve_conversation_engine_for_request(
+    state: &HostState,
+    headers: &HeaderMap,
+) -> Result<Arc<dyn ConversationEngine>, ConversationEngineError> {
+    match runtime_mode_for_state(state).as_str() {
+        "cloud_llm" => resolve_cloud_conversation_engine(state, headers),
+        "privacy_local_first" => resolve_local_conversation_engine(state),
+        _ => state
+            .conversation
+            .read()
+            .map(|engine| Arc::clone(&engine))
+            .map_err(|_| ConversationEngineError::GenerationFailed),
+    }
+}
+
+fn resolve_local_conversation_engine(
+    state: &HostState,
+) -> Result<Arc<dyn ConversationEngine>, ConversationEngineError> {
+    if let Some(engine) = state
+        .local_conversation
+        .read()
+        .map_err(|_| ConversationEngineError::GenerationFailed)?
+        .as_ref()
+        .map(Arc::clone)
+    {
+        return Ok(engine);
+    }
+    match state.model_installer.activate_installed() {
+        Ok(engine) => {
+            cache_local_conversation_engine(state, Arc::clone(&engine))?;
+            Ok(engine)
+        }
+        Err(error) => {
+            eprintln!("ToyTalk Hub Local AI request cannot run because installed local model is not ready: {error:?}");
+            Err(ConversationEngineError::NotReady)
+        }
+    }
+}
+
+fn resolve_cloud_conversation_engine(
+    state: &HostState,
+    headers: &HeaderMap,
+) -> Result<Arc<dyn ConversationEngine>, ConversationEngineError> {
+    let store = hub_store_for_headers(state, headers)
+        .map_err(|_| ConversationEngineError::GenerationFailed)?
+        .ok_or(ConversationEngineError::NotReady)?;
+    let provider = store
+        .reasoning_provider_status()
+        .ok()
+        .map(|status| status.provider)
+        .unwrap_or_else(|| "gemini".to_owned());
+    let api_key = store
+        .load_provider_api_key(&provider)
+        .map_err(|_| ConversationEngineError::GenerationFailed)?
+        .filter(|key| !key.trim().is_empty())
+        .ok_or(ConversationEngineError::NotReady)?;
+    build_provider_engine(&provider, &api_key)
+}
+
 async fn paired_clients_summary(State(state): State<HostState>, headers: HeaderMap) -> Response {
     if !is_authenticated(&state, &headers) {
         return StatusCode::UNAUTHORIZED.into_response();
@@ -1822,11 +1957,15 @@ async fn install_local_model(State(state): State<HostState>, headers: HeaderMap)
     }
     let installer = Arc::clone(&state.model_installer);
     let conversation = Arc::clone(&state.conversation);
+    let local_conversation = Arc::clone(&state.local_conversation);
     let events = state.events.clone();
     tokio::task::spawn_blocking(move || {
         let event_name = match installer.install() {
             Ok(engine) => match conversation.write() {
                 Ok(mut active) => {
+                    if let Ok(mut local) = local_conversation.write() {
+                        *local = Some(Arc::clone(&engine));
+                    }
                     *active = engine;
                     "model_install_ready"
                 }
@@ -1869,11 +2008,10 @@ async fn cancel_local_model_install(
 }
 
 #[cfg(feature = "native-runtime")]
-fn activate_provider_engine(
-    state: &HostState,
+fn build_provider_engine(
     provider: &str,
     api_key: &str,
-) -> Result<(), ConversationEngineError> {
+) -> Result<Arc<dyn ConversationEngine>, ConversationEngineError> {
     let provider = provider.trim().to_ascii_lowercase();
     let engine: Arc<dyn ConversationEngine> = match provider.as_str() {
         "gemini" => {
@@ -1892,14 +2030,32 @@ fn activate_provider_engine(
                 model,
             )?)
         }
-        _ => return Ok(()),
+        _ => return Err(ConversationEngineError::InvalidRequest),
     };
+    Ok(engine)
+}
+
+#[cfg(feature = "native-runtime")]
+fn activate_provider_engine(
+    state: &HostState,
+    provider: &str,
+    api_key: &str,
+) -> Result<(), ConversationEngineError> {
+    let engine = build_provider_engine(provider, api_key)?;
     let mut active = state
         .conversation
         .write()
         .map_err(|_| ConversationEngineError::GenerationFailed)?;
     *active = engine;
     Ok(())
+}
+
+#[cfg(not(feature = "native-runtime"))]
+fn build_provider_engine(
+    _provider: &str,
+    _api_key: &str,
+) -> Result<Arc<dyn ConversationEngine>, ConversationEngineError> {
+    Err(ConversationEngineError::NotReady)
 }
 
 #[cfg(not(feature = "native-runtime"))]
@@ -2587,7 +2743,7 @@ fn synthesize_voice_response(
     match state.voice_engine.synthesize(&reference, text.trim()) {
         Ok(wav) => {
             eprintln!(
-                "PlushBuddy latency request_id={} phase=voice status=ok synth_ms={} total_ms={} text_chars={} wav_bytes={} character={}",
+                "ToyTalk latency request_id={} phase=voice status=ok synth_ms={} total_ms={} text_chars={} wav_bytes={} character={}",
                 request_id.unwrap_or("none"),
                 synth_started_at.elapsed().as_millis(),
                 total_started_at.elapsed().as_millis(),
@@ -2599,7 +2755,7 @@ fn synthesize_voice_response(
         }
         Err(error) => {
             eprintln!(
-                "PlushBuddy latency request_id={} phase=voice status=failed synth_ms={} total_ms={} text_chars={} character={} error={error:?}",
+                "ToyTalk latency request_id={} phase=voice status=failed synth_ms={} total_ms={} text_chars={} character={} error={error:?}",
                 request_id.unwrap_or("none"),
                 synth_started_at.elapsed().as_millis(),
                 total_started_at.elapsed().as_millis(),
@@ -2638,6 +2794,139 @@ fn conversation_log_fields(
         ),
         None => ("unavailable", "unavailable", "none".to_owned()),
     }
+}
+
+struct ConversationGenerationOutcome {
+    response: StructuredCharacterResponse,
+    mode: &'static str,
+    provider: &'static str,
+    model: String,
+}
+
+fn conversation_generation_outcome(
+    engine: &Arc<dyn ConversationEngine>,
+    response: StructuredCharacterResponse,
+) -> ConversationGenerationOutcome {
+    let (mode, provider, model) = conversation_log_fields(Some(engine));
+    ConversationGenerationOutcome {
+        response,
+        mode,
+        provider,
+        model,
+    }
+}
+
+fn should_try_local_ai_fallback(engine: &Arc<dyn ConversationEngine>) -> bool {
+    engine.runtime_mode_label() == "cloud_llm" || engine.provider_label() != "local_ai"
+}
+
+fn generate_turn_with_retries(
+    state: &HostState,
+    request_id: &str,
+    engine: Arc<dyn ConversationEngine>,
+    turn: LocalTurnCommand,
+) -> Result<ConversationGenerationOutcome, ConversationEngineError> {
+    let (mode, provider, model) = conversation_log_fields(Some(&engine));
+    match engine.generate_local(turn.clone()) {
+        Ok(response) => Ok(conversation_generation_outcome(&engine, response)),
+        Err(ConversationEngineError::NotReady) => Err(ConversationEngineError::NotReady),
+        Err(first_error) => {
+            eprintln!(
+                "ToyTalk latency request_id={request_id} phase=conversation_retry attempt=1 status=failed mode={mode} provider={provider} model={model} error={first_error:?}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            match engine.generate_local(turn.clone()) {
+                Ok(response) => Ok(conversation_generation_outcome(&engine, response)),
+                Err(ConversationEngineError::NotReady) => Err(ConversationEngineError::NotReady),
+                Err(second_error) => {
+                    let will_try_local = should_try_local_ai_fallback(&engine);
+                    eprintln!(
+                        "ToyTalk latency request_id={request_id} phase=conversation_retry attempt=2 status=failed mode={mode} provider={provider} model={model} error={second_error:?} trying_local_fallback={will_try_local}"
+                    );
+                    if will_try_local {
+                        match resolve_local_conversation_engine(state) {
+                            Ok(local_engine) => {
+                                let (local_mode, local_provider, local_model) =
+                                    conversation_log_fields(Some(&local_engine));
+                                match local_engine.generate_local(turn.clone()) {
+                                    Ok(response) => {
+                                        eprintln!(
+                                            "ToyTalk latency request_id={request_id} phase=conversation_local_fallback status=ok from_mode={mode} from_provider={provider} mode={local_mode} provider={local_provider} model={local_model}"
+                                        );
+                                        return Ok(conversation_generation_outcome(
+                                            &local_engine,
+                                            response,
+                                        ));
+                                    }
+                                    Err(ConversationEngineError::NotReady) => {
+                                        eprintln!(
+                                            "ToyTalk latency request_id={request_id} phase=conversation_local_fallback status=not_ready from_mode={mode} from_provider={provider} mode={local_mode} provider={local_provider} model={local_model}"
+                                        );
+                                    }
+                                    Err(local_error) => {
+                                        eprintln!(
+                                            "ToyTalk latency request_id={request_id} phase=conversation_local_fallback attempt=1 status=failed from_mode={mode} from_provider={provider} mode={local_mode} provider={local_provider} model={local_model} error={local_error:?}"
+                                        );
+                                        std::thread::sleep(std::time::Duration::from_millis(75));
+                                        match local_engine.generate_local(turn.clone()) {
+                                            Ok(response) => {
+                                                eprintln!(
+                                                    "ToyTalk latency request_id={request_id} phase=conversation_local_fallback attempt=2 status=ok from_mode={mode} from_provider={provider} mode={local_mode} provider={local_provider} model={local_model}"
+                                                );
+                                                return Ok(conversation_generation_outcome(
+                                                    &local_engine,
+                                                    response,
+                                                ));
+                                            }
+                                            Err(second_local_error) => {
+                                                eprintln!(
+                                                    "ToyTalk latency request_id={request_id} phase=conversation_local_fallback attempt=2 status=failed from_mode={mode} from_provider={provider} mode={local_mode} provider={local_provider} model={local_model} error={second_local_error:?}"
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            Err(local_error) => {
+                                eprintln!(
+                                    "ToyTalk latency request_id={request_id} phase=conversation_local_fallback status=unavailable from_mode={mode} from_provider={provider} error={local_error:?}"
+                                );
+                            }
+                        }
+                    }
+                    eprintln!(
+                        "ToyTalk latency request_id={request_id} phase=conversation_retry status=exhausted mode={mode} provider={provider} model={model}; using_safe_fallback=true"
+                    );
+                    Ok(ConversationGenerationOutcome {
+                        response: safe_turn_fallback(&turn),
+                        mode,
+                        provider,
+                        model,
+                    })
+                }
+            }
+        }
+    }
+}
+
+fn runtime_mode_for_state(state: &HostState) -> String {
+    state
+        .runtime_mode
+        .read()
+        .map(|mode| mode.clone())
+        .unwrap_or_else(|_| "custom".to_owned())
+}
+
+fn set_runtime_mode_for_state(
+    state: &HostState,
+    mode: &str,
+) -> Result<(), ConversationEngineError> {
+    let mut runtime_mode = state
+        .runtime_mode
+        .write()
+        .map_err(|_| ConversationEngineError::GenerationFailed)?;
+    *runtime_mode = mode.to_owned();
+    Ok(())
 }
 
 async fn enforce_gateway_policy(
@@ -2807,9 +3096,7 @@ async fn status(State(state): State<HostState>, headers: HeaderMap) -> Response 
     if !is_authenticated(&state, &headers) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    let engine_ready = state
-        .conversation
-        .read()
+    let engine_ready = resolve_conversation_engine_for_request(&state, &headers)
         .is_ok_and(|engine| engine.is_ready());
     let request_store = match store_for_headers(&state, &headers) {
         Ok(store) => store,
@@ -2840,7 +3127,7 @@ async fn status(State(state): State<HostState>, headers: HeaderMap) -> Response 
     let _request_provider_status = request_store
         .as_ref()
         .and_then(|store| store.reasoning_provider_status().ok());
-    let runtime_mode = state.runtime_mode.to_string();
+    let runtime_mode = runtime_mode_for_state(&state);
     let cloud_mode = runtime_mode == "cloud_llm";
     let selected_local_model_id = state.model_installer.selected_model_id();
     let selected_local_model_display_name = state.model_installer.selected_model_display_name();
@@ -2915,9 +3202,7 @@ async fn diagnostics(State(state): State<HostState>, headers: HeaderMap) -> Resp
     if !is_authenticated(&state, &headers) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    let conversation_engine_ready = state
-        .conversation
-        .read()
+    let conversation_engine_ready = resolve_conversation_engine_for_request(&state, &headers)
         .is_ok_and(|engine| engine.is_ready());
     let voice_engine_ready = state.voice_engine.is_ready();
     let speech_to_text_ready = state.speech_to_text_engine.is_ready();
@@ -2950,7 +3235,7 @@ async fn diagnostics(State(state): State<HostState>, headers: HeaderMap) -> Resp
         parent_profile_store_ready: request_store.is_some(),
         parent_configured,
         voice_synthesis_busy: state.voice_synthesis_busy.load(Ordering::Acquire),
-        station_mode: state.runtime_mode.to_string(),
+        station_mode: runtime_mode_for_state(&state),
     })
     .into_response()
 }
@@ -3046,13 +3331,10 @@ async fn command(
     };
     let _ = state.events.send(serialized);
     if let Some(local_turn) = local_turn {
-        let conversation = state
-            .conversation
-            .read()
-            .map(|engine| Arc::clone(&engine))
-            .ok();
+        let conversation = resolve_conversation_engine_for_request(&state, &headers).ok();
         let (conversation_mode, conversation_provider, conversation_model) =
             conversation_log_fields(conversation.as_ref());
+        let generation_state = state.clone();
         let events = state.events.clone();
         let request_id = command.request_id.clone();
         let profile_store = match store_for_headers(&state, &headers) {
@@ -3064,52 +3346,41 @@ async fn command(
         tokio::task::spawn_blocking(move || {
             let persisted_command = local_turn.clone();
             let generate_started_at = Instant::now();
-            let generated = match conversation {
-                Some(engine) => {
-                    let first = engine.generate_local(local_turn.clone());
-                    match first {
-                        Ok(response) => Ok(response),
-                        Err(first_error) => {
-                            eprintln!(
-                                "PlushBuddy latency request_id={request_id} phase=conversation_retry attempt=1 status=failed mode={conversation_mode} provider={conversation_provider} model={conversation_model} error={first_error:?}"
-                            );
-                            std::thread::sleep(std::time::Duration::from_millis(150));
-                            match engine.generate_local(local_turn.clone()) {
-                                Ok(response) => Ok(response),
-                                Err(second_error) => {
-                                    eprintln!(
-                                        "PlushBuddy latency request_id={request_id} phase=conversation_retry attempt=2 status=failed mode={conversation_mode} provider={conversation_provider} model={conversation_model} error={second_error:?}; using_safe_fallback=true"
-                                    );
-                                    Ok(safe_turn_fallback(&local_turn))
-                                }
-                            }
-                        }
-                    }
-                }
-                None => Err(ConversationEngineError::NotReady),
+            let generated = if let Some(engine) = conversation {
+                generate_turn_with_retries(
+                    &generation_state,
+                    &request_id,
+                    engine,
+                    local_turn.clone(),
+                )
+            } else {
+                Err(ConversationEngineError::NotReady)
             };
             let generate_ms = generate_started_at.elapsed().as_millis();
             let total_ms = accepted_at.elapsed().as_millis();
             if let Err(error) = generated.as_ref() {
                 eprintln!(
-                    "PlushBuddy latency request_id={request_id} phase=conversation status=failed mode={conversation_mode} provider={conversation_provider} model={conversation_model} generate_ms={generate_ms} total_ms={total_ms} error={error:?}"
+                    "ToyTalk latency request_id={request_id} phase=conversation status=failed mode={conversation_mode} provider={conversation_provider} model={conversation_model} generate_ms={generate_ms} total_ms={total_ms} error={error:?}"
                 );
-            } else if let Ok(response) = generated.as_ref() {
+            } else if let Ok(outcome) = generated.as_ref() {
                 eprintln!(
-                    "PlushBuddy latency request_id={request_id} phase=conversation status=ok mode={conversation_mode} provider={conversation_provider} model={conversation_model} generate_ms={generate_ms} total_ms={total_ms} speech_chars={}",
-                    response.speech.chars().count()
+                    "ToyTalk latency request_id={request_id} phase=conversation status=ok mode={} provider={} model={} selected_mode={conversation_mode} selected_provider={conversation_provider} selected_model={conversation_model} generate_ms={generate_ms} total_ms={total_ms} speech_chars={}",
+                    outcome.mode,
+                    outcome.provider,
+                    outcome.model,
+                    outcome.response.speech.chars().count()
                 );
             }
-            if let (Ok(response), Some(store), Ok(completed_at)) =
+            if let (Ok(outcome), Some(store), Ok(completed_at)) =
                 (generated.as_ref(), profile_store, clock.now_seconds())
             {
-                let _ = store.record_turn(&persisted_command, response, completed_at);
+                let _ = store.record_turn(&persisted_command, &outcome.response, completed_at);
             }
             let (event_name, speech, trusted_adult) = match generated.as_ref() {
-                Ok(response) => (
+                Ok(outcome) => (
                     "response_ready",
-                    Some(response.speech.as_str()),
-                    Some(response.suggest_trusted_adult),
+                    Some(outcome.response.speech.as_str()),
+                    Some(outcome.response.suggest_trusted_adult),
                 ),
                 Err(_) => ("turn_failed", None, None),
             };
@@ -3143,12 +3414,16 @@ async fn command(
     } else if command.command == "install_local_model" {
         let installer = Arc::clone(&state.model_installer);
         let conversation = Arc::clone(&state.conversation);
+        let local_conversation = Arc::clone(&state.local_conversation);
         let events = state.events.clone();
         let request_id = command.request_id.clone();
         tokio::task::spawn_blocking(move || {
             let event_name = match installer.install() {
                 Ok(engine) => match conversation.write() {
                     Ok(mut active) => {
+                        if let Ok(mut local) = local_conversation.write() {
+                            *local = Some(Arc::clone(&engine));
+                        }
                         *active = engine;
                         "model_install_ready"
                     }
@@ -3187,9 +3462,7 @@ fn safe_turn_fallback(command: &LocalTurnCommand) -> StructuredCharacterResponse
             format!("Oops, {alias}'s thinking got wiggly. Can you ask me again, nice and slow?")
         }
         AgeBand::SixToEight => {
-            format!(
-                "Oops, {alias}'s toy brain got a little tangled. Can you ask that one more time?"
-            )
+            format!("Oops, {alias}'s thoughts got a little wiggly. Can you ask that one more time?")
         }
         AgeBand::NineToTwelve => {
             format!("Sorry, {alias}'s thinking glitched for a second. Can you ask that again?")
@@ -3220,42 +3493,24 @@ async fn conversation_turn(
         Ok(turn) => turn,
         Err(status) => return status.into_response(),
     };
-    let conversation = match state.conversation.read() {
-        Ok(engine) => Arc::clone(&engine),
+    let conversation = match resolve_conversation_engine_for_request(&state, &headers) {
+        Ok(engine) => engine,
+        Err(ConversationEngineError::NotReady) => {
+            return StatusCode::PRECONDITION_REQUIRED.into_response();
+        }
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
     let (conversation_mode, conversation_provider, conversation_model) =
         conversation_log_fields(Some(&conversation));
-    let retry_mode = conversation_mode;
-    let retry_provider = conversation_provider;
-    let retry_model = conversation_model.clone();
     let generate_started_at = Instant::now();
     let generated = match tokio::task::spawn_blocking({
         let turn = turn.clone();
-        move || match conversation.generate_local(turn.clone()) {
-            Ok(response) => Ok(response),
-            Err(ConversationEngineError::NotReady) => Err(ConversationEngineError::NotReady),
-            Err(first_error) => {
-                eprintln!(
-                    "PlushBuddy latency request_id=sync-http phase=conversation_retry attempt=1 status=failed mode={retry_mode} provider={retry_provider} model={retry_model} error={first_error:?}"
-                );
-                std::thread::sleep(std::time::Duration::from_millis(150));
-                match conversation.generate_local(turn.clone()) {
-                    Ok(response) => Ok(response),
-                    Err(ConversationEngineError::NotReady) => Err(ConversationEngineError::NotReady),
-                    Err(second_error) => {
-                        eprintln!(
-                            "PlushBuddy latency request_id=sync-http phase=conversation_retry attempt=2 status=failed mode={retry_mode} provider={retry_provider} model={retry_model} error={second_error:?}; using_safe_fallback=true"
-                        );
-                        Ok(safe_turn_fallback(&turn))
-                    }
-                }
-            }
-        }
+        let generation_state = state.clone();
+        move || generate_turn_with_retries(&generation_state, "sync-http", conversation, turn)
     })
     .await
     {
-        Ok(Ok(response)) => response,
+        Ok(Ok(outcome)) => outcome,
         Ok(Err(ConversationEngineError::NotReady)) => {
             return StatusCode::PRECONDITION_REQUIRED.into_response();
         }
@@ -3263,22 +3518,26 @@ async fn conversation_turn(
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
     eprintln!(
-        "PlushBuddy latency request_id=sync-http phase=conversation status=ok mode={} provider={} model={} generate_ms={} speech_chars={}",
+        "ToyTalk latency request_id=sync-http phase=conversation status=ok mode={} provider={} model={} selected_mode={} selected_provider={} selected_model={} generate_ms={} speech_chars={}",
+        generated.mode,
+        generated.provider,
+        generated.model,
         conversation_mode,
         conversation_provider,
         conversation_model,
         generate_started_at.elapsed().as_millis(),
-        generated.speech.chars().count()
+        generated.response.speech.chars().count()
     );
     if let (Ok(Some(store)), Ok(completed_at)) = (
         store_for_headers(&state, &headers),
         state.clock.now_seconds(),
     ) {
-        let _ = store.record_turn(&turn, &generated, completed_at);
+        let _ = store.record_turn(&turn, &generated.response, completed_at);
     }
+    let ConversationGenerationOutcome { response, .. } = generated;
     Json(ConversationTurnResponse {
-        speech: generated.speech,
-        suggest_trusted_adult: generated.suggest_trusted_adult,
+        speech: response.speech,
+        suggest_trusted_adult: response.suggest_trusted_adult,
     })
     .into_response()
 }
@@ -3299,8 +3558,40 @@ fn prepare_local_turn_for_state(
             .ok_or(StatusCode::BAD_REQUEST)?;
         turn.parent_guidance =
             composite_guidance(&character.traits, character.parent_guidance.as_deref());
+        turn.recent_turns = recent_turns_for_prompt(store.as_ref(), &turn.character_alias, 6)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
     Ok(turn)
+}
+
+fn recent_turns_for_prompt(
+    store: &dyn ParentProfileStore,
+    character_alias: &str,
+    maximum_exchanges: usize,
+) -> Result<Vec<ConversationTurn>, HostError> {
+    let history = store.history_for_character(character_alias, maximum_exchanges)?;
+    Ok(history_entries_to_recent_turns(history))
+}
+
+fn history_entries_to_recent_turns(
+    history: Vec<ConversationHistoryEntry>,
+) -> Vec<ConversationTurn> {
+    history
+        .into_iter()
+        .rev()
+        .flat_map(|entry| {
+            [
+                ConversationTurn {
+                    role: TurnRole::Child,
+                    text: entry.child_text,
+                },
+                ConversationTurn {
+                    role: TurnRole::Character,
+                    text: entry.character_text,
+                },
+            ]
+        })
+        .collect()
 }
 
 fn parse_local_turn(payload: LocalTurnPayload) -> Result<LocalTurnCommand, ()> {
@@ -3336,6 +3627,7 @@ fn parse_local_turn(payload: LocalTurnPayload) -> Result<LocalTurnCommand, ()> {
         child_age_years: payload.child_age_years,
         child_age_months: payload.child_age_months,
         character_play_age_years: payload.character_play_age_years,
+        recent_turns: Vec::new(),
     })
 }
 
@@ -3639,7 +3931,7 @@ pub mod native_runtime {
 
     pub struct NativeParentProfileStore {
         database: Mutex<SqlCipherDatabase>,
-        active_session: Mutex<Option<SessionId>>,
+        active_session: Mutex<Option<(SessionId, CharacterId)>>,
         voice_sample_cache: Mutex<HashMap<CharacterId, Vec<u8>>>,
         data_directory: PathBuf,
     }
@@ -5032,7 +5324,11 @@ pub mod native_runtime {
                 .database
                 .lock()
                 .map_err(|_| HostError::PersistenceUnavailable)?;
-            let session_id = if let Some(session_id) = active_session.as_ref() {
+            let character_id = Self::character_id_for_alias(&database, &command.character_alias)?;
+            let session_id = if let Some((session_id, _)) = active_session
+                .as_ref()
+                .filter(|(_, active_character_id)| active_character_id == &character_id)
+            {
                 session_id.clone()
             } else {
                 let nonce = SystemTime::now()
@@ -5040,18 +5336,16 @@ pub mod native_runtime {
                     .map_err(|_| HostError::ClockUnavailable)?
                     .as_nanos();
                 let session_id = SessionId(format!("session-{completed_at}-{nonce}"));
-                let character_id =
-                    Self::character_id_for_alias(&database, &command.character_alias)?;
                 database
                     .put_session(&SessionRecord {
                         id: session_id.clone(),
-                        character_id,
+                        character_id: character_id.clone(),
                         age_band: command.age_band,
                         started_at: completed_at,
                         ended_at: None,
                     })
                     .map_err(|_| HostError::PersistenceUnavailable)?;
-                *active_session = Some(session_id.clone());
+                *active_session = Some((session_id.clone(), character_id));
                 session_id
             };
             database
@@ -5076,7 +5370,8 @@ pub mod native_runtime {
                 .active_session
                 .lock()
                 .map_err(|_| HostError::PersistenceUnavailable)?
-                .take();
+                .take()
+                .map(|(session_id, _)| session_id);
             let Some(session_id) = session_id else {
                 return Ok(());
             };
@@ -5098,6 +5393,31 @@ pub mod native_runtime {
                 .lock()
                 .map_err(|_| HostError::PersistenceUnavailable)?
                 .list_history(maximum_turns)
+                .map(|records| {
+                    records
+                        .into_iter()
+                        .map(|record| ConversationHistoryEntry {
+                            child_text: record.child_text,
+                            character_text: record.character_text,
+                            completed_at: record.completed_at,
+                        })
+                        .collect()
+                })
+                .map_err(|_| HostError::PersistenceUnavailable)
+        }
+
+        fn history_for_character(
+            &self,
+            alias: &str,
+            maximum_turns: usize,
+        ) -> Result<Vec<ConversationHistoryEntry>, HostError> {
+            let database = self
+                .database
+                .lock()
+                .map_err(|_| HostError::PersistenceUnavailable)?;
+            let character_id = Self::character_id_for_alias(&database, alias)?;
+            database
+                .list_history_for_character(&character_id, maximum_turns)
                 .map(|records| {
                     records
                         .into_iter()
@@ -6135,6 +6455,97 @@ pub mod native_runtime {
         }
 
         #[test]
+        fn gemini_request_schema_requires_strict_toytalk_fields() {
+            let schema = GeminiConversationEngine::gemini_response_schema();
+            assert_eq!(schema["type"], "OBJECT");
+            assert_eq!(schema["properties"]["speech"]["type"], "STRING");
+            assert_eq!(
+                schema["properties"]["suggest_trusted_adult"]["type"],
+                "BOOLEAN"
+            );
+            assert_eq!(
+                schema["required"],
+                serde_json::json!(["speech", "suggest_trusted_adult"])
+            );
+        }
+
+        #[test]
+        fn cloud_prompt_includes_recent_conversation_turns() {
+            let prompt = GeminiConversationEngine::prompt(&LocalTurnCommand {
+                age_band: AgeBand::FourToFive,
+                character_alias: "Buddy".to_owned(),
+                text: "What did I ask before?".to_owned(),
+                parent_guidance: Some("Pretend to be a tiny puppy.".to_owned()),
+                child_age_years: Some(5),
+                child_age_months: Some(6),
+                character_play_age_years: Some(2),
+                recent_turns: vec![
+                    ConversationTurn {
+                        role: TurnRole::Child,
+                        text: "Why does rain fall?".to_owned(),
+                    },
+                    ConversationTurn {
+                        role: TurnRole::Character,
+                        text: "Clouds get heavy and drip drops.".to_owned(),
+                    },
+                ],
+            });
+            let contract: serde_json::Value = serde_json::from_str(&prompt).unwrap();
+            assert_eq!(contract["recent_turns"][0]["role"], "child");
+            assert_eq!(contract["recent_turns"][0]["text"], "Why does rain fall?");
+            assert_eq!(contract["recent_turns"][1]["role"], "character");
+            assert_eq!(contract["current_child_text"], "What did I ask before?");
+        }
+
+        #[test]
+        fn openai_response_format_uses_strict_json_schema() {
+            let format = GeminiConversationEngine::openai_strict_response_format();
+            assert_eq!(format["type"], "json_schema");
+            assert_eq!(format["strict"], true);
+            assert_eq!(format["schema"]["additionalProperties"], false);
+            assert_eq!(
+                format["schema"]["required"],
+                serde_json::json!(["speech", "suggest_trusted_adult"])
+            );
+        }
+
+        #[test]
+        fn gemini_parser_rejects_non_json_text() {
+            let response = br#"{
+                "candidates": [{
+                    "content": {
+                        "parts": [{
+                            "text": "Sure, I can do that!"
+                        }]
+                    }
+                }]
+            }"#;
+            assert_eq!(
+                GeminiConversationEngine::parse_response(response),
+                Err(ConversationEngineError::GenerationFailed)
+            );
+        }
+
+        #[test]
+        fn cloud_error_summary_extracts_provider_message_without_multiline_noise() {
+            let summary = summarize_cloud_error_body(
+                r#"{"error":{"code":400,"message":"API key not valid.\nPlease pass a valid API key.","status":"INVALID_ARGUMENT"}}"#,
+            );
+            assert_eq!(
+                summary,
+                "INVALID_ARGUMENT: API key not valid. Please pass a valid API key."
+            );
+        }
+
+        #[test]
+        fn cloud_log_detail_is_truncated_and_single_line() {
+            let detail = sanitize_cloud_log_detail(&format!("{}\n{}", "x".repeat(260), "secret"));
+            assert!(!detail.contains('\n'));
+            assert!(detail.ends_with("..."));
+            assert!(detail.chars().count() <= 243);
+        }
+
+        #[test]
         fn demo_voice_engine_generates_valid_wav() {
             let generated = DemoVoiceEngine
                 .synthesize(&fixture_wav(), "Hello from demo mode.")
@@ -6203,7 +6614,7 @@ cp "$reference" "$output"
             )
             .expect("create chatterbox engine");
             let generated = engine
-                .synthesize(&fixture_wav(), "Hello from PlushBuddy.")
+                .synthesize(&fixture_wav(), "Hello from ToyTalk.")
                 .expect("synthesize fixture");
             hound::WavReader::new(Cursor::new(generated)).expect("generated wav is readable");
             let runtime_dir = directory.join("voice-runtime/chatterbox");
@@ -6304,7 +6715,7 @@ done
             )
             .expect("create luxtts engine");
             let generated = engine
-                .synthesize(&fixture_wav(), "Hello from PlushBuddy.")
+                .synthesize(&fixture_wav(), "Hello from ToyTalk.")
                 .expect("synthesize fixture");
             hound::WavReader::new(Cursor::new(generated)).expect("generated wav is readable");
             let runtime_dir = directory.join("voice-runtime/luxtts");
@@ -6378,18 +6789,19 @@ done
             command: LocalTurnCommand,
         ) -> Result<StructuredCharacterResponse, ConversationEngineError> {
             tokio::runtime::Handle::current()
-                .block_on(self.session.generate_with_context(
+                .block_on(self.session.generate_with_persisted_context(
                     command.age_band,
                     command.character_alias,
                     command.child_age_years,
                     command.child_age_months,
                     command.character_play_age_years,
                     command.parent_guidance,
+                    command.recent_turns,
                     command.text,
                 ))
                 .map_err(|error| {
                     eprintln!(
-                        "PlushBuddy local AI generation rejected reason={} detail={error:?}",
+                        "ToyTalk local AI generation rejected reason={} detail={error:?}",
                         local_turn_error_label(&error)
                     );
                     ConversationEngineError::GenerationFailed
@@ -6575,8 +6987,9 @@ done
                 child_age_months: command.child_age_months,
                 character_play_age_years: command.character_play_age_years,
                 parent_guidance: command.parent_guidance.clone(),
-                recent_turns: Vec::new(),
+                recent_turns: command.recent_turns.clone(),
                 current_text: command.text.clone(),
+                repair_instruction: None,
                 max_response_characters: policy.max_output_characters,
             };
             serde_json::to_string(&ModelPromptContract::from_request(
@@ -6588,24 +7001,102 @@ done
             })
         }
 
+        fn gemini_response_schema() -> serde_json::Value {
+            serde_json::json!({
+                "type": "OBJECT",
+                "properties": {
+                    "speech": {
+                        "type": "STRING",
+                        "description": "The child-safe toy reply to speak aloud."
+                    },
+                    "suggest_trusted_adult": {
+                        "type": "BOOLEAN",
+                        "description": "True only when the child should be guided to a trusted adult."
+                    }
+                },
+                "required": ["speech", "suggest_trusted_adult"],
+                "propertyOrdering": ["speech", "suggest_trusted_adult"]
+            })
+        }
+
+        fn json_schema_response_schema() -> serde_json::Value {
+            serde_json::json!({
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "speech": {
+                        "type": "string",
+                        "description": "The child-safe toy reply to speak aloud."
+                    },
+                    "suggest_trusted_adult": {
+                        "type": "boolean",
+                        "description": "True only when the child should be guided to a trusted adult."
+                    }
+                },
+                "required": ["speech", "suggest_trusted_adult"],
+                "propertyOrdering": ["speech", "suggest_trusted_adult"]
+            })
+        }
+
+        fn openai_strict_response_format() -> serde_json::Value {
+            serde_json::json!({
+                "type": "json_schema",
+                "name": "toytalk_character_response",
+                "strict": true,
+                "schema": Self::json_schema_response_schema()
+            })
+        }
+
         fn parse_response(
             bytes: &[u8],
         ) -> Result<StructuredCharacterResponse, ConversationEngineError> {
-            let envelope: GeminiResponseEnvelope = serde_json::from_slice(bytes)
-                .map_err(|_| ConversationEngineError::GenerationFailed)?;
+            let envelope: GeminiResponseEnvelope = match serde_json::from_slice(bytes) {
+                Ok(envelope) => envelope,
+                Err(error) => {
+                    log_cloud_provider_failure(
+                        "gemini",
+                        "response_envelope_parse",
+                        &error.to_string(),
+                    );
+                    return Err(ConversationEngineError::GenerationFailed);
+                }
+            };
             let text = envelope
                 .candidates
                 .into_iter()
                 .flat_map(|candidate| candidate.content.parts)
                 .map(|part| part.text)
                 .find(|text| !text.trim().is_empty())
-                .ok_or(ConversationEngineError::GenerationFailed)?;
-            let json =
-                extract_json_object(&text).ok_or(ConversationEngineError::GenerationFailed)?;
-            let structured: GeminiStructuredResponse = serde_json::from_str(json)
-                .map_err(|_| ConversationEngineError::GenerationFailed)?;
+                .ok_or_else(|| {
+                    log_cloud_provider_failure("gemini", "empty_candidate_text", "no text part");
+                    ConversationEngineError::GenerationFailed
+                })?;
+            let json = extract_json_object(&text).ok_or_else(|| {
+                log_cloud_provider_failure(
+                    "gemini",
+                    "structured_json_extract",
+                    &format!("text_chars={}", text.chars().count()),
+                );
+                ConversationEngineError::GenerationFailed
+            })?;
+            let structured: GeminiStructuredResponse = match serde_json::from_str(json) {
+                Ok(structured) => structured,
+                Err(error) => {
+                    log_cloud_provider_failure(
+                        "gemini",
+                        "structured_json_parse",
+                        &format!("{}; json_chars={}", error, json.chars().count()),
+                    );
+                    return Err(ConversationEngineError::GenerationFailed);
+                }
+            };
             let speech = structured.speech.trim();
             if speech.is_empty() || speech.chars().count() > 500 {
+                log_cloud_provider_failure(
+                    "gemini",
+                    "structured_policy_validation",
+                    &format!("speech_chars={}", speech.chars().count()),
+                );
                 return Err(ConversationEngineError::GenerationFailed);
             }
             Ok(StructuredCharacterResponse {
@@ -6659,7 +7150,8 @@ done
                     "temperature": 0.2,
                     "topP": 0.9,
                     "maxOutputTokens": 400,
-                    "responseMimeType": "application/json"
+                    "responseMimeType": "application/json",
+                    "responseSchema": Self::gemini_response_schema()
                 }
             });
             let response = self
@@ -6668,13 +7160,30 @@ done
                 .header("x-goog-api-key", &self.api_key)
                 .json(&body)
                 .send()
-                .map_err(|_| ConversationEngineError::GenerationFailed)?;
+                .map_err(|error| {
+                    log_cloud_provider_failure("gemini", "transport", &error.to_string());
+                    ConversationEngineError::GenerationFailed
+                })?;
             if !response.status().is_success() {
+                let status = response.status();
+                let body = response
+                    .text()
+                    .unwrap_or_else(|error| format!("provider body unavailable: {error}"));
+                log_cloud_provider_failure(
+                    "gemini",
+                    "http_status",
+                    &format!(
+                        "status={} detail={}",
+                        status.as_u16(),
+                        summarize_cloud_error_body(&body)
+                    ),
+                );
                 return Err(ConversationEngineError::GenerationFailed);
             }
-            let bytes = response
-                .bytes()
-                .map_err(|_| ConversationEngineError::GenerationFailed)?;
+            let bytes = response.bytes().map_err(|error| {
+                log_cloud_provider_failure("gemini", "body_read", &error.to_string());
+                ConversationEngineError::GenerationFailed
+            })?;
             Self::parse_response(bytes.as_ref())
         }
 
@@ -6708,21 +7217,53 @@ done
         fn parse_response(
             bytes: &[u8],
         ) -> Result<StructuredCharacterResponse, ConversationEngineError> {
-            let envelope: OpenAiResponseEnvelope = serde_json::from_slice(bytes)
-                .map_err(|_| ConversationEngineError::GenerationFailed)?;
+            let envelope: OpenAiResponseEnvelope = match serde_json::from_slice(bytes) {
+                Ok(envelope) => envelope,
+                Err(error) => {
+                    log_cloud_provider_failure(
+                        "openai",
+                        "response_envelope_parse",
+                        &error.to_string(),
+                    );
+                    return Err(ConversationEngineError::GenerationFailed);
+                }
+            };
             let text = envelope
                 .output
                 .into_iter()
                 .flat_map(|item| item.content)
                 .find(|content| content.kind == "output_text" && !content.text.trim().is_empty())
                 .map(|content| content.text)
-                .ok_or(ConversationEngineError::GenerationFailed)?;
-            let json =
-                extract_json_object(&text).ok_or(ConversationEngineError::GenerationFailed)?;
-            let structured: GeminiStructuredResponse = serde_json::from_str(json)
-                .map_err(|_| ConversationEngineError::GenerationFailed)?;
+                .ok_or_else(|| {
+                    log_cloud_provider_failure("openai", "empty_output_text", "no output_text");
+                    ConversationEngineError::GenerationFailed
+                })?;
+            let json = extract_json_object(&text).ok_or_else(|| {
+                log_cloud_provider_failure(
+                    "openai",
+                    "structured_json_extract",
+                    &format!("text_chars={}", text.chars().count()),
+                );
+                ConversationEngineError::GenerationFailed
+            })?;
+            let structured: GeminiStructuredResponse = match serde_json::from_str(json) {
+                Ok(structured) => structured,
+                Err(error) => {
+                    log_cloud_provider_failure(
+                        "openai",
+                        "structured_json_parse",
+                        &format!("{}; json_chars={}", error, json.chars().count()),
+                    );
+                    return Err(ConversationEngineError::GenerationFailed);
+                }
+            };
             let speech = structured.speech.trim();
             if speech.is_empty() || speech.chars().count() > 500 {
+                log_cloud_provider_failure(
+                    "openai",
+                    "structured_policy_validation",
+                    &format!("speech_chars={}", speech.chars().count()),
+                );
                 return Err(ConversationEngineError::GenerationFailed);
             }
             Ok(StructuredCharacterResponse {
@@ -6759,20 +7300,7 @@ done
                 "instructions": ModelPromptContract::immutable_instructions(),
                 "input": GeminiConversationEngine::prompt(&command),
                 "text": {
-                    "format": {
-                        "type": "json_schema",
-                        "name": "plushbuddy_character_response",
-                        "strict": true,
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": false,
-                            "properties": {
-                                "speech": {"type": "string"},
-                                "suggest_trusted_adult": {"type": "boolean"}
-                            },
-                            "required": ["speech", "suggest_trusted_adult"]
-                        }
-                    }
+                    "format": GeminiConversationEngine::openai_strict_response_format()
                 }
             });
             let response = self
@@ -6781,13 +7309,30 @@ done
                 .bearer_auth(&self.api_key)
                 .json(&body)
                 .send()
-                .map_err(|_| ConversationEngineError::GenerationFailed)?;
+                .map_err(|error| {
+                    log_cloud_provider_failure("openai", "transport", &error.to_string());
+                    ConversationEngineError::GenerationFailed
+                })?;
             if !response.status().is_success() {
+                let status = response.status();
+                let body = response
+                    .text()
+                    .unwrap_or_else(|error| format!("provider body unavailable: {error}"));
+                log_cloud_provider_failure(
+                    "openai",
+                    "http_status",
+                    &format!(
+                        "status={} detail={}",
+                        status.as_u16(),
+                        summarize_cloud_error_body(&body)
+                    ),
+                );
                 return Err(ConversationEngineError::GenerationFailed);
             }
-            let bytes = response
-                .bytes()
-                .map_err(|_| ConversationEngineError::GenerationFailed)?;
+            let bytes = response.bytes().map_err(|error| {
+                log_cloud_provider_failure("openai", "body_read", &error.to_string());
+                ConversationEngineError::GenerationFailed
+            })?;
             Self::parse_response(bytes.as_ref())
         }
 
@@ -6798,6 +7343,74 @@ done
         fn clear_session(&self) -> Result<(), ConversationEngineError> {
             Ok(())
         }
+    }
+
+    fn summarize_cloud_error_body(body: &str) -> String {
+        let parsed = serde_json::from_str::<serde_json::Value>(body);
+        let detail = parsed
+            .ok()
+            .and_then(|value| {
+                let error = value.get("error")?;
+                let status = error
+                    .get("status")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("unknown_status");
+                let message = error
+                    .get("message")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("unknown_message");
+                Some(format!("{}: {}", status, message))
+            })
+            .unwrap_or_else(|| body.to_owned());
+        sanitize_cloud_log_detail(&detail)
+    }
+
+    fn sanitize_cloud_log_detail(detail: &str) -> String {
+        let mut sanitized = detail
+            .chars()
+            .map(|ch| {
+                if ch.is_control() {
+                    ' '
+                } else if ch.is_ascii_alphanumeric()
+                    || matches!(
+                        ch,
+                        ' ' | '.'
+                            | ','
+                            | ':'
+                            | ';'
+                            | '-'
+                            | '_'
+                            | '/'
+                            | '('
+                            | ')'
+                            | '['
+                            | ']'
+                            | '{'
+                            | '}'
+                            | '\''
+                            | '"'
+                    )
+                {
+                    ch
+                } else {
+                    '?'
+                }
+            })
+            .collect::<String>();
+        if sanitized.chars().count() > 240 {
+            sanitized = sanitized.chars().take(240).collect::<String>();
+            sanitized.push_str("...");
+        }
+        sanitized
+    }
+
+    fn log_cloud_provider_failure(provider: &str, stage: &str, detail: &str) {
+        eprintln!(
+            "ToyTalk cloud provider failure provider={} stage={} detail={}",
+            sanitize_latency_log_token(provider),
+            sanitize_latency_log_token(stage),
+            sanitize_cloud_log_detail(detail)
+        );
     }
 
     #[derive(Debug)]
@@ -6923,6 +7536,15 @@ done
 
         fn recommendation_note(&self) -> Option<String> {
             self.recommendation_note.clone()
+        }
+
+        fn activate_installed(&self) -> Result<Arc<dyn ConversationEngine>, ModelInstallError> {
+            let installed_path = self
+                .verified_installed_model_path()?
+                .ok_or(ModelInstallError::ActivationFailed)?;
+            let engine = NativeConversationEngine::load(&installed_path)
+                .map_err(|_| ModelInstallError::ActivationFailed)?;
+            Ok(Arc::new(engine))
         }
 
         fn install(&self) -> Result<Arc<dyn ConversationEngine>, ModelInstallError> {
@@ -7673,6 +8295,18 @@ mod tests {
             true
         }
 
+        fn runtime_mode_label(&self) -> &'static str {
+            "privacy_local_first"
+        }
+
+        fn provider_label(&self) -> &'static str {
+            "local_ai"
+        }
+
+        fn model_label(&self) -> String {
+            "fixture-local-ai".to_owned()
+        }
+
         fn generate_local(
             &self,
             _command: LocalTurnCommand,
@@ -7681,6 +8315,42 @@ mod tests {
                 speech: "Ready".to_owned(),
                 suggest_trusted_adult: false,
             })
+        }
+
+        fn cancel(&self) -> Result<(), ConversationEngineError> {
+            Ok(())
+        }
+
+        fn clear_session(&self) -> Result<(), ConversationEngineError> {
+            Ok(())
+        }
+    }
+
+    #[derive(Debug)]
+    struct FailingCloudEngine;
+
+    impl ConversationEngine for FailingCloudEngine {
+        fn is_ready(&self) -> bool {
+            true
+        }
+
+        fn runtime_mode_label(&self) -> &'static str {
+            "cloud_llm"
+        }
+
+        fn provider_label(&self) -> &'static str {
+            "gemini"
+        }
+
+        fn model_label(&self) -> String {
+            "fixture-gemini".to_owned()
+        }
+
+        fn generate_local(
+            &self,
+            _command: LocalTurnCommand,
+        ) -> Result<StructuredCharacterResponse, ConversationEngineError> {
+            Err(ConversationEngineError::GenerationFailed)
         }
 
         fn cancel(&self) -> Result<(), ConversationEngineError> {
@@ -7738,6 +8408,14 @@ mod tests {
 
         fn installing(&self) -> bool {
             false
+        }
+
+        fn activate_installed(&self) -> Result<Arc<dyn ConversationEngine>, ModelInstallError> {
+            if self.installed.load(Ordering::Acquire) {
+                Ok(Arc::new(ReadyEngine))
+            } else {
+                Err(ModelInstallError::ActivationFailed)
+            }
         }
 
         fn install(&self) -> Result<Arc<dyn ConversationEngine>, ModelInstallError> {
@@ -7802,7 +8480,7 @@ mod tests {
             .header("x-plushpal-bootstrap", token)
             .header("x-plushbuddy-client-id", HUB_TEST_CLIENT_ID)
             .header("x-plushbuddy-hub-id", HUB_TEST_CLIENT_ID)
-            .header("x-plushbuddy-client-label", "PlushBuddy Hub Test")
+            .header("x-plushbuddy-client-label", "ToyTalk Hub Test")
             .body(Body::empty())
             .unwrap()
     }
@@ -7811,7 +8489,7 @@ mod tests {
         Request::post("/api/v1/bootstrap")
             .header(header::HOST, "127.0.0.1:3210")
             .header(header::ORIGIN, "http://127.0.0.1:3210")
-            .header(header::USER_AGENT, "PlushBuddy test client")
+            .header(header::USER_AGENT, "ToyTalk test client")
             .header("x-plushpal-bootstrap", token)
             .header("x-plushbuddy-client-id", client_id)
             .header("x-plushbuddy-client-label", "Google Pixel Test")
@@ -8193,6 +8871,49 @@ mod tests {
         let body = String::from_utf8_lossy(&body);
         assert!(body.contains(r#""local_only":true"#));
         assert!(body.contains(r#""model_ready":false"#));
+    }
+
+    #[tokio::test]
+    async fn runtime_mode_switch_is_backend_state_and_resolves_local_engine_per_request() {
+        let installed = Arc::new(AtomicBool::new(true));
+        let app = router_with_installer(installed);
+        let bootstrap = app
+            .clone()
+            .oneshot(bootstrap_request("bootstrap"))
+            .await
+            .unwrap();
+        assert_eq!(bootstrap.status(), StatusCode::NO_CONTENT);
+        let cookie = bootstrap
+            .headers()
+            .get(header::SET_COOKIE)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap()
+            .to_owned();
+
+        let switched = app
+            .clone()
+            .oneshot(authenticated_json_request(
+                "/api/v1/runtime/mode",
+                &cookie,
+                r#"{"mode":"privacy_local_first"}"#.to_owned(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(switched.status(), StatusCode::NO_CONTENT);
+
+        let diagnostics = app
+            .oneshot(authenticated_get_request("/api/v1/diagnostics", &cookie))
+            .await
+            .unwrap();
+        assert_eq!(diagnostics.status(), StatusCode::OK);
+        let body = diagnostics.into_body().collect().await.unwrap().to_bytes();
+        let body = String::from_utf8_lossy(&body);
+        assert!(body.contains(r#""station_mode":"privacy_local_first""#));
+        assert!(body.contains(r#""conversation_engine_ready":true"#));
     }
 
     #[tokio::test]
@@ -9726,7 +10447,7 @@ mod tests {
         );
         assert!(response.headers().contains_key("content-security-policy"));
         let body = response.into_body().collect().await.unwrap().to_bytes();
-        assert!(String::from_utf8_lossy(&body).contains("PlushBuddy"));
+        assert!(String::from_utf8_lossy(&body).contains("ToyTalk"));
     }
 
     #[tokio::test]
@@ -9927,10 +10648,70 @@ mod tests {
             child_age_years: Some(5),
             child_age_months: Some(6),
             character_play_age_years: Some(2),
+            recent_turns: Vec::new(),
         });
         assert!(!response.suggest_trusted_adult);
         assert!(response.speech.contains("Buddy"));
         assert!(response.speech.chars().count() < 120);
+    }
+
+    #[test]
+    fn cloud_generation_failure_uses_installed_local_ai_before_safe_fallback() {
+        let installed = Arc::new(AtomicBool::new(true));
+        let state = HostState::new(
+            LoopbackEndpoint { port: 3210 },
+            b"bootstrap",
+            Arc::new(FixedToken),
+            Arc::new(FixedClock),
+        )
+        .with_runtime_mode("cloud_llm")
+        .with_model_installer(Arc::new(FixtureInstaller { installed }))
+        .with_conversation_engine(Arc::new(FailingCloudEngine));
+
+        let outcome = generate_turn_with_retries(
+            &state,
+            "test-cloud-fallback",
+            Arc::new(FailingCloudEngine),
+            LocalTurnCommand {
+                age_band: AgeBand::FourToFive,
+                character_alias: "Buddy".to_owned(),
+                text: "Tell me a tiny rain joke".to_owned(),
+                parent_guidance: None,
+                child_age_years: Some(5),
+                child_age_months: Some(6),
+                character_play_age_years: Some(3),
+                recent_turns: Vec::new(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(runtime_mode_for_state(&state), "cloud_llm");
+        assert_eq!(outcome.mode, "privacy_local_first");
+        assert_eq!(outcome.provider, "local_ai");
+        assert_eq!(outcome.response.speech, "Ready");
+    }
+
+    #[test]
+    fn history_entries_become_chronological_prompt_turns() {
+        let turns = history_entries_to_recent_turns(vec![
+            ConversationHistoryEntry {
+                child_text: "Newest child question".to_owned(),
+                character_text: "Newest toy answer".to_owned(),
+                completed_at: 200,
+            },
+            ConversationHistoryEntry {
+                child_text: "Older child question".to_owned(),
+                character_text: "Older toy answer".to_owned(),
+                completed_at: 100,
+            },
+        ]);
+        assert_eq!(turns.len(), 4);
+        assert_eq!(turns[0].role, TurnRole::Child);
+        assert_eq!(turns[0].text, "Older child question");
+        assert_eq!(turns[1].role, TurnRole::Character);
+        assert_eq!(turns[1].text, "Older toy answer");
+        assert_eq!(turns[2].text, "Newest child question");
+        assert_eq!(turns[3].text, "Newest toy answer");
     }
 
     #[test]

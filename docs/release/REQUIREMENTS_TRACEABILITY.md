@@ -2,11 +2,11 @@
 
 Last updated: 2026-07-05
 
-This table tracks current public evidence plus the vNext PlushBuddy Hub target.
+This table tracks current public evidence plus the vNext ToyTalk Hub target.
 
 | Requirement | Target implementation | Current evidence | Remaining work |
 |---|---|---|---|
-| Local private backend | PlushBuddy Hub owns APIs, SQLCipher storage, reasoning orchestration, STT fallback hook, LuxTTS, pairing, and encrypted backup/restore | Current Rust Axum host, SQLCipher voice store, Hub launcher, packaged smoke tests, Hub-backed clients, packaged Hub app, parent-PIN encrypted backup/import API and client bridge tests, Hub-scoped admin store tests, per-client scoped-store regression test | Broaden release-device QA |
+| Local private backend | ToyTalk Hub owns APIs, SQLCipher storage, reasoning orchestration, STT fallback hook, LuxTTS, pairing, and encrypted backup/restore | Current Rust Axum host, SQLCipher voice store, Hub launcher, packaged smoke tests, Hub-backed clients, packaged Hub app, parent-PIN encrypted backup/import API and client bridge tests, Hub-scoped admin store tests, per-client scoped-store regression test | Broaden release-device QA |
 | Two runtime modes | Local AI and Cloud AI modes only | Runtime-mode plumbing, Hub runtime selector, privacy/cloud runtime banner, Gemini/OpenAI Hub paths, Gemma local model recommendation/install path; demo/mock remain Hub-only developer runtimes | First-run setup polish and broader release-device QA |
 | Local-first voice input | Verified on-device STT first; Hub local STT fallback; no silent cloud STT | Android/iOS enforce on-device recognition and can record bounded fallback WAV clips for Hub STT; local browser/Mac WebKit can record bounded WAV clips for Hub STT; Hub `/api/v1/stt/transcribe` is authenticated; Hub setup prepares the local Python/Transformers `openai/whisper-base` fallback without bundling model payloads | Broaden Mac/WebKit microphone QA and replace Python STT wrapper with lean runtime if needed |
 | Local AI model option | `llama.cpp` + signed Google Gemma 4 GGUF model selected by Hub memory/storage | Google Gemma E4B, 12B, and 26B A4B manifests are signed; Hub recommendation and installer select the matching trusted tier; shared prompt contract and bakeoff tests exist | Broaden release-device QA and add production recency/search gate |

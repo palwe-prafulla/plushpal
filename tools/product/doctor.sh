@@ -2,7 +2,7 @@
 set -u
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-PUBLIC_ROOT="${PLUSHPAL_PUBLIC_ROOT:-$HOME/Downloads/PlushPal}"
+PUBLIC_ROOT="${PLUSHPAL_PUBLIC_ROOT:-$HOME/Downloads/ToyTalk}"
 failures=0
 warnings=0
 
@@ -32,7 +32,7 @@ version_line() {
   "$@" 2>&1 | head -n 1
 }
 
-section "PlushBuddy doctor"
+section "ToyTalk doctor"
 echo "Repo: $ROOT_DIR"
 echo "External artifact root: $PUBLIC_ROOT"
 
@@ -81,13 +81,13 @@ if have python3; then pass "python3: $(version_line python3 --version)"; else fa
 section "Flutter/mobile"
 if have flutter; then
   pass "flutter: $(version_line flutter --version)"
-  flutter doctor -v >/tmp/plushbuddy-flutter-doctor.txt 2>&1
-  if grep -q 'Android toolchain.*develop for Android devices' /tmp/plushbuddy-flutter-doctor.txt; then
+  flutter doctor -v >/tmp/toytalk-flutter-doctor.txt 2>&1
+  if grep -q 'Android toolchain.*develop for Android devices' /tmp/toytalk-flutter-doctor.txt; then
     pass "Flutter Android toolchain detected"
   else
     warn "Flutter Android toolchain may not be ready; run flutter doctor -v"
   fi
-  if grep -q 'Xcode.*develop for iOS and macOS' /tmp/plushbuddy-flutter-doctor.txt; then
+  if grep -q 'Xcode.*develop for iOS and macOS' /tmp/toytalk-flutter-doctor.txt; then
     pass "Flutter sees Xcode/iOS support"
   else
     warn "Flutter may not see full Xcode/iOS support; run flutter doctor -v"

@@ -2,8 +2,8 @@
 
 Last updated: 2026-07-05
 
-PlushBuddy is designed as a local-first pretend-play system. The current
-architecture uses **PlushBuddy Hub** as the local private backend. The Hub runs
+ToyTalk is designed as a local-first pretend-play system. The current
+architecture uses **ToyTalk Hub** as the local private backend. The Hub runs
 on the parent’s computer, stores durable app data in an encrypted SQLCipher
 database, runs voice generation locally, and exposes paired APIs to native
 clients on the same local network.
@@ -114,7 +114,7 @@ Prefer structured status/error codes over content logs.
 
 ## Production-readiness checklist
 
-Before a consumer release, PlushBuddy should add:
+Before a consumer release, ToyTalk should add:
 
 - signed and notarized Hub launcher;
 - signed Android/iPhone/Mac clients;

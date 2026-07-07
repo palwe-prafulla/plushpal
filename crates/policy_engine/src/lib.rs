@@ -162,6 +162,7 @@ pub struct ModelPromptContract<'a> {
     pub answer_examples: [&'static str; 3],
     pub recent_turns: Vec<ModelPromptTurn<'a>>,
     pub current_child_text: String,
+    pub repair_instruction: Option<String>,
     pub maximum_response_characters: usize,
     pub store: bool,
     pub response_schema: &'static str,
@@ -201,6 +202,10 @@ impl<'a> ModelPromptContract<'a> {
                 .map(ModelPromptTurn::from_turn)
                 .collect(),
             current_child_text: redact_personal_info(&request.current_text),
+            repair_instruction: request
+                .repair_instruction
+                .as_deref()
+                .map(redact_personal_info),
             maximum_response_characters: request.max_response_characters,
             store: false,
             response_schema: MODEL_RESPONSE_SCHEMA,
@@ -247,7 +252,7 @@ pub const MODEL_TASK_INSTRUCTIONS: [&str; 5] = [
 ];
 
 pub const MODEL_RESPONSE_STYLE: &str =
-    "Keep normal replies warm, playful, concrete, and easy for a young child. Prefer 2-4 tiny sentences, usually 25-65 words total. Start with a brief conversational reaction when natural, then answer. Short answers are fine for simple prompts, but do not sound clipped or robotic. Explain facts accurately in child-friendly words while speaking as the toy.";
+    "Keep normal replies warm, playful, concrete, and easy for a young child. Prefer a complete answer in 2-5 short spoken sentences. Start with a brief conversational reaction when natural, then answer. Short answers are fine for simple prompts, but do not sound clipped or robotic. Explain facts accurately in child-friendly words while speaking as the toy.";
 
 pub const MODEL_ANSWER_EXAMPLES: [&str; 3] = [
     r#"Child: "why is rain wet" -> {"speech":"Ooh, good question! Rain feels wet because it is made of tiny drops of water. Water sticks to your skin and clothes a little, so your body feels that splashy wet feeling!","suggest_trusted_adult":false}"#,
@@ -357,24 +362,24 @@ impl AgePolicy {
             AgeBand::FourToFive => Self {
                 version: "child-safe-en-1",
                 max_input_characters: 300,
-                max_output_characters: 240,
-                max_sentences: 3,
+                max_output_characters: 520,
+                max_sentences: 5,
                 search_allowed: false,
                 experimental_cloud_allowed: false,
             },
             AgeBand::SixToEight => Self {
                 version: "child-safe-en-1",
                 max_input_characters: 450,
-                max_output_characters: 360,
-                max_sentences: 3,
+                max_output_characters: 700,
+                max_sentences: 5,
                 search_allowed: true,
                 experimental_cloud_allowed: false,
             },
             AgeBand::NineToTwelve => Self {
                 version: "child-safe-en-1",
                 max_input_characters: 600,
-                max_output_characters: 450,
-                max_sentences: 3,
+                max_output_characters: 900,
+                max_sentences: 6,
                 search_allowed: true,
                 experimental_cloud_allowed: true,
             },
@@ -464,12 +469,16 @@ mod tests {
     }
 
     #[test]
-    fn youngest_band_allows_three_tiny_sentences_but_keeps_length_cap() {
+    fn youngest_band_allows_complete_spoken_answer_but_keeps_safety_rails() {
         let policy = AgePolicy::for_age_band(AgeBand::FourToFive);
         assert_eq!(
-            policy.validate_output("Rain is water. It falls from clouds. Splash splash!"),
+            policy.validate_output(
+                "Rain is water. It gathers in clouds. When drops get heavy, they fall down. That gives plants a drink. Splash splash!"
+            ),
             Ok(())
         );
+        assert_eq!(policy.max_output_characters, 520);
+        assert_eq!(policy.max_sentences, 5);
         assert_eq!(
             policy.validate_output(&"x".repeat(policy.max_output_characters + 1)),
             Err(PolicyViolation::OutputTooLong)
@@ -595,6 +604,7 @@ mod tests {
                 text: "my number is 415-555-1212".to_owned(),
             }],
             current_text: "why is rain wet? my email is kid@example.com".to_owned(),
+            repair_instruction: None,
             max_response_characters: 360,
         };
         let contract = ModelPromptContract::from_request(&request, ModelPromptMode::Local);

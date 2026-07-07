@@ -1,23 +1,23 @@
-# PlushBuddy Hub MVP architecture
+# ToyTalk Hub MVP architecture
 
 Last updated: 2026-07-05
 
 This document explains the Android/iPhone/Mac/browser + Hub implementation and
-the current **PlushBuddy Hub** product architecture. Some implementation paths
+the current **ToyTalk Hub** product architecture. Some implementation paths
 still use the historical `macstation` name, but the product architecture and
-user-facing name are PlushBuddy Hub.
+user-facing name are ToyTalk Hub.
 
 For the canonical design, see [`SYSTEM_DESIGN.md`](SYSTEM_DESIGN.md).
 For code locations, see [`CODEBASE_DIRECTORY_GUIDE.md`](CODEBASE_DIRECTORY_GUIDE.md).
 
 ## 1. Naming
 
-The public product name is **PlushBuddy Hub**.
+The public product name is **ToyTalk Hub**.
 
 Some files and automation scripts still contain the historical `macstation`
 path/name because that was the original internal implementation label. Treat
 those as legacy code-path names only. Product docs, UI, and user-facing flows
-should say **PlushBuddy Hub**.
+should say **ToyTalk Hub**.
 
 The first Hub platform is macOS. Later platforms are Windows and Linux.
 
@@ -56,7 +56,7 @@ Current Hub-backed product path:
 | iPhone app | External native voice-first client |
 | Mac app | Native voice-first client, local or external |
 | Local browser | Same-machine browser UI only |
-| PlushBuddy Hub for macOS | First backend/runtime host |
+| ToyTalk Hub for macOS | First backend/runtime host |
 
 Remote browser clients are intentionally not supported for now. If a user wants
 to connect from another device, they should use a native app.
@@ -151,7 +151,7 @@ clients get isolated encrypted scoped stores for family data.
 Target database:
 
 ```text
-~/Library/Application Support/PlushPal/plushbuddy-hub.sqlcipher
+~/Library/Application Support/ToyTalk/toytalk-hub.sqlcipher
 ```
 
 The root DB is retained for compatibility/key derivation. The Hub has a stable
@@ -232,10 +232,10 @@ parent PIN in paired product usage.
 1. Broaden Mac/WebKit microphone QA for the implemented Hub STT fallback.
 2. Broaden local/cloud reasoning safety and quality regression coverage.
 3. Polish the two-choice runtime setup screen and latency diagnostics.
-4. Rename remaining historical `macstation` strings/paths to PlushBuddy Hub
+4. Rename remaining historical `macstation` strings/paths to ToyTalk Hub
    where practical.
 
 ## 11. Current compatibility note
 
 Some code/tests still use `macstation` as an implementation path name. That is
-legacy naming; the product architecture is PlushBuddy Hub.
+legacy naming; the product architecture is ToyTalk Hub.

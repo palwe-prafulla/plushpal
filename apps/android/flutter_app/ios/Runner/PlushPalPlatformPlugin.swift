@@ -5,9 +5,9 @@ import Speech
 import UniformTypeIdentifiers
 import UIKit
 
-final class PlushPalPlatformPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizerDelegate, AVAudioPlayerDelegate, UIDocumentPickerDelegate {
-  private static let channelName = "com.plushpal/platform"
-  private static let keychainService = "com.plushpal.opaque-secrets.v1"
+final class ToyTalkPlatformPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizerDelegate, AVAudioPlayerDelegate, UIDocumentPickerDelegate {
+  private static let channelName = "com.toytalk/platform"
+  private static let keychainService = "com.toytalk.opaque-secrets.v1"
   private let synthesizer = AVSpeechSynthesizer()
   private let audioEngine = AVAudioEngine()
   private var recognitionTask: SFSpeechRecognitionTask?
@@ -26,7 +26,7 @@ final class PlushPalPlatformPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
   }
 
   static func register(with registrar: FlutterPluginRegistrar) {
-    let instance = PlushPalPlatformPlugin()
+    let instance = ToyTalkPlatformPlugin()
     let channel = FlutterMethodChannel(
       name: channelName,
       binaryMessenger: registrar.messenger()
@@ -51,7 +51,7 @@ final class PlushPalPlatformPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
     case "modelStatus":
       result([
         "modelId": "hub-required",
-        "displayName": "PlushBuddy Hub",
+        "displayName": "ToyTalk Hub",
         "ready": false,
         "installSupported": false,
         "installing": false,
@@ -138,7 +138,7 @@ final class PlushPalPlatformPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
   private func hubRequired(result: FlutterResult) {
     result(FlutterError(
       code: "hub_required",
-      message: "Connect PlushBuddy Hub before using family, voice, AI, or conversation data.",
+      message: "Connect ToyTalk Hub before using family, voice, AI, or conversation data.",
       details: nil
     ))
   }
@@ -275,11 +275,11 @@ final class PlushPalPlatformPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
       "gemini-api-key-v1",
     ].forEach(deleteProtectedData)
     [
-      "plushpal.child-age-band",
-      "plushpal.character-alias",
-      "plushpal.character-traits",
-      "plushpal.parent-guidance",
-      "plushpal.retention-days",
+      "toytalk.child-age-band",
+      "toytalk.character-alias",
+      "toytalk.character-traits",
+      "toytalk.parent-guidance",
+      "toytalk.retention-days",
     ].forEach(UserDefaults.standard.removeObject)
   }
 
@@ -509,7 +509,7 @@ final class PlushPalPlatformPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
 
   private func startSpeechWavRecording(result: @escaping FlutterResult) {
     let url = FileManager.default.temporaryDirectory
-      .appendingPathComponent("plushbuddy-hub-stt-\(UUID().uuidString).wav")
+      .appendingPathComponent("toytalk-hub-stt-\(UUID().uuidString).wav")
     do {
       let session = AVAudioSession.sharedInstance()
       try session.setCategory(.record, mode: .measurement, options: .duckOthers)

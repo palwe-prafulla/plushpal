@@ -1,15 +1,15 @@
-# PlushBuddy Hub system design and architecture
+# ToyTalk Hub system design and architecture
 
 Last updated: 2026-07-05
 
 ## 1. Executive summary
 
-PlushBuddy is a local-first pretend-play voice companion for kids’ plush toys.
+ToyTalk is a local-first pretend-play voice companion for kids’ plush toys.
 A parent creates kid profiles, creates toy-character profiles, uploads a short
 sample of how each toy should sound, approves the cloned voice, and a child can
 talk to that toy through native clients.
 
-The current architecture makes **PlushBuddy Hub** the local private backend:
+The current architecture makes **ToyTalk Hub** the local private backend:
 
 - the Hub runs first on macOS;
 - Android, iPhone, Mac app, and future Windows/Linux apps are thin UI clients;
@@ -29,7 +29,7 @@ Native clients + local browser UI
         |
         | paired local-network session / localhost
         v
-PlushBuddy Hub
+ToyTalk Hub
   root encrypted SQLCipher key/compatibility store
   Hub scoped SQLCipher store
   per-client encrypted SQLCipher stores
@@ -72,7 +72,7 @@ Remaining architecture work:
   fallback path;
 - expand safety/regression evaluation for the selected local Gemma tiers and
   cloud providers;
-- rename remaining historical `macstation` implementation names to PlushBuddy
+- rename remaining historical `macstation` implementation names to ToyTalk
   Hub where practical.
 
 Implemented direction:
@@ -223,10 +223,10 @@ flowchart TB
     Child["Child"] --> Client
 
     Client --> Mic["Mic capture + local STT when verified"]
-    Mic --> HubAPI["PlushBuddy Hub API<br/>local backend"]
+    Mic --> HubAPI["ToyTalk Hub API<br/>local backend"]
     Client --> HubAPI
 
-    subgraph Hub["PlushBuddy Hub"]
+    subgraph Hub["ToyTalk Hub"]
         API["Rust Axum API"]
         DB["SQLCipher DB<br/>kids, characters, history, settings"]
         Pairing["Paired devices<br/>stable client identity"]
@@ -252,7 +252,7 @@ flowchart TB
 
 ## 9. Hub responsibilities
 
-PlushBuddy Hub owns:
+ToyTalk Hub owns:
 
 - parent PIN and parent settings;
 - runtime mode selection;
@@ -288,11 +288,11 @@ Each Hub installation has a root encrypted SQLCipher database for Hub registry
 compatibility state and key derivation:
 
 ```text
-~/Library/Application Support/PlushPal/plushbuddy-hub.sqlcipher
+~/Library/Application Support/ToyTalk/toytalk-hub.sqlcipher
 ```
 
-Current implementation uses `plushpal.sqlcipher` for compatibility with earlier
-dev builds. A future migration may rename it to `plushbuddy-hub.sqlcipher`.
+Current implementation uses `toytalk.sqlcipher` for compatibility with earlier
+dev builds. A future migration may rename it to `toytalk-hub.sqlcipher`.
 
 The root store is not the normal product data tenant. It is retained for
 compatibility, database bootstrap, key material, and migration support.
@@ -431,14 +431,28 @@ sequenceDiagram
     participant Models as Model runtimes
     participant DB as SQLCipher
 
-    Parent->>Shell: Open PlushBuddy Hub
+    Parent->>Shell: Open ToyTalk Hub
     Shell->>Shell: Prevent system sleep while active
-    Shell->>DB: Verify/open encrypted DB
-    Shell->>Hub: Start backend
-    Hub->>Models: Verify STT/AI/TTS runtime per selected mode
+    par Safe parallel preflight
+        Shell->>DB: Prepare app-support storage
+    and
+        Shell->>Shell: Discover LAN address for QR pairing
+    and
+        Shell->>Shell: Detect Mac capability for Local AI recommendation
+    and
+        Shell->>Models: Check/install LuxTTS voice runtime
+    end
+    Shell->>Models: Prepare Hub STT fallback using available Python runtime
+    Shell->>Hub: Start backend with resolved voice/STT/runtime environment
+    Hub->>Models: Verify selected AI/TTS/STT runtime health
     Hub-->>Shell: Health/status
     Shell-->>Parent: Ready + mode + pairing/local launch options
 ```
+
+The Hub intentionally does not expose pairing, browser, or Mac-client launch
+options until the final health gate passes. Parallel setup is used to reduce
+startup time without creating a confusing partially usable state where parents
+can configure clients before buddy voices and Hub services are ready.
 
 ### 13.2 Parent setup
 
@@ -524,7 +538,7 @@ Performance tactics:
 
 1. Broaden Local AI model safety and quality regression coverage.
 2. Broaden Mac/WebKit microphone QA and optimize Hub STT runtime packaging.
-3. Rename historical `macstation` implementation paths/strings to PlushBuddy Hub.
+3. Rename historical `macstation` implementation paths/strings to ToyTalk Hub.
 4. Windows Hub launcher/runtime.
 5. Linux Hub launcher/runtime.
 
@@ -534,5 +548,5 @@ Performance tactics:
 - Polish Hub runtime-mode setup screen around the two parent-facing choices.
 - Broaden Mac/WebKit microphone QA for the implemented Hub STT fallback.
 - Rename remaining user-facing/internal historical `macstation` language to
-  PlushBuddy Hub.
+  ToyTalk Hub.
 - Keep old `macstation` code paths only as implementation names until renamed.

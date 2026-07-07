@@ -510,6 +510,7 @@ mod tests {
                 text: "my number is 415-555-1212".to_owned(),
             }],
             current_text: "why blue? email kid@example.com".to_owned(),
+            repair_instruction: None,
             max_response_characters: 450,
         }
     }

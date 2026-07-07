@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Create a GitHub release and upload a local PlushBuddy release bundle.
+"""Create a GitHub release and upload a local ToyTalk release bundle.
 
 Token lookup order:
 
 1. ``GITHUB_TOKEN`` environment variable
 2. macOS Keychain service ``codex.github.token``
-3. macOS Keychain service ``plushpal.github.token`` for backward compatibility
+3. macOS Keychain service ``toytalk.github.token`` for backward compatibility
 
 Use ``--dry-run`` to validate the bundle and print planned API calls without
 making network requests.
@@ -49,7 +49,7 @@ def github_token() -> str:
     token = os.environ.get("GITHUB_TOKEN", "").strip()
     if token:
         return token
-    for service in ("codex.github.token", "plushpal.github.token"):
+    for service in ("codex.github.token", "toytalk.github.token"):
         token = keychain_token(service)
         if token:
             return token
@@ -130,7 +130,7 @@ def main() -> int:
         raise SystemExit("Release bundle must include RELEASE_NOTES.md")
 
     release_body = notes.read_text(encoding="utf-8")
-    release_name = args.name or f"PlushBuddy {args.tag}"
+    release_name = args.name or f"ToyTalk {args.tag}"
     release_payload = {
         "tag_name": args.tag,
         "target_commitish": args.target,

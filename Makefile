@@ -1,4 +1,4 @@
-PUBLIC_ROOT ?= $(HOME)/Downloads/PlushPal
+PUBLIC_ROOT ?= $(HOME)/Downloads/ToyTalk
 ARTIFACTS_DIR ?= $(PUBLIC_ROOT)/artifacts
 BUILD_DIR ?= $(PUBLIC_ROOT)/build
 PACKAGE_CARGO_TARGET_DIR ?= $(BUILD_DIR)/cargo-target-local
@@ -61,7 +61,7 @@ release-bundle:
 	sh packaging/create-release-bundle.sh
 
 publish-release:
-	@if [ -z "$(TAG)" ]; then echo "Usage: make publish-release TAG=v0.1.0 RELEASE_DIR=$(PUBLIC_ROOT)/release/v0.1.0"; exit 2; fi
+	@if [ -z "$(TAG)" ]; then echo "Usage: make publish-release TAG=v2 RELEASE_DIR=$(PUBLIC_ROOT)/release/v2"; exit 2; fi
 	@if [ -z "$(RELEASE_DIR)" ]; then echo "Usage: make publish-release TAG=$(TAG) RELEASE_DIR=$(PUBLIC_ROOT)/release/$(TAG)"; exit 2; fi
 	tools/github/create_release.py palwe-prafulla plushpal "$(TAG)" "$(RELEASE_DIR)"
 

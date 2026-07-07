@@ -5,14 +5,23 @@ import 'package:flutter/services.dart';
 
 import 'platform_bridge_types.dart';
 
-@JS('plushpalWebSpeechSupported')
+@JS('toytalkWebSpeechSupported')
 external JSBoolean _webSpeechSupported();
 
-@JS('plushpalRecordSpeechWav')
+@JS('toytalkNativeSpeechSupported')
+external JSBoolean _nativeSpeechSupported();
+
+@JS('toytalkNativeListen')
+external JSPromise<JSString> _nativeListen();
+
+@JS('toytalkRecordSpeechWav')
 external JSPromise<JSString> _recordSpeechWav();
 
-@JS('plushpalSpeakText')
+@JS('toytalkSpeakText')
 external JSPromise<JSAny?> _speakText(JSString text);
+
+@JS('toytalkPlayWavBase64')
+external JSPromise<JSAny?> _playWavBase64(JSString wavBase64);
 
 class MethodChannelPlatformBridge implements PlatformBridge {
   const MethodChannelPlatformBridge({MethodChannel? channel});
@@ -20,9 +29,13 @@ class MethodChannelPlatformBridge implements PlatformBridge {
   @override
   bool get supportsSpeech {
     try {
-      return _webSpeechSupported().toDart;
+      return _nativeSpeechSupported().toDart || _webSpeechSupported().toDart;
     } catch (_) {
-      return false;
+      try {
+        return _webSpeechSupported().toDart;
+      } catch (_) {
+        return false;
+      }
     }
   }
 
@@ -35,7 +48,7 @@ class MethodChannelPlatformBridge implements PlatformBridge {
 
   @override
   Future<String> storeSecret(String label, String value) {
-    throw UnsupportedError('Browser secrets are stored by PlushBuddy Hub.');
+    throw UnsupportedError('Browser secrets are stored by ToyTalk Hub.');
   }
 
   @override
@@ -45,11 +58,16 @@ class MethodChannelPlatformBridge implements PlatformBridge {
   Future<bool> ensureMicrophonePermission() async => supportsSpeech;
 
   @override
-  Future<String> listen() {
-    throw PlatformException(
-      code: 'speech_on_device_unavailable',
-      message: 'Browser on-device speech recognition is unavailable.',
-    );
+  Future<String> listen() async {
+    try {
+      return (await _nativeListen().toDart).toDart;
+    } catch (error) {
+      throw PlatformException(
+        code: 'speech_on_device_unavailable',
+        message: 'Browser on-device speech recognition is unavailable.',
+        details: error.toString(),
+      );
+    }
   }
 
   @override
@@ -59,10 +77,8 @@ class MethodChannelPlatformBridge implements PlatformBridge {
   }
 
   @override
-  Future<void> playWavBytes(Uint8List wavBytes) {
-    throw UnsupportedError(
-      'Browser WAV playback is handled by Hub voice APIs.',
-    );
+  Future<void> playWavBytes(Uint8List wavBytes) async {
+    await _playWavBase64(base64Encode(wavBytes).toJS).toDart;
   }
 
   @override

@@ -3,10 +3,10 @@ set -euo pipefail
 set +m
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-RESULT_ROOT="${PLUSHPAL_TEST_RESULTS_DIR:-$HOME/Downloads/PlushPal/test-results}"
+RESULT_ROOT="${PLUSHPAL_TEST_RESULTS_DIR:-$HOME/Downloads/ToyTalk/test-results}"
 RESULT_DIR="$RESULT_ROOT/android-hub-pairing-$(date +%Y%m%d-%H%M%S)"
 DEVICE_ID="${ANDROID_DEVICE_ID:-}"
-PACKAGE_ID="${PLUSHPAL_ANDROID_PACKAGE:-com.plushpal.app}"
+PACKAGE_ID="${PLUSHPAL_ANDROID_PACKAGE:-com.toytalk.app}"
 mkdir -p "$RESULT_DIR"
 
 if [[ -z "$DEVICE_ID" ]]; then
@@ -17,8 +17,8 @@ if [[ -z "$DEVICE_ID" ]]; then
   exit 2
 fi
 
-DATA_DIR="$(mktemp -d /tmp/plushbuddy-android-pairing-data-XXXXXX)"
-MODEL_DIR="$(mktemp -d /tmp/plushbuddy-android-pairing-models-XXXXXX)"
+DATA_DIR="$(mktemp -d /tmp/toytalk-android-pairing-data-XXXXXX)"
+MODEL_DIR="$(mktemp -d /tmp/toytalk-android-pairing-models-XXXXXX)"
 HOST_LOG="$RESULT_DIR/host.log"
 
 cleanup() {
@@ -37,18 +37,18 @@ trap cleanup EXIT
   PLUSHPAL_PORT=0 \
   PLUSHPAL_DATA_DIR="$DATA_DIR" \
   PLUSHPAL_MODEL_DIR="$MODEL_DIR" \
-  CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$HOME/Downloads/PlushPal/test-build/cargo-target}" \
+  CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$HOME/Downloads/ToyTalk/test-build/cargo-target}" \
   PLUSHPAL_ENABLE_MAC_KEYCHAIN_GEMINI=0 \
   cargo run --release -p plushpal-desktop-host --bin plushpal-desktop-host --features native-runtime > "$HOST_LOG" 2>&1
 ) &
 HOST_PID=$!
 
 for _ in $(seq 1 120); do
-  if grep -q "PlushBuddy Hub test bootstrap URL:" "$HOST_LOG"; then break; fi
+  if grep -q "ToyTalk Hub test bootstrap URL:" "$HOST_LOG"; then break; fi
   sleep 1
 done
 
-BOOTSTRAP_URL="$(grep "PlushBuddy Hub test bootstrap URL:" "$HOST_LOG" | tail -1 | sed 's/.*URL: //')"
+BOOTSTRAP_URL="$(grep "ToyTalk Hub test bootstrap URL:" "$HOST_LOG" | tail -1 | sed 's/.*URL: //')"
 if [[ -z "$BOOTSTRAP_URL" ]]; then
   echo "Hub did not print bootstrap URL." >&2
   exit 3
@@ -88,8 +88,8 @@ adb -s "$DEVICE_ID" shell am start \
   --es cookie "$COOKIE" > "$RESULT_DIR/debug-pairing-intent.log" 2>&1
 sleep 3
 
-adb -s "$DEVICE_ID" shell uiautomator dump /sdcard/plushbuddy-pairing.xml > "$RESULT_DIR/dump.log" 2>&1 || true
-adb -s "$DEVICE_ID" pull /sdcard/plushbuddy-pairing.xml "$RESULT_DIR/window.xml" > "$RESULT_DIR/pull.log" 2>&1 || true
+adb -s "$DEVICE_ID" shell uiautomator dump /sdcard/toytalk-pairing.xml > "$RESULT_DIR/dump.log" 2>&1 || true
+adb -s "$DEVICE_ID" pull /sdcard/toytalk-pairing.xml "$RESULT_DIR/window.xml" > "$RESULT_DIR/pull.log" 2>&1 || true
 adb -s "$DEVICE_ID" exec-out screencap -p > "$RESULT_DIR/screen.png" || true
 
 if adb -s "$DEVICE_ID" shell dumpsys package "$PACKAGE_ID" >/dev/null 2>&1; then

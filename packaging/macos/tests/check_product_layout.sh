@@ -13,7 +13,7 @@ apps/macos/client_app/AppShell.swift
 packaging/macos/package.sh
 packaging/macos/StationInfo.plist.in
 packaging/macos/ClientInfo.plist.in
-tools/branding/generate_plushbuddy_icons.py
+tools/branding/generate_toytalk_icons.py
 "
 
 for path in $required_paths; do
@@ -23,19 +23,26 @@ for path in $required_paths; do
   fi
 done
 
-grep -q 'PlushBuddy Hub.app' packaging/macos/package.sh
-grep -q 'PlushBuddy.app' packaging/macos/package.sh
+grep -q 'ToyTalk Hub.app' packaging/macos/package.sh
+grep -q 'ToyTalk.app' packaging/macos/package.sh
 grep -q 'apps/macos/station_app/AppShell.swift' packaging/macos/package.sh
 grep -q 'apps/macos/client_app/AppShell.swift' packaging/macos/package.sh
-grep -q 'Contents/Resources/PlushBuddy.app' packaging/macos/package.sh
-grep -q 'PlushBuddyHubBackgroundView' apps/macos/station_app/AppShell.swift
-grep -q 'PlushBuddyLogoView' apps/macos/station_app/AppShell.swift
+grep -q 'Contents/Resources/ToyTalk.app' packaging/macos/package.sh
+grep -q 'ToyTalkHubBackgroundView' apps/macos/station_app/AppShell.swift
+grep -q 'ToyTalkLogoView' apps/macos/station_app/AppShell.swift
+grep -q 'NSSpeechRecognitionUsageDescription' packaging/macos/StationInfo.plist.in
+grep -q 'NSSpeechRecognitionUsageDescription' packaging/macos/ClientInfo.plist.in
+grep -q 'NSMicrophoneUsageDescription' packaging/macos/StationInfo.plist.in
+grep -q 'NSMicrophoneUsageDescription' packaging/macos/ClientInfo.plist.in
+grep -q 'HostLaunchContext' apps/macos/station_app/AppShell.swift
+grep -q 'prepareHostLaunchContext' apps/macos/station_app/AppShell.swift
+grep -q 'DispatchGroup' apps/macos/station_app/AppShell.swift
 grep -q 'NSScrollView' apps/macos/station_app/AppShell.swift
 grep -q 'hasVerticalScroller = true' apps/macos/station_app/AppShell.swift
 grep -q 'Theme: ' apps/macos/station_app/AppShell.swift
-grep -q 'PlushBuddyTeddyPainter' apps/android/flutter_app/lib/src/app.dart
-grep -q 'IOS_ICONSET' tools/branding/generate_plushbuddy_icons.py
-grep -q 'STATION_WEB_ICONS' tools/branding/generate_plushbuddy_icons.py
+grep -q 'ToyTalkTeddyPainter' apps/android/flutter_app/lib/src/app.dart
+grep -q 'IOS_ICONSET' tools/branding/generate_toytalk_icons.py
+grep -q 'STATION_WEB_ICONS' tools/branding/generate_toytalk_icons.py
 
 sh -n packaging/macos/package.sh
 swiftc -typecheck -framework AppKit -framework WebKit apps/macos/client_app/AppShell.swift

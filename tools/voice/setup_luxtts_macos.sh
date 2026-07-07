@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-PUBLIC_ROOT="${PLUSHPAL_PUBLIC_ROOT:-$HOME/Downloads/PlushPal}"
+PUBLIC_ROOT="${PLUSHPAL_PUBLIC_ROOT:-$HOME/Downloads/ToyTalk}"
 DEPS_ROOT="${PLUSHPAL_DEPS_DIR:-$PUBLIC_ROOT/deps}"
 LUXTTS_SOURCE_DIR="${PLUSHPAL_LUXTTS_SOURCE_DIR:-$DEPS_ROOT/LuxTTS}"
 VENV="${PLUSHPAL_LUXTTS_VENV:-$DEPS_ROOT/.venv-luxtts}"

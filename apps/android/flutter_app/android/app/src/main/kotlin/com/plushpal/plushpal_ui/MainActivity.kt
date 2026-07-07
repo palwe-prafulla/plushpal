@@ -44,15 +44,15 @@ import kotlin.math.abs
 
 class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, TextToSpeech.OnInitListener {
     companion object {
-        private const val logTag = "PlushBuddy"
-        private const val debugSavePairingAction = "com.plushpal.app.DEBUG_SAVE_PAIRING"
+        private const val logTag = "ToyTalk"
+        private const val debugSavePairingAction = "com.toytalk.app.DEBUG_SAVE_PAIRING"
         private const val pickVoiceSampleRequestCode = 7104
         private const val pickCharacterPhotoRequestCode = 7105
     }
 
-    private val channelName = "com.plushpal/platform"
-    private val vaultAlias = "com.plushpal.hardware-vault.v1"
-    private val vaultPreferences = "plushpal_opaque_secrets"
+    private val channelName = "com.toytalk/platform"
+    private val vaultAlias = "com.toytalk.hardware-vault.v1"
+    private val vaultPreferences = "toytalk_opaque_secrets"
     private var speechRecognizer: SpeechRecognizer? = null
     private var textToSpeech: TextToSpeech? = null
     private var pendingSpeechResult: MethodChannel.Result? = null
@@ -107,7 +107,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, TextToS
             "modelStatus" -> result.success(
                 mapOf(
                     "modelId" to "hub-required",
-                    "displayName" to "PlushBuddy Hub",
+                    "displayName" to "ToyTalk Hub",
                     "ready" to false,
                     "installSupported" to false,
                     "installing" to false,
@@ -190,7 +190,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, TextToS
     private fun hubRequired(result: MethodChannel.Result) {
         result.error(
             "hub_required",
-            "Connect PlushBuddy Hub before using family, voice, AI, or conversation data.",
+            "Connect ToyTalk Hub before using family, voice, AI, or conversation data.",
             null,
         )
     }
@@ -324,7 +324,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, TextToS
             ?.takeIf { it.isNotEmpty() && it != "9774d56d682e549c" }
         val generated = if (androidId != null) {
             val stable = UUID.nameUUIDFromBytes(
-                "plushbuddy:android:$androidId".toByteArray(StandardCharsets.UTF_8),
+                "toytalk:android:$androidId".toByteArray(StandardCharsets.UTF_8),
             )
             "android-$stable"
         } else {
@@ -594,7 +594,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, TextToS
             return
         }
         pendingWavResult = result
-        val file = java.io.File(cacheDir, "plushpal-voice-${UUID.randomUUID()}.wav")
+        val file = java.io.File(cacheDir, "toytalk-voice-${UUID.randomUUID()}.wav")
         try {
             file.writeBytes(wavBytes)
             wavPlayer?.release()
@@ -745,7 +745,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, TextToS
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 6_000L)
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 6_000L)
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 3_500L)
-                putExtra(RecognizerIntent.EXTRA_PROMPT, "Talk to PlushBuddy")
+                putExtra(RecognizerIntent.EXTRA_PROMPT, "Talk to ToyTalk")
             })
         }
     }
@@ -904,7 +904,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler, TextToS
             return
         }
         pendingSpeechResult = result
-        val status = textToSpeech?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "plushpal-turn")
+        val status = textToSpeech?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "toytalk-turn")
         if (status == TextToSpeech.ERROR) {
             completeSpeech(FlutterSpeechError("Synthesis failed"))
         }

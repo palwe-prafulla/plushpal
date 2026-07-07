@@ -1,13 +1,34 @@
 import AppKit
+import AVFoundation
 import Foundation
+import Speech
 import UniformTypeIdentifiers
 import WebKit
 
-final class MacClientAppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
+private final class NativeSpeechSession {
+    let id: String
+    let audioEngine: AVAudioEngine
+    let request: SFSpeechAudioBufferRecognitionRequest
+    var task: SFSpeechRecognitionTask?
+    var latestTranscript = ""
+    var lastTranscriptAt = Date()
+    let startedAt = Date()
+
+    init(id: String, audioEngine: AVAudioEngine, request: SFSpeechAudioBufferRecognitionRequest) {
+        self.id = id
+        self.audioEngine = audioEngine
+        self.request = request
+    }
+}
+
+final class MacClientAppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, AVAudioPlayerDelegate {
     private var window: NSWindow!
     private var webView: WKWebView!
     private var fallbackView: NSView!
     private var statusLabel: NSTextField!
+    private var nativeSpeechSession: NativeSpeechSession?
+    private var nativeAudioPlayer: AVAudioPlayer?
+    private var nativeAudioCallbackId: String?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -25,10 +46,60 @@ final class MacClientAppDelegate: NSObject, NSApplicationDelegate, WKNavigationD
         configuration.websiteDataStore = .default()
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
         let userContentController = WKUserContentController()
-        userContentController.add(self, name: "plushpalLog")
+        userContentController.add(self, name: "toytalkLog")
+        userContentController.add(self, name: "toytalkNativeSpeech")
+        userContentController.add(self, name: "toytalkNativeAudio")
         userContentController.addUserScript(WKUserScript(
             source: """
             (() => {
+              window.__toytalkClientPlatform = 'macos';
+              window.__toytalkClientLabel = 'ToyTalk Mac app';
+              window.__toytalkNativeSpeechCallbacks = new Map();
+              window.__toytalkNativeSpeechResolve = (payload) => {
+                const callback = window.__toytalkNativeSpeechCallbacks.get(payload && payload.id);
+                if (!callback) return;
+                window.__toytalkNativeSpeechCallbacks.delete(payload.id);
+                if (payload.ok) {
+                  callback.resolve(String(payload.text || ''));
+                } else {
+                  callback.reject(new Error(String(payload.error || 'Native speech failed.')));
+                }
+              };
+              window.toytalkNativeSpeechSupported = () =>
+                Boolean(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.toytalkNativeSpeech);
+              window.toytalkNativeListen = () => new Promise((resolve, reject) => {
+                const id = `mac-speech-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+                window.__toytalkNativeSpeechCallbacks.set(id, {resolve, reject});
+                try {
+                  window.webkit.messageHandlers.toytalkNativeSpeech.postMessage({id});
+                } catch (error) {
+                  window.__toytalkNativeSpeechCallbacks.delete(id);
+                  reject(error);
+                }
+              });
+              window.__toytalkNativeAudioCallbacks = new Map();
+              window.__toytalkNativeAudioResolve = (payload) => {
+                const callback = window.__toytalkNativeAudioCallbacks.get(payload && payload.id);
+                if (!callback) return;
+                window.__toytalkNativeAudioCallbacks.delete(payload.id);
+                if (payload.ok) {
+                  callback.resolve();
+                } else {
+                  callback.reject(new Error(String(payload.error || 'Native audio playback failed.')));
+                }
+              };
+              window.toytalkNativeAudioSupported = () =>
+                Boolean(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.toytalkNativeAudio);
+              window.toytalkNativePlayWavBase64 = (wavBase64) => new Promise((resolve, reject) => {
+                const id = `mac-audio-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+                window.__toytalkNativeAudioCallbacks.set(id, {resolve, reject});
+                try {
+                  window.webkit.messageHandlers.toytalkNativeAudio.postMessage({id, wavBase64: String(wavBase64 || '')});
+                } catch (error) {
+                  window.__toytalkNativeAudioCallbacks.delete(id);
+                  reject(error);
+                }
+              });
               const stringify = (value) => {
                 try {
                   if (value instanceof Error) return value.stack || value.message;
@@ -40,7 +111,7 @@ final class MacClientAppDelegate: NSObject, NSApplicationDelegate, WKNavigationD
               };
               const send = (level, values) => {
                 try {
-                  window.webkit.messageHandlers.plushpalLog.postMessage({
+                  window.webkit.messageHandlers.toytalkLog.postMessage({
                     level,
                     message: Array.from(values).map(stringify).join(' '),
                     url: window.location.href,
@@ -78,20 +149,20 @@ final class MacClientAppDelegate: NSObject, NSApplicationDelegate, WKNavigationD
 
         fallbackView = NSView()
         fallbackView.translatesAutoresizingMaskIntoConstraints = false
-        let title = NSTextField(labelWithString: "Open PlushBuddy from Hub")
+        let title = NSTextField(labelWithString: "Open ToyTalk from Hub")
         title.font = .systemFont(ofSize: 28, weight: .semibold)
         title.alignment = .center
         title.translatesAutoresizingMaskIntoConstraints = false
 
         statusLabel = NSTextField(wrappingLabelWithString: """
-        PlushBuddy is the Mac client UI. Start PlushBuddy Hub first so it can prepare voice services, then click “Open Mac client” in Hub.
+        ToyTalk is the Mac client UI. Start ToyTalk Hub first so it can prepare voice services, then click “Open Mac client” in Hub.
         """)
         statusLabel.font = .systemFont(ofSize: 15)
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.alignment = .center
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        let openStationButton = NSButton(title: "Open PlushBuddy Hub", target: self, action: #selector(openStation))
+        let openStationButton = NSButton(title: "Open ToyTalk Hub", target: self, action: #selector(openStation))
         openStationButton.bezelStyle = .rounded
         openStationButton.translatesAutoresizingMaskIntoConstraints = false
 
@@ -130,7 +201,7 @@ final class MacClientAppDelegate: NSObject, NSApplicationDelegate, WKNavigationD
             backing: .buffered,
             defer: false
         )
-        window.title = "PlushBuddy"
+        window.title = "ToyTalk"
         window.minSize = NSSize(width: 820, height: 600)
         window.center()
         window.contentView = content
@@ -184,12 +255,12 @@ final class MacClientAppDelegate: NSObject, NSApplicationDelegate, WKNavigationD
 
     @objc private func openStation() {
         let candidates = [
-            Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("PlushBuddy Hub.app", isDirectory: true),
+            Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("ToyTalk Hub.app", isDirectory: true),
         ]
         if let station = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }) {
             NSWorkspace.shared.openApplication(at: station, configuration: NSWorkspace.OpenConfiguration())
         } else {
-            statusLabel.stringValue = "I could not find PlushBuddy Hub next to this app. Open Hub manually, then launch this app from Hub."
+            statusLabel.stringValue = "I could not find ToyTalk Hub next to this app. Open Hub manually, then launch this app from Hub."
         }
     }
 
@@ -209,11 +280,238 @@ final class MacClientAppDelegate: NSObject, NSApplicationDelegate, WKNavigationD
         appendLog("client-app.log", "navigation failed \(error.localizedDescription)")
         fallbackView.isHidden = false
         webView.isHidden = true
-        statusLabel.stringValue = "PlushBuddy could not connect to Hub: \(error.localizedDescription). Start Hub and try again."
+        statusLabel.stringValue = "ToyTalk could not connect to Hub: \(error.localizedDescription). Start Hub and try again."
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        if message.name == "toytalkNativeSpeech" {
+            guard let body = message.body as? [String: Any],
+                  let id = body["id"] as? String,
+                  !id.isEmpty else {
+                return
+            }
+            startNativeSpeech(id: id)
+            return
+        }
+        if message.name == "toytalkNativeAudio" {
+            guard let body = message.body as? [String: Any],
+                  let id = body["id"] as? String,
+                  let wavBase64 = body["wavBase64"] as? String,
+                  !id.isEmpty else {
+                return
+            }
+            playNativeWav(id: id, wavBase64: wavBase64)
+            return
+        }
         appendLog("client-web.log", "\(message.body)")
+    }
+
+    private func playNativeWav(id: String, wavBase64: String) {
+        DispatchQueue.main.async {
+            if let previousId = self.nativeAudioCallbackId {
+                self.nativeAudioPlayer?.stop()
+                self.resolveNativeAudio(id: previousId, error: "Audio playback was interrupted by a new response.")
+            }
+            guard let data = Data(base64Encoded: wavBase64), !data.isEmpty else {
+                self.resolveNativeAudio(id: id, error: "ToyTalk received empty voice audio.")
+                return
+            }
+            do {
+                let player = try AVAudioPlayer(data: data)
+                player.delegate = self
+                player.prepareToPlay()
+                self.nativeAudioPlayer = player
+                self.nativeAudioCallbackId = id
+                if !player.play() {
+                    self.nativeAudioPlayer = nil
+                    self.nativeAudioCallbackId = nil
+                    self.resolveNativeAudio(id: id, error: "ToyTalk could not start voice playback.")
+                }
+            } catch {
+                self.nativeAudioPlayer = nil
+                self.nativeAudioCallbackId = nil
+                self.resolveNativeAudio(id: id, error: error.localizedDescription)
+            }
+        }
+    }
+
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        guard player === nativeAudioPlayer else { return }
+        let id = nativeAudioCallbackId
+        nativeAudioPlayer = nil
+        nativeAudioCallbackId = nil
+        if let id {
+            resolveNativeAudio(id: id, error: flag ? nil : "ToyTalk voice playback stopped early.")
+        }
+    }
+
+    func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
+        guard player === nativeAudioPlayer else { return }
+        let id = nativeAudioCallbackId
+        nativeAudioPlayer = nil
+        nativeAudioCallbackId = nil
+        if let id {
+            resolveNativeAudio(id: id, error: error?.localizedDescription ?? "ToyTalk could not decode voice audio.")
+        }
+    }
+
+    private func resolveNativeAudio(id: String, error: String?) {
+        let payload: [String: Any] = [
+            "id": id,
+            "ok": error == nil,
+            "error": error ?? "",
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let json = String(data: data, encoding: .utf8) else {
+            return
+        }
+        webView.evaluateJavaScript("window.__toytalkNativeAudioResolve(\(json));")
+    }
+
+    private func startNativeSpeech(id: String) {
+        DispatchQueue.main.async {
+            guard self.nativeSpeechSession == nil else {
+                self.resolveNativeSpeech(id: id, text: nil, error: "The microphone is already listening.")
+                return
+            }
+            let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+            guard let recognizer, recognizer.isAvailable else {
+                self.resolveNativeSpeech(id: id, text: nil, error: "Mac on-device speech recognition is unavailable.")
+                return
+            }
+            if #available(macOS 13.0, *) {
+                guard recognizer.supportsOnDeviceRecognition else {
+                    self.resolveNativeSpeech(id: id, text: nil, error: "Mac on-device speech recognition is not available on this Mac.")
+                    return
+                }
+            }
+            SFSpeechRecognizer.requestAuthorization { status in
+                DispatchQueue.main.async {
+                    guard status == .authorized else {
+                        self.resolveNativeSpeech(id: id, text: nil, error: "Speech recognition permission is required.")
+                        return
+                    }
+                    self.requestMicrophoneAndStartNativeSpeech(id: id, recognizer: recognizer)
+                }
+            }
+        }
+    }
+
+    private func requestMicrophoneAndStartNativeSpeech(id: String, recognizer: SFSpeechRecognizer) {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            runNativeSpeech(id: id, recognizer: recognizer)
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .audio) { granted in
+                DispatchQueue.main.async {
+                    if granted {
+                        self.runNativeSpeech(id: id, recognizer: recognizer)
+                    } else {
+                        self.resolveNativeSpeech(id: id, text: nil, error: "Microphone permission is required.")
+                    }
+                }
+            }
+        default:
+            resolveNativeSpeech(id: id, text: nil, error: "Microphone permission is required.")
+        }
+    }
+
+    private func runNativeSpeech(id: String, recognizer: SFSpeechRecognizer) {
+        let audioEngine = AVAudioEngine()
+        let request = SFSpeechAudioBufferRecognitionRequest()
+        request.shouldReportPartialResults = true
+        if #available(macOS 13.0, *) {
+            request.requiresOnDeviceRecognition = true
+        }
+        let inputNode = audioEngine.inputNode
+        let format = inputNode.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            resolveNativeSpeech(id: id, text: nil, error: "The microphone is not ready.")
+            return
+        }
+        let session = NativeSpeechSession(id: id, audioEngine: audioEngine, request: request)
+        nativeSpeechSession = session
+        inputNode.removeTap(onBus: 0)
+        inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
+            request.append(buffer)
+        }
+        audioEngine.prepare()
+        do {
+            try audioEngine.start()
+        } catch {
+            inputNode.removeTap(onBus: 0)
+            nativeSpeechSession = nil
+            resolveNativeSpeech(id: id, text: nil, error: "The microphone could not start.")
+            return
+        }
+        session.task = recognizer.recognitionTask(with: request) { [weak self] result, error in
+            DispatchQueue.main.async {
+                guard let self,
+                      let active = self.nativeSpeechSession,
+                      active.id == id else {
+                    return
+                }
+                if let text = result?.bestTranscription.formattedString.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !text.isEmpty {
+                    active.latestTranscript = text
+                    active.lastTranscriptAt = Date()
+                }
+                if let error {
+                    self.finishNativeSpeech(id: id, error: error.localizedDescription)
+                } else if result?.isFinal == true {
+                    self.finishNativeSpeech(id: id, error: nil)
+                }
+            }
+        }
+        appendLog("client-app.log", "native on-device speech started")
+        scheduleNativeSpeechCheck(id: id)
+    }
+
+    private func scheduleNativeSpeechCheck(id: String) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            guard let session = self.nativeSpeechSession, session.id == id else { return }
+            let now = Date()
+            if !session.latestTranscript.isEmpty && now.timeIntervalSince(session.lastTranscriptAt) >= 1.4 {
+                self.finishNativeSpeech(id: id, error: nil)
+                return
+            }
+            if now.timeIntervalSince(session.startedAt) >= 10 {
+                self.finishNativeSpeech(id: id, error: session.latestTranscript.isEmpty ? "I did not hear speech yet. Try again after the beep." : nil)
+                return
+            }
+            self.scheduleNativeSpeechCheck(id: id)
+        }
+    }
+
+    private func finishNativeSpeech(id: String, error: String?) {
+        guard let session = nativeSpeechSession, session.id == id else { return }
+        session.audioEngine.inputNode.removeTap(onBus: 0)
+        session.audioEngine.stop()
+        session.request.endAudio()
+        session.task?.cancel()
+        nativeSpeechSession = nil
+        if let error {
+            appendLog("client-app.log", "native on-device speech failed: \(error)")
+            resolveNativeSpeech(id: id, text: nil, error: error)
+            return
+        }
+        let transcript = session.latestTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        appendLog("client-app.log", "native on-device speech finished chars=\(transcript.count)")
+        resolveNativeSpeech(id: id, text: transcript, error: transcript.isEmpty ? "I did not hear speech yet. Try again after the beep." : nil)
+    }
+
+    private func resolveNativeSpeech(id: String, text: String?, error: String?) {
+        let payload: [String: Any] = [
+            "id": id,
+            "ok": error == nil,
+            "text": text ?? "",
+            "error": error ?? "",
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let json = String(data: data, encoding: .utf8) else {
+            return
+        }
+        webView.evaluateJavaScript("window.__toytalkNativeSpeechResolve(\(json));")
     }
 
     func webView(
@@ -251,7 +549,7 @@ final class MacClientAppDelegate: NSObject, NSApplicationDelegate, WKNavigationD
     private func applicationSupportDirectory() -> URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
-        return base.appendingPathComponent("PlushPal", isDirectory: true)
+        return base.appendingPathComponent("ToyTalk", isDirectory: true)
     }
 
     private func appendLog(_ fileName: String, _ message: String) {

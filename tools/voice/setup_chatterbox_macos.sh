@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-PUBLIC_ROOT="${PLUSHPAL_PUBLIC_ROOT:-$HOME/Downloads/PlushPal}"
+PUBLIC_ROOT="${PLUSHPAL_PUBLIC_ROOT:-$HOME/Downloads/ToyTalk}"
 DEPS_ROOT="${PLUSHPAL_DEPS_DIR:-$PUBLIC_ROOT/deps}"
 VENV_DIR="${PLUSHPAL_CHATTERBOX_VENV:-"$DEPS_ROOT/.venv-chatterbox"}"
 BUNDLED_CODEX_PYTHON="$HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3"
@@ -23,7 +23,7 @@ fi
 cat <<EOF
 Chatterbox local voice runtime installed.
 
-Run PlushPal with:
+Run ToyTalk with:
 
   PLUSHPAL_VOICE_ENGINE=chatterbox \\
   PLUSHPAL_CHATTERBOX_PYTHON="$VENV_DIR/bin/python" \\
@@ -33,6 +33,6 @@ Run PlushPal with:
 
 Notes:
 - First synthesis may download Chatterbox model weights into your local Hugging Face cache.
-- Uploaded/reference voice samples are still kept local by PlushPal.
+- Uploaded/reference voice samples are still kept local by ToyTalk.
 - Use PLUSHPAL_CHATTERBOX_ENGINE=turbo if you prefer lower latency over maximum quality.
 EOF

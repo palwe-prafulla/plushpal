@@ -2,16 +2,16 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-TMP="$(mktemp -d "${TMPDIR:-/tmp}/plushpal-release-bundle.XXXXXX")"
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/toytalk-release-bundle.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 
 ARTIFACTS="$TMP/artifacts"
 RELEASE="$TMP/release"
-mkdir -p "$ARTIFACTS/macos" "$ARTIFACTS/android" "$ARTIFACTS/ios/PlushBuddy-iPhoneSimulator.app"
+mkdir -p "$ARTIFACTS/macos" "$ARTIFACTS/android" "$ARTIFACTS/ios/ToyTalk-iPhoneSimulator.app"
 
-printf 'fake mac zip\n' > "$ARTIFACTS/macos/PlushBuddy-0.1.0-macos.zip"
-printf 'fake apk\n' > "$ARTIFACTS/android/PlushBuddy-debug.apk"
-printf 'fake ios app\n' > "$ARTIFACTS/ios/PlushBuddy-iPhoneSimulator.app/Info.plist"
+printf 'fake mac zip\n' > "$ARTIFACTS/macos/ToyTalk-v2-macos.zip"
+printf 'fake apk\n' > "$ARTIFACTS/android/ToyTalk-debug.apk"
+printf 'fake ios app\n' > "$ARTIFACTS/ios/ToyTalk-iPhoneSimulator.app/Info.plist"
 
 PLUSHPAL_ARTIFACTS_DIR="$ARTIFACTS" \
 PLUSHPAL_RELEASE_DIR="$RELEASE" \
@@ -19,9 +19,9 @@ PLUSHPAL_VERSION="test-release" \
   sh "$ROOT/packaging/create-release-bundle.sh" > "$TMP/output.log"
 
 BUNDLE="$RELEASE/test-release"
-test -f "$BUNDLE/PlushBuddy-0.1.0-macos.zip"
-test -f "$BUNDLE/PlushBuddy-debug.apk"
-test -f "$BUNDLE/PlushBuddy-iPhoneSimulator-test-release.zip"
+test -f "$BUNDLE/ToyTalk-v2-macos.zip"
+test -f "$BUNDLE/ToyTalk-debug.apk"
+test -f "$BUNDLE/ToyTalk-iPhoneSimulator-test-release.zip"
 test -s "$BUNDLE/RELEASE_NOTES.md"
 test -s "$BUNDLE/SHA256SUMS"
 

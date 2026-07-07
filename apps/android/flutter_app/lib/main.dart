@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:plushpal_ui/src/app.dart';
+import 'package:toytalk_ui/src/app.dart';
 
 void main() {
-  runApp(const PlushPalApp());
+  runApp(const ToyTalkApp());
 }

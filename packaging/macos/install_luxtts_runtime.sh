@@ -8,7 +8,7 @@ APP_SUPPORT_DIR=$(CDPATH= cd -- "$(dirname -- "$VENV_DIR")" && pwd)
 LUX_SOURCE_DIR=${PLUSHPAL_LUXTTS_SOURCE_DIR:-"$APP_SUPPORT_DIR/deps/LuxTTS"}
 LUX_REQUIREMENTS="$LUX_SOURCE_DIR/requirements.txt"
 LUX_SCRIPT="${PLUSHPAL_LUXTTS_SCRIPT:-$RESOURCES_DIR/voice/luxtts_tts.py}"
-RUNTIME_MARKER="$VENV_DIR/.plushbuddy-luxtts-runtime.env"
+RUNTIME_MARKER="$VENV_DIR/.toytalk-luxtts-runtime.env"
 INSTALLER_VERSION="2026-07-05-luxtts-lazy-runtime-v2"
 UV_DIR=${PLUSHPAL_UV_DIR:-"$APP_SUPPORT_DIR/tools/uv"}
 UV_BIN="$UV_DIR/uv"
@@ -123,7 +123,7 @@ if [ -z "$PYTHON_BIN" ]; then
     echo "Could not install the local Python bootstrapper." >&2
     exit 2
   fi
-  echo "Installing managed Python 3.12 for PlushBuddy Hub..."
+  echo "Installing managed Python 3.12 for ToyTalk Hub..."
   "$UV_BIN" python install 3.12
 fi
 

@@ -1,15 +1,15 @@
-# PlushBuddy shared Flutter client
+# ToyTalk shared Flutter client
 
 This Flutter project contains the shared client UI for:
 
 - Android;
 - iPhone/iOS;
-- local browser client served by PlushBuddy Hub;
+- local browser client served by ToyTalk Hub;
 - the Mac client WebView shell.
 
 The client is intentionally thin. It renders parent setup, kid/character
 management, child mode, theme, pairing, mic/file-picker flows, and playback, but
-durable family data lives in PlushBuddy Hub.
+durable family data lives in ToyTalk Hub.
 
 ## Main files
 
@@ -39,4 +39,4 @@ Android/iPhone/browser clients store only stable client identity,
 Hub pairing/session state, theme/UI preferences, and temporary OS helper state.
 Parent PIN, Cloud AI keys, kids, characters, voice profile metadata,
 conversation history, local/cloud reasoning, and LuxTTS synthesis are owned by
-PlushBuddy Hub.
+ToyTalk Hub.

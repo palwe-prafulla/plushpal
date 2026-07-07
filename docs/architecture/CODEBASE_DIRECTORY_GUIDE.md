@@ -1,16 +1,16 @@
-# PlushBuddy codebase directory guide
+# ToyTalk codebase directory guide
 
 Last updated: 2026-07-05
 
-This guide maps the current Hub-centric PlushBuddy codebase. The public product
-name is **PlushBuddy Hub**. Some source paths still contain the historical
+This guide maps the current Hub-centric ToyTalk codebase. The public product
+name is **ToyTalk Hub**. Some source paths still contain the historical
 `macstation` implementation name; those paths are the Hub backend until they are
 renamed.
 
 ## 1. Product mental model
 
 ```text
-PlushBuddy Hub
+ToyTalk Hub
   macOS setup app + Rust backend + SQLCipher stores + models
 
 Thin clients
@@ -30,7 +30,7 @@ temporary playback, stable client identity, and Hub pairing/session state.
 ## 2. Top-level repo map
 
 ```text
-PlushPal/
+ToyTalk/
   README.md
   Makefile
   Cargo.toml
@@ -49,11 +49,11 @@ PlushPal/
 Generated/private files should stay outside the repo:
 
 ```text
-~/Downloads/PlushPal/artifacts
-~/Downloads/PlushPal/build
-~/Downloads/PlushPal/deps
-~/Downloads/PlushPal/test-results
-~/Downloads/PlushPal/private
+~/Downloads/ToyTalk/artifacts
+~/Downloads/ToyTalk/build
+~/Downloads/ToyTalk/deps
+~/Downloads/ToyTalk/test-results
+~/Downloads/ToyTalk/private
 ```
 
 ## 3. Shared Flutter client: Android, iPhone, browser
@@ -90,7 +90,7 @@ flutter test
 flutter build apk --debug
 ```
 
-## 4. PlushBuddy Hub backend
+## 4. ToyTalk Hub backend
 
 Main directory:
 
@@ -148,11 +148,18 @@ apps/macos/station_app/AppShell.swift
 apps/macos/client_app/AppShell.swift
 ```
 
-### PlushBuddy Hub app
+### ToyTalk Hub app
 
 `apps/macos/station_app/AppShell.swift` is the Hub setup/supervisor app. It:
 
-- starts and health-checks the Rust backend;
+- prepares safe preflight work in parallel where possible: app-support storage,
+  LAN discovery, device capability/model recommendation environment, and
+  LuxTTS voice-runtime checks/downloads;
+- starts and health-checks the Rust backend after required runtime paths are
+  known;
+- keeps phone/browser/Mac-client options hidden until the Hub is fully healthy;
+- shows row-level setup progress so independent setup work can turn green
+  separately without exposing partially usable client flows;
 - prepares LuxTTS/STT/model runtime dependencies;
 - configures parent PIN;
 - configures Cloud AI provider keys in Hub SQLCipher;
@@ -165,10 +172,10 @@ apps/macos/client_app/AppShell.swift
 Packaged app:
 
 ```text
-~/Downloads/PlushPal/artifacts/macos/PlushBuddy Hub.app
+~/Downloads/ToyTalk/artifacts/macos/ToyTalk Hub.app
 ```
 
-### PlushBuddy Mac client
+### ToyTalk Mac client
 
 `apps/macos/client_app/AppShell.swift` is a native WKWebView shell around the
 same Hub-backed client UI. It does not start services or own durable data.
@@ -176,7 +183,7 @@ same Hub-backed client UI. It does not start services or own durable data.
 Packaged app:
 
 ```text
-~/Downloads/PlushPal/artifacts/macos/PlushBuddy.app
+~/Downloads/ToyTalk/artifacts/macos/ToyTalk.app
 ```
 
 ## 6. Local browser client
@@ -217,8 +224,8 @@ tools/voice/
 | `chatterbox_tts.py` | Chatterbox fallback/research wrapper |
 | `openvoice_tts.py`, `gptsovits_tts.py` | Research/bakeoff wrappers |
 
-Bakeoff outputs belong under `~/Downloads/PlushPal/test-results` or
-`~/Downloads/PlushPal/private`, not the repo.
+Bakeoff outputs belong under `~/Downloads/ToyTalk/test-results` or
+`~/Downloads/ToyTalk/private`, not the repo.
 
 ## 8. Shared Rust crates
 
@@ -265,7 +272,7 @@ make ios-simulator
 make ios-device
 ```
 
-Public-style artifacts are written under `~/Downloads/PlushPal/artifacts`.
+Public-style artifacts are written under `~/Downloads/ToyTalk/artifacts`.
 
 ## 11. QA
 
@@ -284,4 +291,4 @@ qa/automation/macstation_api_smoke.py
 qa/automation/macstation_live_reasoning_smoke.mjs
 ```
 
-Some script names still say `station`; they target PlushBuddy Hub.
+Some script names still say `station`; they target ToyTalk Hub.

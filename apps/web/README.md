@@ -1,14 +1,14 @@
-# PlushBuddy Browser Client
+# ToyTalk Browser Client
 
-The browser app is a local PlushBuddy client for the same computer running
-**PlushBuddy Hub**. It uses the same shared Flutter UI as Android, iPhone, and
+The browser app is a local ToyTalk client for the same computer running
+**ToyTalk Hub**. It uses the same shared Flutter UI as Android, iPhone, and
 the Mac client, but it is intentionally **not** a remote LAN browser product in
 the current architecture.
 
 Current browser ownership:
 
 - durable parent setup, kids, characters, Cloud AI provider keys, conversation
-  history, voice profile metadata, and guardrails live in PlushBuddy Hub;
+  history, voice profile metadata, and guardrails live in ToyTalk Hub;
 - the browser stores only local bootstrap/session identity plus normal browser
   runtime state;
 - Gemini/OpenAI reasoning is called by Hub after redaction and guardrails, not

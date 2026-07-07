@@ -4,7 +4,7 @@ import 'platform_bridge_types.dart';
 
 class MethodChannelPlatformBridge implements PlatformBridge {
   const MethodChannelPlatformBridge({
-    this._channel = const MethodChannel('com.plushpal/platform'),
+    this._channel = const MethodChannel('com.toytalk/platform'),
   });
 
   final MethodChannel _channel;

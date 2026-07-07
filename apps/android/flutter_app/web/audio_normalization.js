@@ -1,7 +1,7 @@
 (function (root, factory) {
   const api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
-  root.PlushPalAudioNormalization = api;
+  root.ToyTalkAudioNormalization = api;
 })(typeof globalThis === 'object' ? globalThis : this, function () {
   'use strict';
 

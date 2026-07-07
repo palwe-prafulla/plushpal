@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Persistent LuxTTS worker for PlushBuddy Hub.
+"""Persistent LuxTTS worker for ToyTalk Hub.
 
 The one-shot ``luxtts_tts.py`` wrapper is intentionally simple, but it pays the
 Python startup, model load, and prompt-encoding costs on every synthesis.  This

@@ -3,9 +3,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
-import 'package:plushpal_ui/src/backend/backend_client.dart';
-import 'package:plushpal_ui/src/domain/app_state.dart';
-import 'package:plushpal_ui/src/platform/platform_bridge.dart';
+import 'package:toytalk_ui/src/backend/backend_client.dart';
+import 'package:toytalk_ui/src/domain/app_state.dart';
+import 'package:toytalk_ui/src/platform/platform_bridge.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const approvedCharacterTraits = <String>[
@@ -20,10 +20,10 @@ const approvedCharacterTraits = <String>[
 
 enum ChildMessageAuthor { child, character, system }
 
-const appDisplayName = 'PlushBuddy';
-const _themePreferenceKey = 'plushbuddy.theme_mode';
+const appDisplayName = 'ToyTalk';
+const _themePreferenceKey = 'toytalk.theme_mode';
 const _themePreferenceMigrationKey =
-    'plushbuddy.theme_mode.v2_system_default_migrated';
+    'toytalk.theme_mode.v2_system_default_migrated';
 
 enum AppThemePreference {
   system('system', 'System', Icons.brightness_auto),
@@ -179,17 +179,17 @@ class ChildChatMessage {
   final String text;
 }
 
-class PlushPalApp extends StatefulWidget {
-  const PlushPalApp({this.backend, this.platform, super.key});
+class ToyTalkApp extends StatefulWidget {
+  const ToyTalkApp({this.backend, this.platform, super.key});
 
   final BackendClient? backend;
   final PlatformBridge? platform;
 
   @override
-  State<PlushPalApp> createState() => _PlushPalAppState();
+  State<ToyTalkApp> createState() => _ToyTalkAppState();
 }
 
-class _PlushPalAppState extends State<PlushPalApp> {
+class _ToyTalkAppState extends State<ToyTalkApp> {
   AppThemePreference themePreference = AppThemePreference.system;
 
   @override
@@ -229,7 +229,7 @@ class _PlushPalAppState extends State<PlushPalApp> {
     theme: plushBuddyTheme(Brightness.light),
     darkTheme: plushBuddyTheme(Brightness.dark),
     themeMode: themePreference.themeMode,
-    home: PlushPalRoot(
+    home: ToyTalkRoot(
       backend: widget.backend ?? createBackendClient(),
       platform: widget.platform ?? const MethodChannelPlatformBridge(),
       themePreference: themePreference,
@@ -275,8 +275,8 @@ ThemeData plushBuddyTheme(Brightness brightness) {
   );
 }
 
-class PlushPalRoot extends StatefulWidget {
-  const PlushPalRoot({
+class ToyTalkRoot extends StatefulWidget {
+  const ToyTalkRoot({
     required this.backend,
     required this.platform,
     required this.themePreference,
@@ -290,10 +290,10 @@ class PlushPalRoot extends StatefulWidget {
   final ValueChanged<AppThemePreference> onThemePreferenceChanged;
 
   @override
-  State<PlushPalRoot> createState() => _PlushPalRootState();
+  State<ToyTalkRoot> createState() => _ToyTalkRootState();
 }
 
-class _PlushPalRootState extends State<PlushPalRoot>
+class _ToyTalkRootState extends State<ToyTalkRoot>
     with WidgetsBindingObserver {
   AppState state = const AppState();
   String? message;
@@ -503,13 +503,13 @@ class _PlushPalRootState extends State<PlushPalRoot>
         characterPlayAgeYears: selectedCharacterPersonaAge,
       );
     } catch (error) {
-      debugPrint('PlushBuddy turn generation failed: $error');
+      debugPrint('ToyTalk turn generation failed: $error');
       if (!mounted) return;
       setState(
         () => message = userFacingError(
           error,
           fallback:
-              'I could not think of an answer. Check Cloud AI or Local AI setup in PlushBuddy Hub and try again.',
+              'I could not think of an answer. Check Cloud AI or Local AI setup in ToyTalk Hub and try again.',
         ),
       );
       dispatch(const ConversationFailed());
@@ -569,17 +569,17 @@ class _PlushPalRootState extends State<PlushPalRoot>
         dispatch(const PlaybackCompleted());
       }
     } catch (error) {
-      debugPrint('PlushBuddy voice playback failed: $error');
+      debugPrint('ToyTalk voice playback failed: $error');
       if (!mounted) return;
       showResponse(
         overrideMessage:
-            'I answered below, but the buddy voice could not play. Check the PlushBuddy Hub and try again.',
+            'I answered below, but the buddy voice could not play. Check the ToyTalk Hub and try again.',
       );
-      if (widget.platform.supportsSpeech) {
+      if (!(voiceApproved && voiceRuntimeReady) && widget.platform.supportsSpeech) {
         try {
           await widget.platform.speak(response.speech);
         } catch (fallbackError) {
-          debugPrint('PlushBuddy fallback speech failed: $fallbackError');
+          debugPrint('ToyTalk fallback speech failed: $fallbackError');
         }
       }
       if (!mounted) return;
@@ -618,7 +618,7 @@ class _PlushPalRootState extends State<PlushPalRoot>
       try {
         setState(
           () => message =
-              'On-device listening had trouble, so I’m trying PlushBuddy Hub.',
+              'On-device listening had trouble, so I’m trying ToyTalk Hub.',
         );
         final wavBytes = await widget.platform.recordSpeechWav();
         final transcript = await widget.backend.transcribeSpeech(wavBytes);
@@ -656,7 +656,7 @@ class _PlushPalRootState extends State<PlushPalRoot>
     if (!voiceRuntimeReady) {
       setState(
         () => message =
-            'PlushBuddy Hub voice support is still waking up. Keep Hub open and try again.',
+            'ToyTalk Hub voice support is still waking up. Keep Hub open and try again.',
       );
       return;
     }
@@ -821,8 +821,8 @@ class _PlushPalRootState extends State<PlushPalRoot>
       if (!readiness.ready) {
         setState(
           () => message = stationPaired
-              ? 'PlushBuddy Hub is connected. Configure Cloud AI or Local AI in Hub, then tap Check again.'
-              : 'Pair this app with PlushBuddy Hub so it can use buddy voices and conversations.',
+              ? 'ToyTalk Hub is connected. Configure Cloud AI or Local AI in Hub, then tap Check again.'
+              : 'Pair this app with ToyTalk Hub so it can use buddy voices and conversations.',
         );
       }
     } catch (_) {
@@ -831,20 +831,20 @@ class _PlushPalRootState extends State<PlushPalRoot>
         stationPaired = false;
         stationBaseUrl = null;
         message =
-            'Could not reach the paired PlushBuddy Hub. Reconnect this app from the Hub QR code.';
+            'Could not reach the paired ToyTalk Hub. Reconnect this app from the Hub QR code.';
       });
     }
   }
 
   Future<void> pairWithStation() async {
     if (kIsWeb) {
-      setState(() => message = 'Checking the local PlushBuddy Hub...');
+      setState(() => message = 'Checking the local ToyTalk Hub...');
       await assessDevice();
       if (!mounted) return;
       setState(
         () => message = stationPaired
-            ? 'PlushBuddy Hub connected automatically.'
-            : 'Open PlushBuddy from Hub, then refresh this client.',
+            ? 'ToyTalk Hub connected automatically.'
+            : 'Open ToyTalk from Hub, then refresh this client.',
       );
       return;
     }
@@ -853,11 +853,11 @@ class _PlushPalRootState extends State<PlushPalRoot>
       MaterialPageRoute(builder: (_) => const StationQrScannerScreen()),
     );
     if (pairingUrl == null || !mounted) return;
-    setState(() => message = 'Connecting the PlushBuddy Hub...');
+    setState(() => message = 'Connecting the ToyTalk Hub...');
     try {
       await widget.backend.pairStation(pairingUrl.trim());
       if (!mounted) return;
-      setState(() => message = 'PlushBuddy Hub connected.');
+      setState(() => message = 'ToyTalk Hub connected.');
       await assessDevice();
     } catch (error) {
       if (!mounted) return;
@@ -870,7 +870,7 @@ class _PlushPalRootState extends State<PlushPalRoot>
       await showErrorDialog(
         title: 'Pairing failed',
         message:
-            '$text\n\nOpen PlushBuddy Hub, tap “Pair phone with QR code”, and scan the latest QR code.',
+            '$text\n\nOpen ToyTalk Hub, tap “Pair phone with QR code”, and scan the latest QR code.',
       );
     }
   }
@@ -881,7 +881,7 @@ class _PlushPalRootState extends State<PlushPalRoot>
     setState(() {
       stationPaired = false;
       stationBaseUrl = null;
-      message = 'PlushBuddy Hub connection was removed.';
+      message = 'ToyTalk Hub connection was removed.';
     });
     await assessDevice();
   }
@@ -892,7 +892,7 @@ class _PlushPalRootState extends State<PlushPalRoot>
       builder: (context) => AlertDialog(
         title: const Text('Cloud AI is managed in Hub'),
         content: const Text(
-          'Open PlushBuddy Hub on the Mac to add or change Gemini/OpenAI keys. '
+          'Open ToyTalk Hub on the Mac to add or change Gemini/OpenAI keys. '
           'This phone only stores pairing information and UI preferences.',
         ),
         actions: [
@@ -1009,7 +1009,7 @@ class _PlushPalRootState extends State<PlushPalRoot>
               'Save the kid profile first: add name and birthdate as MM/DD/YYYY.';
         } else if (state.recommendation?.installed != true) {
           message =
-              'Finish Cloud AI or Local AI setup in PlushBuddy Hub before continuing.';
+              'Finish Cloud AI or Local AI setup in ToyTalk Hub before continuing.';
         } else {
           message = 'Finish the required setup items before continuing.';
         }
@@ -1028,7 +1028,7 @@ class _PlushPalRootState extends State<PlushPalRoot>
     if (!authorized) {
       setState(
         () => message =
-            'That parent PIN did not match PlushBuddy Hub. Set or verify the PIN in Hub, then try again.',
+            'That parent PIN did not match ToyTalk Hub. Set or verify the PIN in Hub, then try again.',
       );
       return;
     }
@@ -1148,7 +1148,7 @@ class _PlushPalRootState extends State<PlushPalRoot>
           stationBaseUrl = null;
         });
         final shouldPair = await showHubSetupNeeded(
-          'This app is not paired with the current PlushBuddy Hub. Pair this phone with the Hub to open Parent Settings.',
+          'This app is not paired with the current ToyTalk Hub. Pair this phone with the Hub to open Parent Settings.',
           offerPair: true,
         );
         if (!shouldPair || !mounted) return false;
@@ -1158,7 +1158,7 @@ class _PlushPalRootState extends State<PlushPalRoot>
         if (!mounted) return false;
         if (!pairing.paired) {
           await showHubSetupNeeded(
-            'Pairing did not complete. Keep PlushBuddy Hub open on the Mac and scan the Hub QR code again.',
+            'Pairing did not complete. Keep ToyTalk Hub open on the Mac and scan the Hub QR code again.',
             offerPair: true,
           );
           return false;
@@ -1168,7 +1168,7 @@ class _PlushPalRootState extends State<PlushPalRoot>
       if (!mounted) return false;
       if (!readiness.parentConfigured) {
         await showHubSetupNeeded(
-          'Parent PIN is not set yet. Open PlushBuddy Hub on the Mac, set the parent PIN, then pair or reconnect this phone.',
+          'Parent PIN is not set yet. Open ToyTalk Hub on the Mac, set the parent PIN, then pair or reconnect this phone.',
         );
         return false;
       }
@@ -1179,7 +1179,7 @@ class _PlushPalRootState extends State<PlushPalRoot>
           userFacingError(
             error,
             fallback:
-                'Could not check the Hub parent PIN. Make sure PlushBuddy Hub is running and paired.',
+                'Could not check the Hub parent PIN. Make sure ToyTalk Hub is running and paired.',
           ),
         );
       }
@@ -1511,7 +1511,7 @@ class _PlushPalRootState extends State<PlushPalRoot>
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Text(
-                    'Update this buddy’s display name, personality, and parent guidance. PlushBuddy keeps the internal voice/profile ID stable.',
+                    'Update this buddy’s display name, personality, and parent guidance. ToyTalk keeps the internal voice/profile ID stable.',
                     style: TextStyle(
                       color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
@@ -1819,7 +1819,7 @@ class _PlushPalRootState extends State<PlushPalRoot>
     final confirmed = await confirmAction(
       title: 'Forget this device?',
       message:
-          'This removes ${client.label ?? client.platform} from the PlushBuddy Hub. The device will need to pair again before it can use buddy voices.',
+          'This removes ${client.label ?? client.platform} from the ToyTalk Hub. The device will need to pair again before it can use buddy voices.',
       confirmLabel: 'Forget device',
       destructive: true,
     );
@@ -1832,7 +1832,7 @@ class _PlushPalRootState extends State<PlushPalRoot>
         clientId: client.clientId,
       );
       if (!mounted) return;
-      showActionMessage('Device was removed from the PlushBuddy Hub.');
+      showActionMessage('Device was removed from the ToyTalk Hub.');
     } catch (error) {
       if (!mounted) return;
       showActionMessage(
@@ -2220,14 +2220,14 @@ class _PlushPalRootState extends State<PlushPalRoot>
     if (!stationPaired && !voiceRuntimeReady) {
       setState(
         () => message =
-            'Connect the PlushBuddy Hub before uploading a voice sample.',
+            'Connect the ToyTalk Hub before uploading a voice sample.',
       );
       return false;
     }
     if (!voiceRuntimeReady) {
       setState(
         () => message =
-            'The PlushBuddy Hub is connected, but not awake yet. Keep the Mac app open and try again.',
+            'The ToyTalk Hub is connected, but not awake yet. Keep the Mac app open and try again.',
       );
       return false;
     }
@@ -2248,8 +2248,8 @@ class _PlushPalRootState extends State<PlushPalRoot>
                 children: [
                   Text(
                     'Choose a clean 15-second to 3-minute M4A, WAV, MP3, AAC, OGG, or '
-                    'WebM recording. PlushBuddy sends it over the paired local connection '
-                    'to the PlushBuddy Hub to create the buddy voice. Raw upload bytes are '
+                    'WebM recording. ToyTalk sends it over the paired local connection '
+                    'to the ToyTalk Hub to create the buddy voice. Raw upload bytes are '
                     '$_voiceSampleStorageLabel',
                   ),
                   CheckboxListTile(
@@ -2295,7 +2295,7 @@ class _PlushPalRootState extends State<PlushPalRoot>
     setState(() {
       voiceEnrolling = true;
       voicePreviewed = false;
-      message = 'Sending the voice sample to the PlushBuddy Hub...';
+      message = 'Sending the voice sample to the ToyTalk Hub...';
     });
     try {
       await widget.backend.enrollVoiceSample(
@@ -2714,10 +2714,10 @@ class OnboardingScreen extends StatelessWidget {
             child: ListView(
               padding: const EdgeInsets.all(24),
               children: [
-                const PlushBuddyLogo(size: 104),
+                const ToyTalkLogo(size: 104),
                 const SizedBox(height: 16),
                 Text(
-                  'Welcome to PlushBuddy',
+                  'Welcome to ToyTalk',
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.headlineMedium,
                 ),
@@ -2755,7 +2755,7 @@ class OnboardingScreen extends StatelessWidget {
                           label: stationPaired
                               ? 'Hub connected'
                               : kIsWeb
-                              ? 'Open from PlushBuddy Hub'
+                              ? 'Open from ToyTalk Hub'
                               : 'Pair with Hub',
                         ),
                         _StatusLine(
@@ -2819,8 +2819,8 @@ class OnboardingScreen extends StatelessWidget {
               const SizedBox(height: 8),
               Text(
                 kIsWeb
-                    ? 'Complete these grown-up steps once. This browser is a UI shell; PlushBuddy Hub stores family setup, Cloud AI keys, conversations, and buddy voices.'
-                    : 'Complete these grown-up steps once. This app is a UI shell; PlushBuddy Hub stores family setup, Cloud AI keys, conversations, and buddy voices.',
+                    ? 'Complete these grown-up steps once. This browser is a UI shell; ToyTalk Hub stores family setup, Cloud AI keys, conversations, and buddy voices.'
+                    : 'Complete these grown-up steps once. This app is a UI shell; ToyTalk Hub stores family setup, Cloud AI keys, conversations, and buddy voices.',
               ),
               if (state.recommendation != null) ...[
                 const SizedBox(height: 16),
@@ -2858,7 +2858,7 @@ class OnboardingScreen extends StatelessWidget {
                       border: OutlineInputBorder(),
                       labelText: 'Birthdate',
                       helperText:
-                          'Type digits only, like 11232020. PlushBuddy fills MM/DD/YYYY.',
+                          'Type digits only, like 11232020. ToyTalk fills MM/DD/YYYY.',
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -2872,7 +2872,7 @@ class OnboardingScreen extends StatelessWidget {
               ),
               _SettingsCard(
                 icon: Icons.computer,
-                title: 'PlushBuddy Hub',
+                title: 'ToyTalk Hub',
                 status: state.recommendation?.installed == true
                     ? 'Ready'
                     : stationPaired
@@ -2882,12 +2882,12 @@ class OnboardingScreen extends StatelessWidget {
                 children: [
                   Text(
                     state.recommendation?.installed == true
-                        ? 'Connected to ${stationBaseUrl ?? 'PlushBuddy Hub'} and ready for conversations.'
+                        ? 'Connected to ${stationBaseUrl ?? 'ToyTalk Hub'} and ready for conversations.'
                         : stationPaired
                         ? 'Connected to Hub. Finish Cloud AI or Local AI setup in the Hub app, then check again here.'
                         : kIsWeb
-                        ? 'Open this browser or Mac app from PlushBuddy Hub. It connects automatically.'
-                        : 'Scan the QR code from PlushBuddy Hub on the Mac.',
+                        ? 'Open this browser or Mac app from ToyTalk Hub. It connects automatically.'
+                        : 'Scan the QR code from ToyTalk Hub on the Mac.',
                   ),
                   const SizedBox(height: 12),
                   Wrap(
@@ -3092,7 +3092,7 @@ class _InlineVoiceSetupCardState extends State<_InlineVoiceSetupCard> {
       return 'Add kid name, birthday, and character name first.';
     }
     if (!widget.voiceRuntimeReady) {
-      return 'PlushBuddy Hub voice support is still waking up.';
+      return 'ToyTalk Hub voice support is still waking up.';
     }
     if (!widget.voiceEnrolled) {
       return 'Upload a voice sample for ${widget.characterAlias}.';
@@ -3152,7 +3152,7 @@ class _InlineVoiceSetupCardState extends State<_InlineVoiceSetupCard> {
         ? () => runAction('Opening audio picker...', widget.uploadVoice)
         : needsPreview
         ? () => runAction(
-            'Creating preview audio on PlushBuddy Hub...',
+            'Creating preview audio on ToyTalk Hub...',
             () => widget.previewVoice(characterAlias: widget.characterAlias),
           )
         : needsApproval
@@ -3206,7 +3206,7 @@ class _InlineVoiceSetupCardState extends State<_InlineVoiceSetupCard> {
               const SizedBox(height: 8),
               Text(
                 widget.voiceEnrolling
-                    ? 'Sending the voice sample to PlushBuddy Hub...'
+                    ? 'Sending the voice sample to ToyTalk Hub...'
                     : localMessage!,
                 style: TextStyle(color: colorScheme.onSurfaceVariant),
               ),
@@ -3274,7 +3274,7 @@ class _StationQrScannerScreenState extends State<StationQrScannerScreen> {
     if (!value.startsWith('http://') || !value.contains('#bootstrap=')) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('That is not a PlushBuddy Hub pairing QR code.'),
+          content: Text('That is not a ToyTalk Hub pairing QR code.'),
         ),
       );
       return;
@@ -3299,7 +3299,7 @@ class _StationQrScannerScreenState extends State<StationQrScannerScreen> {
               borderRadius: BorderRadius.circular(12),
             ),
             child: const Text(
-              'Point the camera at the QR code shown by PlushBuddy on the Mac.',
+              'Point the camera at the QR code shown by ToyTalk on the Mac.',
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.white),
             ),
@@ -3425,7 +3425,7 @@ class ParentHomeScreen extends StatelessWidget {
         : !reasoningReady
         ? 'Finish Hub setup'
         : !stationPaired
-        ? 'Connect the PlushBuddy Hub'
+        ? 'Connect the ToyTalk Hub'
         : !voiceEnrolled
         ? 'Add ${state.characterName}’s voice'
         : !voicePreviewed
@@ -3551,7 +3551,7 @@ class ParentHomeScreen extends StatelessWidget {
                   child: Column(
                     children: [
                       if (activePhotoBytes == null)
-                        PlushBuddyLogo(size: buddyLogoSize)
+                        ToyTalkLogo(size: buddyLogoSize)
                       else
                         ClipRRect(
                           borderRadius: BorderRadius.circular(
@@ -3718,8 +3718,8 @@ class ParentHomeScreen extends StatelessWidget {
                         _PlaySetupStep(
                           complete: stationPaired && voiceRuntimeReady,
                           label: stationPaired && voiceRuntimeReady
-                              ? 'PlushBuddy Hub is awake'
-                              : 'Connect the PlushBuddy Hub',
+                              ? 'ToyTalk Hub is awake'
+                              : 'Connect the ToyTalk Hub',
                         ),
                         _PlaySetupStep(
                           complete: voiceApproved,
@@ -3895,7 +3895,7 @@ class SettingsMenuScreen extends StatelessWidget {
             children: [
               _SettingsTile(
                 icon: Icons.computer,
-                title: 'PlushBuddy Hub',
+                title: 'ToyTalk Hub',
                 subtitle: stationPaired
                     ? 'Connected to the Mac voice helper.'
                     : kIsWeb
@@ -4001,7 +4001,7 @@ class _HubSettingsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('PlushBuddy Hub')),
+    appBar: AppBar(title: const Text('ToyTalk Hub')),
     body: ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -4018,8 +4018,8 @@ class _HubSettingsScreen extends StatelessWidget {
               subtitle: stationPaired
                   ? 'Your Mac is ready to make buddy voices.'
                   : kIsWeb
-                  ? 'Open this browser or Mac app from PlushBuddy Hub. No QR scan is needed on this Mac.'
-                  : 'Open PlushBuddy on the phone and scan the QR code from Hub.',
+                  ? 'Open this browser or Mac app from ToyTalk Hub. No QR scan is needed on this Mac.'
+                  : 'Open ToyTalk on the phone and scan the QR code from Hub.',
               trailing: stationPaired
                   ? const Icon(Icons.check_circle, color: Colors.green)
                   : Icon(kIsWeb ? Icons.sync : Icons.qr_code_2),
@@ -4048,7 +4048,7 @@ class _HubSettingsScreen extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                 child: Text(
-                  'Paired devices and backups are managed in PlushBuddy Hub. If Hub forgets this phone, the app will clear this connection the next time it checks in.',
+                  'Paired devices and backups are managed in ToyTalk Hub. If Hub forgets this phone, the app will clear this connection the next time it checks in.',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ),
@@ -4121,7 +4121,7 @@ class _PairedClientsSettingsScreenState
           return _SettingsEmptyState(
             icon: Icons.error_outline,
             title: 'Could not load paired devices',
-            subtitle: 'Check the PlushBuddy Hub, then try again.',
+            subtitle: 'Check the ToyTalk Hub, then try again.',
             actionLabel: 'Try again',
             onAction: _reload,
           );
@@ -4132,7 +4132,7 @@ class _PairedClientsSettingsScreenState
             icon: Icons.devices_other,
             title: 'No paired devices yet',
             subtitle:
-                'Pair this phone, a Mac app, or a browser from the PlushBuddy Hub.',
+                'Pair this phone, a Mac app, or a browser from the ToyTalk Hub.',
             actionLabel: 'Refresh',
             onAction: _reload,
           );
@@ -4232,7 +4232,7 @@ class _ThemeSettingsScreen extends StatelessWidget {
                     AppThemePreference.system =>
                       'Follow this device’s light or dark setting.',
                     AppThemePreference.light =>
-                      'Warm cream background with bright PlushBuddy colors.',
+                      'Warm cream background with bright ToyTalk colors.',
                     AppThemePreference.dark =>
                       'Cozy dark background with the same playful colors.',
                   }),
@@ -4810,7 +4810,7 @@ class _CharacterDetailSettingsScreenState
   String? voiceActionMessage;
 
   String get voiceLifecycleSummary {
-    if (!voiceRuntimeReady) return 'PlushBuddy Hub is not ready.';
+    if (!voiceRuntimeReady) return 'ToyTalk Hub is not ready.';
     final duration = voiceDurationMilliseconds == null
         ? ''
         : ' • ${(voiceDurationMilliseconds! / 1000).toStringAsFixed(1)}s sample';
@@ -4856,7 +4856,7 @@ class _CharacterDetailSettingsScreenState
     setState(() {
       voiceActionInProgress = true;
       voiceActionMessage =
-          'Creating preview audio on PlushBuddy Hub. This can take a little while...';
+          'Creating preview audio on ToyTalk Hub. This can take a little while...';
     });
     final previewed = await widget.previewVoice(
       characterAlias: widget.character.alias,
@@ -5072,8 +5072,8 @@ class _SettingsStatusSummary extends StatelessWidget {
           _StatusLine(
             ok: stationPaired,
             label: stationPaired
-                ? 'PlushBuddy Hub connected'
-                : 'PlushBuddy Hub not connected',
+                ? 'ToyTalk Hub connected'
+                : 'ToyTalk Hub not connected',
           ),
           _StatusLine(
             ok: voiceRuntimeReady,
@@ -5093,8 +5093,8 @@ class _SettingsStatusSummary extends StatelessWidget {
   );
 }
 
-class PlushBuddyLogo extends StatelessWidget {
-  const PlushBuddyLogo({this.size = 80, super.key});
+class ToyTalkLogo extends StatelessWidget {
+  const ToyTalkLogo({this.size = 80, super.key});
 
   final double size;
 
@@ -5125,7 +5125,7 @@ class PlushBuddyLogo extends StatelessWidget {
           children: [
             CustomPaint(
               size: Size.square(size * 0.64),
-              painter: const _PlushBuddyTeddyPainter(),
+              painter: const _ToyTalkTeddyPainter(),
             ),
             Positioned(
               right: size * 0.16,
@@ -5152,8 +5152,8 @@ class PlushBuddyLogo extends StatelessWidget {
   }
 }
 
-class _PlushBuddyTeddyPainter extends CustomPainter {
-  const _PlushBuddyTeddyPainter();
+class _ToyTalkTeddyPainter extends CustomPainter {
+  const _ToyTalkTeddyPainter();
 
   @override
   void paint(Canvas canvas, Size size) {

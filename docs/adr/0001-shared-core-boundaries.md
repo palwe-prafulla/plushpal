@@ -6,7 +6,7 @@
 
 ## Context
 
-PlushPal must reuse conversation policy and orchestration across mobile and desktop while keeping platform SDKs, secrets, and audio lifecycle behavior outside shared presentation code.
+ToyTalk must reuse conversation policy and orchestration across mobile and desktop while keeping platform SDKs, secrets, and audio lifecycle behavior outside shared presentation code.
 
 ## Decision
 

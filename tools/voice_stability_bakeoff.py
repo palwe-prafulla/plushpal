@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Focused stability bakeoff for the closest PlushBuddy voice candidates.
+"""Focused stability bakeoff for the closest ToyTalk voice candidates.
 
 This compares Qwen3-TTS 1.7B Base and LuxTTS with fixed seeds and conservative
 sampling/speed settings. The goal is to find repeatable settings that preserve
@@ -154,7 +154,7 @@ def generate_luxtts(variant: Variant, reference: Path, text: str, output: Path, 
 def write_report(output_dir: Path, results: list[dict[str, object]]) -> None:
     (output_dir / "summary.json").write_text(json.dumps(results, indent=2), encoding="utf-8")
     lines = [
-        "# PlushBuddy voice stability bakeoff",
+        "# ToyTalk voice stability bakeoff",
         "",
         "Target: consistent 1-2-year-old-ish baby puppy toy voice.",
         "",
@@ -182,7 +182,7 @@ def write_report(output_dir: Path, results: list[dict[str, object]]) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run focused PlushBuddy voice stability bakeoff")
+    parser = argparse.ArgumentParser(description="Run focused ToyTalk voice stability bakeoff")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--samples", nargs="+", default=SAMPLES)
     parser.add_argument("--phrases", nargs="+", default=list(PHRASES))

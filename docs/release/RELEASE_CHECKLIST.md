@@ -1,4 +1,4 @@
-# PlushBuddy Private-Beta Release Checklist
+# ToyTalk Private-Beta Release Checklist
 
 Every checkbox requires attached evidence for the exact commit and artifact hash. A waiver must name an owner, expiry, affected platforms, and rollback trigger.
 
@@ -12,8 +12,8 @@ For a distribution-signed macOS build, set both `PLUSHPAL_CODESIGN_IDENTITY` and
 - [x] Third-party/model/provider usage is documented.
 - [x] Local secrets and private audio samples are outside the repository.
 - [x] `.gitignore` excludes common secrets, private samples, generated voice/model artifacts, venvs, build outputs, and QA results.
-- [x] `make public-artifacts` builds from an external workspace and writes artifacts under `~/Downloads/PlushPal/artifacts`.
-- [x] Local QA writes evidence under `~/Downloads/PlushPal/test-results`.
+- [x] `make public-artifacts` builds from an external workspace and writes artifacts under `~/Downloads/ToyTalk/artifacts`.
+- [x] Local QA writes evidence under `~/Downloads/ToyTalk/test-results`.
 - [x] June 25, 2026 QA pass covers public artifact build, unit/local quality gate, Hub backend, LuxTTS voice E2E, packaged Hub, browser, Mac client, Android real device, Android pairing, and iPhone simulator launch.
 - [x] July 5, 2026 local smoke verified Hub Cloud AI mode with stored Gemini key and Android child-mode typed chat through Hub/Gemini.
 - [ ] Before a hosted release tag, rerun the full voice-sample E2E in both Local AI and Cloud AI modes with private local samples.

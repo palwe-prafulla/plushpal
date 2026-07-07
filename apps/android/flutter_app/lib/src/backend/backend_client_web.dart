@@ -7,7 +7,7 @@ import 'dart:typed_data';
 
 import 'backend_client.dart';
 
-@JS('plushpalBeginLocalTurn')
+@JS('toytalkBeginLocalTurn')
 external JSPromise<JSString> _beginLocalTurn(
   JSString ageBand,
   JSString characterAlias,
@@ -19,25 +19,25 @@ external JSPromise<JSString> _beginLocalTurn(
   JSNumber? characterPlayAgeYears,
 );
 
-@JS('plushpalTranscribeSpeech')
+@JS('toytalkTranscribeSpeech')
 external JSPromise<JSString> _transcribeSpeech(JSString wavBase64);
 
-@JS('plushpalCancelTurn')
+@JS('toytalkCancelTurn')
 external JSPromise<JSAny?> _cancelTurn();
 
-@JS('plushpalModelStatus')
+@JS('toytalkModelStatus')
 external JSPromise<JSString> _modelStatus();
 
-@JS('plushpalEndSession')
+@JS('toytalkEndSession')
 external JSPromise<JSAny?> _endSession();
 
-@JS('plushpalInstallLocalModel')
+@JS('toytalkInstallLocalModel')
 external JSPromise<JSAny?> _installLocalModel();
 
-@JS('plushpalCancelModelInstall')
+@JS('toytalkCancelModelInstall')
 external JSPromise<JSAny?> _cancelModelInstall();
 
-@JS('plushpalConfigureParentPin')
+@JS('toytalkConfigureParentPin')
 external JSPromise<JSAny?> _configureParentPin(
   JSString pin,
   JSString ageBand,
@@ -48,20 +48,20 @@ external JSPromise<JSAny?> _configureParentPin(
   JSString? kidId,
 );
 
-@JS('plushpalReasoningProviderStatus')
+@JS('toytalkReasoningProviderStatus')
 external JSPromise<JSString> _reasoningProviderStatus();
 
-@JS('plushpalConfigureApiKey')
+@JS('toytalkConfigureApiKey')
 external JSPromise<JSAny?> _configureApiKey(
   JSString pin,
   JSString provider,
   JSString apiKey,
 );
 
-@JS('plushpalKids')
+@JS('toytalkKids')
 external JSPromise<JSString> _kids();
 
-@JS('plushpalSaveKid')
+@JS('toytalkSaveKid')
 external JSPromise<JSAny?> _saveKid(
   JSString pin,
   JSString? kidId,
@@ -71,37 +71,37 @@ external JSPromise<JSAny?> _saveKid(
   JSString? photoMime,
 );
 
-@JS('plushpalDeleteKid')
+@JS('toytalkDeleteKid')
 external JSPromise<JSAny?> _deleteKid(JSString pin, JSString kidId);
 
-@JS('plushpalPairedClients')
+@JS('toytalkPairedClients')
 external JSPromise<JSString> _pairedClients(JSString pin);
 
-@JS('plushpalRevokePairedClient')
+@JS('toytalkRevokePairedClient')
 external JSPromise<JSAny?> _revokePairedClient(JSString pin, JSString clientId);
 
-@JS('plushpalAuthorizeParentPin')
+@JS('toytalkAuthorizeParentPin')
 external JSPromise<JSBoolean> _authorizeParentPin(JSString pin);
 
-@JS('plushpalDeleteAllLocalData')
+@JS('toytalkDeleteAllLocalData')
 external JSPromise<JSAny?> _deleteAllLocalData(JSString pin);
 
-@JS('plushpalExportBackup')
+@JS('toytalkExportBackup')
 external JSPromise<JSString> _exportBackup(JSString pin);
 
-@JS('plushpalImportBackup')
+@JS('toytalkImportBackup')
 external JSPromise<JSAny?> _importBackup(JSString pin, JSString backupBase64);
 
-@JS('plushpalHistory')
+@JS('toytalkHistory')
 external JSPromise<JSString> _history(JSString pin);
 
-@JS('plushpalDeleteHistory')
+@JS('toytalkDeleteHistory')
 external JSPromise<JSAny?> _deleteHistory(JSString pin);
 
-@JS('plushpalCharacters')
+@JS('toytalkCharacters')
 external JSPromise<JSString> _characters();
 
-@JS('plushpalSaveCharacter')
+@JS('toytalkSaveCharacter')
 external JSPromise<JSAny?> _saveCharacter(
   JSString pin,
   JSString characterAlias,
@@ -111,7 +111,7 @@ external JSPromise<JSAny?> _saveCharacter(
   JSNumber? personaAgeYears,
 );
 
-@JS('plushpalRenameCharacter')
+@JS('toytalkRenameCharacter')
 external JSPromise<JSAny?> _renameCharacter(
   JSString pin,
   JSString currentCharacterAlias,
@@ -122,17 +122,17 @@ external JSPromise<JSAny?> _renameCharacter(
   JSNumber? personaAgeYears,
 );
 
-@JS('plushpalDeleteCharacter')
+@JS('toytalkDeleteCharacter')
 external JSPromise<JSAny?> _deleteCharacter(
   JSString pin,
   JSString characterAlias,
   JSString? kidId,
 );
 
-@JS('plushpalPickCharacterPhoto')
+@JS('toytalkPickCharacterPhoto')
 external JSPromise<JSString> _pickCharacterPhoto();
 
-@JS('plushpalSaveCharacterPhoto')
+@JS('toytalkSaveCharacterPhoto')
 external JSPromise<JSAny?> _saveCharacterPhoto(
   JSString pin,
   JSString characterAlias,
@@ -140,33 +140,39 @@ external JSPromise<JSAny?> _saveCharacterPhoto(
   JSString? photoMime,
 );
 
-@JS('plushpalVoiceStatus')
+@JS('toytalkVoiceStatus')
 external JSPromise<JSString> _voiceStatus(JSString? characterAlias);
 
-@JS('plushpalEnrollVoice')
+@JS('toytalkEnrollVoice')
 external JSPromise<JSAny?> _enrollVoice(
   JSString pin,
   JSBoolean adultAuthorized,
   JSString? characterAlias,
 );
 
-@JS('plushpalPreviewVoice')
+@JS('toytalkPreviewVoice')
 external JSPromise<JSAny?> _previewVoice(
   JSString pin,
   JSString? characterAlias,
 );
 
-@JS('plushpalApproveVoice')
+@JS('toytalkApproveVoice')
 external JSPromise<JSAny?> _approveVoice(
   JSString pin,
   JSString? characterAlias,
 );
 
-@JS('plushpalDeleteVoice')
+@JS('toytalkDeleteVoice')
 external JSPromise<JSAny?> _deleteVoice(JSString pin, JSString? characterAlias);
 
-@JS('plushpalSpeakWithVoice')
+@JS('toytalkSpeakWithVoice')
 external JSPromise<JSAny?> _speakWithVoice(
+  JSString text,
+  JSString? characterAlias,
+);
+
+@JS('toytalkSynthesizeVoice')
+external JSPromise<JSString> _synthesizeVoice(
   JSString text,
   JSString? characterAlias,
 );
@@ -593,7 +599,11 @@ class WebBackendClient implements BackendClient {
     String text, {
     String? characterAlias,
   }) async {
-    throw UnsupportedError('Browser voice synthesis uses speakWithVoice.');
+    final wavBase64 = (await _synthesizeVoice(
+      text.toJS,
+      characterAlias?.toJS,
+    ).toDart).toDart;
+    return base64Decode(wavBase64);
   }
 
   @override

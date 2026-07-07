@@ -290,12 +290,10 @@ fn parse_response(
     } else {
         raw
     };
-    if let Some(json) = extract_json_object(raw) {
-        let wire: WireResponse =
-            serde_json::from_str(json).map_err(|_| ProviderError::MalformedResponse)?;
-        return validate_wire_response(wire, maximum_output_characters);
-    }
-    salvage_plain_text_response(raw, maximum_output_characters)
+    let json = extract_json_object(raw).ok_or(ProviderError::MalformedResponse)?;
+    let wire: WireResponse =
+        serde_json::from_str(json).map_err(|_| ProviderError::MalformedResponse)?;
+    validate_wire_response(wire, maximum_output_characters)
 }
 
 fn validate_wire_response(
@@ -314,44 +312,11 @@ fn validate_wire_response(
     })
 }
 
-fn salvage_plain_text_response(
-    raw: &str,
-    maximum_output_characters: usize,
-) -> Result<StructuredCharacterResponse, ProviderError> {
-    let speech = raw
-        .trim()
-        .trim_matches('"')
-        .trim_start_matches("assistant:")
-        .trim_start_matches("Assistant:")
-        .trim();
-    if !speech_is_acceptable(speech, maximum_output_characters) || looks_like_prompt_echo(speech) {
-        return Err(ProviderError::MalformedResponse);
-    }
-    Ok(StructuredCharacterResponse {
-        speech: speech.to_owned(),
-        suggest_trusted_adult: false,
-    })
-}
-
 fn speech_is_acceptable(speech: &str, maximum_output_characters: usize) -> bool {
     !speech.is_empty()
         && speech.chars().count() <= maximum_output_characters
         && !speech.contains("http://")
         && !speech.contains("https://")
-}
-
-fn looks_like_prompt_echo(speech: &str) -> bool {
-    let lower = speech.to_ascii_lowercase();
-    [
-        "immutable_rules",
-        "response_schema",
-        "current_child_text",
-        "task_instructions",
-        "schema_version",
-        "suggest_trusted_adult",
-    ]
-    .iter()
-    .any(|needle| lower.contains(needle))
 }
 
 fn strip_code_fence(raw: &str) -> &str {
@@ -390,7 +355,7 @@ fn log_parse_failure(raw: &str, maximum_output_characters: usize) {
     };
     let prefix: String = trimmed.chars().take(32).collect();
     eprintln!(
-        "PlushBuddy local LLM parse rejected reason={reason} raw_chars={} max_chars={} has_json={} has_think={} prefix_kind={}",
+        "ToyTalk local AI parse rejected reason={reason} raw_chars={} max_chars={} has_json={} has_think={} prefix_kind={}",
         trimmed.chars().count(),
         maximum_output_characters,
         extract_json_object(trimmed).is_some(),
@@ -571,6 +536,7 @@ mod tests {
                 text: "hello".to_owned(),
             }],
             current_text: text.to_owned(),
+            repair_instruction: None,
             max_response_characters: 360,
         }
     }
@@ -658,11 +624,6 @@ mod tests {
         )
         .unwrap();
         assert_eq!(code_fence.speech, "Tiny puppy paws are ready!");
-        let plain_text = parse_response("Hi hi! I am happy to play gently with you.", 360).unwrap();
-        assert_eq!(
-            plain_text.speech,
-            "Hi hi! I am happy to play gently with you."
-        );
     }
 
     #[test]
@@ -672,6 +633,10 @@ mod tests {
                 "schema_version response_schema current_child_text task_instructions",
                 100,
             ),
+            Err(ProviderError::MalformedResponse)
+        );
+        assert_eq!(
+            parse_response("Hi hi! I am happy to play gently with you.", 360),
             Err(ProviderError::MalformedResponse)
         );
         assert_eq!(

@@ -2,7 +2,7 @@
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-PUBLIC_ROOT=${PLUSHPAL_PUBLIC_ROOT:-"$HOME/Downloads/PlushPal"}
+PUBLIC_ROOT=${PLUSHPAL_PUBLIC_ROOT:-"$HOME/Downloads/ToyTalk"}
 ARTIFACTS_ROOT=${PLUSHPAL_ARTIFACTS_DIR:-"$PUBLIC_ROOT/artifacts"}
 RELEASE_ROOT=${PLUSHPAL_RELEASE_DIR:-"$PUBLIC_ROOT/release"}
 VERSION=${PLUSHPAL_VERSION:-}
@@ -76,19 +76,19 @@ else
   copy_if_present "$ARTIFACTS_ROOT"/macos/*.zip
 fi
 copy_if_present "$ARTIFACTS_ROOT"/android/*.apk
-zip_app_if_present "$ARTIFACTS_ROOT/ios/PlushBuddy-iPhoneSimulator.app" "PlushBuddy-iPhoneSimulator-$safe_version.zip"
-zip_app_if_present "$ARTIFACTS_ROOT/ios/PlushBuddy-iPhoneOS-unsigned.app" "PlushBuddy-iPhoneOS-unsigned-$safe_version.zip"
+zip_app_if_present "$ARTIFACTS_ROOT/ios/ToyTalk-iPhoneSimulator.app" "ToyTalk-iPhoneSimulator-$safe_version.zip"
+zip_app_if_present "$ARTIFACTS_ROOT/ios/ToyTalk-iPhoneOS-unsigned.app" "ToyTalk-iPhoneOS-unsigned-$safe_version.zip"
 
 split_oversized_assets
 
 cat > "$DEST/RELEASE_NOTES.md" <<EOF
-# PlushBuddy $VERSION
+# ToyTalk $VERSION
 
 Local release bundle generated from this checkout.
 
 ## Contents
 
-- macOS PlushBuddy Hub and Mac client archives, when macOS packaging was built
+- macOS ToyTalk Hub and Mac client archives, when macOS packaging was built
 - Android debug APK, when Android tooling was available
 - iPhone simulator / unsigned device app archives, when Xcode tooling was available
 - SHA256SUMS for all bundled artifacts
@@ -96,13 +96,13 @@ Local release bundle generated from this checkout.
 ## Notes
 
 - Unsigned/development artifacts are for local testing and learning.
-- Apps are intentionally lightweight; PlushBuddy Hub downloads/prepares LuxTTS source, Python dependencies, voice/STT model caches, and optional Local AI models during setup.
+- Apps are intentionally lightweight; ToyTalk Hub downloads/prepares LuxTTS source, Python dependencies, voice/STT model caches, and optional Local AI models during setup.
 - Do not upload private voice samples, API keys, or local databases to releases.
 - Very large artifacts may be split into .part-aa, .part-ab, ... files to stay
   under GitHub release upload limits. Reassemble on macOS/Linux with:
 
   \`\`\`sh
-  cat PlushBuddy-*.dmg.part-* > PlushBuddy-$safe_version-macos.dmg
+  cat ToyTalk-*.dmg.part-* > ToyTalk-$safe_version-macos.dmg
   \`\`\`
 EOF
 

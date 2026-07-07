@@ -164,7 +164,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             PocketVoiceEngine, WhisperCliSpeechToTextEngine,
         };
         let runtime_mode = RuntimeMode::from_env();
-        eprintln!("PlushBuddy Hub runtime mode: {runtime_mode:?}");
+        eprintln!("ToyTalk Hub runtime mode: {runtime_mode:?}");
         let hub_client_id = env::var("PLUSHPAL_HUB_CLIENT_ID")
             .unwrap_or_else(|_| "hub-00000000-0000-0000-0000-000000000000".to_owned());
         let state = state
@@ -185,7 +185,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let profile_store = Arc::new(profile_store);
         let recommendation = local_model_recommendation_from_env();
         if let Some((model_id, note)) = &recommendation {
-            eprintln!("PlushBuddy Hub local AI recommendation: {model_id}; {note}");
+            eprintln!("ToyTalk Hub local AI recommendation: {model_id}; {note}");
         }
         let installer = Arc::new(
             NativeModelInstaller::new_with_recommendation(
@@ -348,12 +348,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Some(command_path) = env::var_os("PLUSHPAL_STT_COMMAND").map(PathBuf::from) {
             match WhisperCliSpeechToTextEngine::new(command_path, &data_directory) {
                 Ok(engine) => {
-                    eprintln!("PlushBuddy Hub local listening fallback enabled.");
+                    eprintln!("ToyTalk Hub local listening fallback enabled.");
                     state = state.with_speech_to_text_engine(Arc::new(engine));
                 }
                 Err(error) => {
                     eprintln!(
-                        "PlushBuddy Hub local listening fallback is unavailable; native clients must use verified on-device listening: {error:?}"
+                        "ToyTalk Hub local listening fallback is unavailable; native clients must use verified on-device listening: {error:?}"
                     );
                 }
             }
@@ -418,7 +418,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         Err(error) => {
                             eprintln!(
-                                "PlushBuddy Hub local conversation model is unavailable: {error:?}"
+                                "ToyTalk Hub local conversation model is unavailable: {error:?}"
                             );
                         }
                     }
@@ -471,13 +471,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         state
     };
     let url = format!("{}/#bootstrap={}", endpoint.origin(false), bootstrap);
-    println!("PlushBuddy Hub listening on {}", endpoint.origin(false));
+    println!("ToyTalk Hub listening on {}", endpoint.origin(false));
     if env::var_os("PLUSHPAL_PRINT_BOOTSTRAP_URL").is_some() {
-        println!("PlushBuddy Hub test bootstrap URL: {url}");
+        println!("ToyTalk Hub test bootstrap URL: {url}");
         if let Some(host_header) = public_host_header {
-            println!(
-                "PlushBuddy Hub LAN bootstrap URL: http://{host_header}/#bootstrap={bootstrap}"
-            );
+            println!("ToyTalk Hub LAN bootstrap URL: http://{host_header}/#bootstrap={bootstrap}");
         }
     }
     if env::var_os("PLUSHPAL_NO_BROWSER").is_none() {

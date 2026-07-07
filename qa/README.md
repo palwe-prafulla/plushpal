@@ -1,7 +1,7 @@
-# PlushBuddy QA
+# ToyTalk QA
 
 This folder holds product-level QA automation. Generated test-result artifacts
-are written outside the repository under `~/Downloads/PlushPal/test-results` by
+are written outside the repository under `~/Downloads/ToyTalk/test-results` by
 default.
 
 ## Layout

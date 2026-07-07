@@ -4,14 +4,14 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:plushpal_ui/src/backend/backend_client.dart';
-import 'package:plushpal_ui/src/backend/backend_client_stub.dart';
+import 'package:toytalk_ui/src/backend/backend_client.dart';
+import 'package:toytalk_ui/src/backend/backend_client_stub.dart';
 
 class _RealHttpOverrides extends HttpOverrides {}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  const channel = MethodChannel('com.plushpal/test-backend');
+  const channel = MethodChannel('com.toytalk/test-backend');
   const client = MethodChannelBackendClient(channel: channel);
   final calls = <MethodCall>[];
 
@@ -64,9 +64,9 @@ void main() {
       expect(readiness.ready, isFalse);
       expect(readiness.installSupported, isFalse);
       expect(readiness.parentConfigured, isFalse);
-      expect(readiness.displayName, 'PlushBuddy Hub');
+      expect(readiness.displayName, 'ToyTalk Hub');
       expect(provider.configured, isFalse);
-      expect(provider.displayName, 'PlushBuddy Hub');
+      expect(provider.displayName, 'ToyTalk Hub');
       expect(kids, isEmpty);
       expect(characters, isEmpty);
       expect(history, isEmpty);
@@ -95,7 +95,7 @@ void main() {
 
     expect(pairing.paired, isFalse);
     expect(pairing.baseUrl, isNull);
-    expect(readiness.displayName, 'PlushBuddy Hub');
+    expect(readiness.displayName, 'ToyTalk Hub');
     expect(backendCalls(), isEmpty);
   });
 
@@ -203,7 +203,7 @@ void main() {
           ..write(
             jsonEncode({
               'model_id': 'hub',
-              'display_name': 'PlushBuddy Hub',
+              'display_name': 'ToyTalk Hub',
               'model_ready': true,
               'model_install_supported': true,
               'model_installing': false,

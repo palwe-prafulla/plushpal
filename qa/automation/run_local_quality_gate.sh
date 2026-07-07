@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-PUBLIC_ROOT="${PLUSHPAL_PUBLIC_ROOT:-$HOME/Downloads/PlushPal}"
+PUBLIC_ROOT="${PLUSHPAL_PUBLIC_ROOT:-$HOME/Downloads/ToyTalk}"
 RESULT_ROOT="${PLUSHPAL_TEST_RESULTS_DIR:-$PUBLIC_ROOT/test-results}"
 RESULT_DIR="$RESULT_ROOT/local-quality-$(date +%Y%m%d-%H%M%S)"
 WORKTREE="${PLUSHPAL_TEST_WORKTREE:-$PUBLIC_ROOT/test-workspaces/local-quality-source}"

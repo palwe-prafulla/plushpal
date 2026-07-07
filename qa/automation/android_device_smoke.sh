@@ -2,12 +2,12 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-PUBLIC_ROOT="${PLUSHPAL_PUBLIC_ROOT:-$HOME/Downloads/PlushPal}"
-RESULT_ROOT="${PLUSHPAL_TEST_RESULTS_DIR:-$HOME/Downloads/PlushPal/test-results}"
+PUBLIC_ROOT="${PLUSHPAL_PUBLIC_ROOT:-$HOME/Downloads/ToyTalk}"
+RESULT_ROOT="${PLUSHPAL_TEST_RESULTS_DIR:-$HOME/Downloads/ToyTalk/test-results}"
 RESULT_DIR="$RESULT_ROOT/android-device-$(date +%Y%m%d-%H%M%S)"
 DEVICE_ID="${ANDROID_DEVICE_ID:-}"
-PACKAGE_ID="${PLUSHPAL_ANDROID_PACKAGE:-com.plushpal.app}"
-APK="${PLUSHPAL_ANDROID_APK:-$PUBLIC_ROOT/artifacts/android/PlushBuddy-debug.apk}"
+PACKAGE_ID="${PLUSHPAL_ANDROID_PACKAGE:-com.toytalk.app}"
+APK="${PLUSHPAL_ANDROID_APK:-$PUBLIC_ROOT/artifacts/android/ToyTalk-debug.apk}"
 
 mkdir -p "$RESULT_DIR"
 
@@ -35,7 +35,7 @@ adb -s "$DEVICE_ID" install -r "$APK" > "$RESULT_DIR/adb-install.log" 2>&1
 echo "Clearing app data for fresh-launch smoke..."
 adb -s "$DEVICE_ID" shell pm clear "$PACKAGE_ID" > "$RESULT_DIR/pm-clear.log" 2>&1 || true
 
-echo "Launching PlushBuddy..."
+echo "Launching ToyTalk..."
 adb -s "$DEVICE_ID" shell am start \
   -n "$PACKAGE_ID/.MainActivity" \
   -a android.intent.action.MAIN \
@@ -44,13 +44,13 @@ adb -s "$DEVICE_ID" shell am start \
 sleep 5
 
 echo "Capturing UI dump and screenshot..."
-adb -s "$DEVICE_ID" shell uiautomator dump /sdcard/plushbuddy-window.xml \
+adb -s "$DEVICE_ID" shell uiautomator dump /sdcard/toytalk-window.xml \
   > "$RESULT_DIR/uiautomator-dump.log" 2>&1 || true
-adb -s "$DEVICE_ID" pull /sdcard/plushbuddy-window.xml "$RESULT_DIR/window.xml" \
+adb -s "$DEVICE_ID" pull /sdcard/toytalk-window.xml "$RESULT_DIR/window.xml" \
   > "$RESULT_DIR/uiautomator-pull.log" 2>&1 || true
 adb -s "$DEVICE_ID" exec-out screencap -p > "$RESULT_DIR/launch.png" || true
 
-if [[ -f "$RESULT_DIR/window.xml" ]] && grep -Eiq 'PlushBuddy|Settings|Parent|Welcome' "$RESULT_DIR/window.xml"; then
+if [[ -f "$RESULT_DIR/window.xml" ]] && grep -Eiq 'ToyTalk|Settings|Parent|Welcome' "$RESULT_DIR/window.xml"; then
   echo "PASS: Android app installed, launched, and exposed expected UI text."
   echo "pass" > "$RESULT_DIR/status.txt"
 else

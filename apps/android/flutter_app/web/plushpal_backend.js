@@ -1,8 +1,21 @@
 (() => {
-  const CLIENT_ID_KEY = 'plushbuddy-web-client-id-v1';
-  const HUB_ID_KEY = 'plushbuddy-web-hub-id-v1';
+  const CLIENT_ID_KEY = 'toytalk-web-client-id-v1';
+  const HUB_ID_KEY = 'toytalk-web-hub-id-v1';
   const DEFAULT_TRAITS = ['gentle', 'curious'];
   let activeAudio = null;
+
+  const clientPlatform = () => {
+    const platform = String(window.__toytalkClientPlatform || 'web').toLowerCase();
+    return /^(web|macos)$/.test(platform) ? platform : 'web';
+  };
+
+  const clientIdStorageKey = () => {
+    const platform = clientPlatform();
+    return platform === 'web' ? CLIENT_ID_KEY : `toytalk-${platform}-client-id-v1`;
+  };
+
+  const clientIdPattern = (platform) =>
+    new RegExp(`^${platform}-[a-f0-9-]{36}$`);
 
   const bytesToBase64 = (bytes) => {
     let binary = '';
@@ -63,14 +76,20 @@
     return target;
   };
 
-  window.plushpalWebSpeechSupported = () =>
+  window.toytalkWebSpeechSupported = () =>
     Boolean(
       navigator.mediaDevices?.getUserMedia &&
       (window.AudioContext || window.webkitAudioContext)
     );
 
-  window.plushpalRecordSpeechWav = async () => {
-    if (!window.plushpalWebSpeechSupported()) {
+  window.toytalkNativeSpeechSupported ??= () => false;
+
+  window.toytalkNativeListen ??= async () => {
+    throw new Error('Native on-device speech recognition is unavailable.');
+  };
+
+  window.toytalkRecordSpeechWav = async () => {
+    if (!window.toytalkWebSpeechSupported()) {
       throw new Error('Browser microphone capture is unavailable.');
     }
     const stream = await navigator.mediaDevices.getUserMedia({
@@ -129,7 +148,7 @@
     return encodeWavBase64(samples, 16_000);
   };
 
-  window.plushpalSpeakText = async (text) => {
+  window.toytalkSpeakText = async (text) => {
     if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) {
       throw new Error('Browser speech synthesis is unavailable.');
     }
@@ -146,18 +165,31 @@
   const newId = (prefix) => `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
 
   const stableClientId = () => {
+    const platform = clientPlatform();
+    const key = clientIdStorageKey();
     try {
-      const existing = window.localStorage.getItem(CLIENT_ID_KEY);
-      if (/^web-[a-f0-9-]{36}$/.test(existing || '')) return existing;
-      const generated = `web-${crypto.randomUUID()}`;
-      window.localStorage.setItem(CLIENT_ID_KEY, generated);
+      const existing = window.localStorage.getItem(key);
+      if (clientIdPattern(platform).test(existing || '')) return existing;
+      if (platform === 'macos') {
+        const legacyWeb = window.localStorage.getItem(CLIENT_ID_KEY);
+        if (/^web-[a-f0-9-]{36}$/.test(legacyWeb || '')) {
+          const migrated = `macos-${legacyWeb.slice(4)}`;
+          window.localStorage.setItem(key, migrated);
+          return migrated;
+        }
+      }
+      const generated = `${platform}-${crypto.randomUUID()}`;
+      window.localStorage.setItem(key, generated);
       return generated;
     } catch (_) {
-      return `web-${crypto.randomUUID()}`;
+      return `${platform}-${crypto.randomUUID()}`;
     }
   };
 
   const stableClientLabel = () => {
+    if (window.__toytalkClientLabel) {
+      return String(window.__toytalkClientLabel).slice(0, 80);
+    }
     const nav = window.navigator || {};
     const platform =
       nav.userAgentData?.platform || nav.platform || 'browser';
@@ -188,11 +220,11 @@
 
   let bootstrapAttempted = false;
   const ensureStationSession = async () => {
-    if (!bootstrapAttempted && window.__plushpalStationBootstrapReady) {
+    if (!bootstrapAttempted && window.__toytalkStationBootstrapReady) {
       bootstrapAttempted = true;
-      const status = await window.__plushpalStationBootstrapReady;
+      const status = await window.__toytalkStationBootstrapReady;
       if (status === 'failed') {
-        throw new Error('Hub session expired. Open PlushBuddy from Hub again.');
+        throw new Error('Hub session expired. Open ToyTalk from Hub again.');
       }
       return;
     }
@@ -209,7 +241,7 @@
           'x-plushbuddy-client-label': stableClientLabel(),
         },
       });
-      if (!response.ok) throw new Error('Hub session expired. Open PlushBuddy from Hub again.');
+      if (!response.ok) throw new Error('Hub session expired. Open ToyTalk from Hub again.');
       rememberHubId(response.headers.get('x-plushbuddy-hub-id'));
       history.replaceState(null, document.title, `${window.location.pathname}${window.location.search}`);
       return;
@@ -231,7 +263,7 @@
       },
     });
     if (response.status === 401 || response.status === 403) {
-      throw new Error('Hub session is not ready. Open this browser or Mac app from PlushBuddy Hub again.');
+      throw new Error('Hub session is not ready. Open this browser or Mac app from ToyTalk Hub again.');
     }
     return response;
   };
@@ -291,11 +323,20 @@
     if (!response.ok) {
       throw new Error(await responseErrorMessage(response, 'Local voice synthesis failed'));
     }
+    if (window.toytalkNativeAudioSupported && window.toytalkNativeAudioSupported()) {
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      await window.toytalkNativePlayWavBase64(bytesToBase64(bytes));
+      return;
+    }
+    await playWavBlob(await response.blob());
+  };
+
+  const playWavBlob = async (blob) => {
     if (activeAudio) {
       activeAudio.pause();
       activeAudio = null;
     }
-    const url = URL.createObjectURL(await response.blob());
+    const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
     activeAudio = audio;
     try {
@@ -310,7 +351,20 @@
     }
   };
 
-  window.plushpalReasoningProviderStatus = async () => {
+  window.toytalkPlayWavBase64 = async (wavBase64) => {
+    if (window.toytalkNativeAudioSupported && window.toytalkNativeAudioSupported()) {
+      await window.toytalkNativePlayWavBase64(wavBase64);
+      return;
+    }
+    const binary = atob(String(wavBase64 || ''));
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    await playWavBlob(new Blob([bytes], {type: 'audio/wav'}));
+  };
+
+  window.toytalkReasoningProviderStatus = async () => {
     const response = await stationFetch('/api/v1/provider/status');
     if (!response.ok) {
       throw new Error(await responseErrorMessage(response, 'Reasoning provider status failed'));
@@ -318,7 +372,7 @@
     return JSON.stringify(await response.json());
   };
 
-  window.plushpalConfigureApiKey = async (pin, provider, apiKey) => {
+  window.toytalkConfigureApiKey = async (pin, provider, apiKey) => {
     const normalized = provider === 'openai' ? 'openai' : 'gemini';
     if (!apiKey || !apiKey.trim()) throw new Error('API key is required.');
     const response = await stationFetch('/api/v1/provider/api-key', {
@@ -334,11 +388,11 @@
     }
   };
 
-  window.plushpalModelStatus = async () => {
+  window.toytalkModelStatus = async () => {
     const station = await stationStatus();
     return JSON.stringify({
       model_id: station?.model_id || 'hub-runtime',
-      display_name: station?.display_name || 'PlushBuddy Hub',
+      display_name: station?.display_name || 'ToyTalk Hub',
       runtime_mode: station?.runtime_mode || 'browser',
       model_ready: Boolean(station?.model_ready),
       model_install_supported: Boolean(station),
@@ -353,7 +407,7 @@
     });
   };
 
-  window.plushpalBeginLocalTurn = async (
+  window.toytalkBeginLocalTurn = async (
     ageBand,
     characterAlias,
     text,
@@ -382,7 +436,7 @@
     return JSON.stringify(await response.json());
   };
 
-  window.plushpalTranscribeSpeech = async (wavBase64) => {
+  window.toytalkTranscribeSpeech = async (wavBase64) => {
     const response = await stationFetch('/api/v1/stt/transcribe', {
       method: 'POST',
       body: JSON.stringify({wav_base64: wavBase64}),
@@ -408,12 +462,12 @@
     }
   };
 
-  window.plushpalCancelTurn = async () => stationCommand('cancel_turn');
-  window.plushpalEndSession = async () => stationCommand('exit_child_mode');
-  window.plushpalInstallLocalModel = async () => stationCommand('install_local_model');
-  window.plushpalCancelModelInstall = async () => stationCommand('cancel_model_install');
+  window.toytalkCancelTurn = async () => stationCommand('cancel_turn');
+  window.toytalkEndSession = async () => stationCommand('exit_child_mode');
+  window.toytalkInstallLocalModel = async () => stationCommand('install_local_model');
+  window.toytalkCancelModelInstall = async () => stationCommand('cancel_model_install');
 
-  window.plushpalConfigureParentPin = async (
+  window.toytalkConfigureParentPin = async (
     pin,
     ageBand,
     characterAlias,
@@ -439,7 +493,7 @@
     }
   };
 
-  window.plushpalAuthorizeParentPin = async (pin) => {
+  window.toytalkAuthorizeParentPin = async (pin) => {
     try {
       const response = await stationFetch('/api/v1/parent-pin/authorize', {
         method: 'POST',
@@ -451,7 +505,7 @@
     }
   };
 
-  window.plushpalDeleteAllLocalData = async (pin) => {
+  window.toytalkDeleteAllLocalData = async (pin) => {
     const response = await stationFetch('/api/v1/local-data/delete', {
       method: 'POST',
       body: JSON.stringify({pin}),
@@ -461,7 +515,7 @@
     }
   };
 
-  window.plushpalExportBackup = async (pin) => {
+  window.toytalkExportBackup = async (pin) => {
     const response = await stationFetch('/api/v1/backup/export', {
       method: 'POST',
       body: JSON.stringify({pin}),
@@ -470,7 +524,7 @@
     return JSON.stringify(await response.json());
   };
 
-  window.plushpalImportBackup = async (pin, backupBase64) => {
+  window.toytalkImportBackup = async (pin, backupBase64) => {
     const response = await stationFetch('/api/v1/backup/import', {
       method: 'POST',
       body: JSON.stringify({pin, backup_base64: backupBase64}),
@@ -478,13 +532,13 @@
     if (!response.ok) throw new Error(await responseErrorMessage(response, 'Could not import encrypted backup'));
   };
 
-  window.plushpalKids = async () => {
+  window.toytalkKids = async () => {
     const response = await stationFetch('/api/v1/kids');
     if (!response.ok) throw new Error(await responseErrorMessage(response, 'Could not load kids'));
     return JSON.stringify(await response.json());
   };
 
-  window.plushpalSaveKid = async (
+  window.toytalkSaveKid = async (
     pin,
     kidId,
     name,
@@ -506,7 +560,7 @@
     if (!response.ok) throw new Error(await responseErrorMessage(response, 'Could not save kid'));
   };
 
-  window.plushpalDeleteKid = async (pin, kidId) => {
+  window.toytalkDeleteKid = async (pin, kidId) => {
     const response = await stationFetch('/api/v1/kids/delete', {
       method: 'POST',
       body: JSON.stringify({pin, kid_id: kidId}),
@@ -514,7 +568,7 @@
     if (!response.ok) throw new Error(await responseErrorMessage(response, 'Could not delete kid'));
   };
 
-  window.plushpalPairedClients = async (pin) => {
+  window.toytalkPairedClients = async (pin) => {
     const response = await stationFetch('/api/v1/paired-clients', {
       method: 'POST',
       body: JSON.stringify({pin}),
@@ -523,7 +577,7 @@
     return JSON.stringify(await response.json());
   };
 
-  window.plushpalRevokePairedClient = async (pin, clientId) => {
+  window.toytalkRevokePairedClient = async (pin, clientId) => {
     const response = await stationFetch('/api/v1/paired-clients/revoke', {
       method: 'POST',
       body: JSON.stringify({pin, client_id: clientId}),
@@ -531,7 +585,7 @@
     if (!response.ok) throw new Error(await responseErrorMessage(response, 'Could not revoke paired device'));
   };
 
-  window.plushpalHistory = async (pin) => {
+  window.toytalkHistory = async (pin) => {
     const response = await stationFetch('/api/v1/history/list', {
       method: 'POST',
       body: JSON.stringify({pin}),
@@ -540,7 +594,7 @@
     return JSON.stringify(await response.json());
   };
 
-  window.plushpalDeleteHistory = async (pin) => {
+  window.toytalkDeleteHistory = async (pin) => {
     const response = await stationFetch('/api/v1/history/delete', {
       method: 'POST',
       body: JSON.stringify({pin}),
@@ -548,13 +602,13 @@
     if (!response.ok) throw new Error(await responseErrorMessage(response, 'Could not delete history'));
   };
 
-  window.plushpalCharacters = async () => {
+  window.toytalkCharacters = async () => {
     const response = await stationFetch('/api/v1/characters');
     if (!response.ok) throw new Error(await responseErrorMessage(response, 'Could not load characters'));
     return JSON.stringify(await response.json());
   };
 
-  window.plushpalSaveCharacter = async (
+  window.toytalkSaveCharacter = async (
     pin,
     characterAlias,
     characterTraits,
@@ -576,7 +630,7 @@
     if (!response.ok) throw new Error(await responseErrorMessage(response, 'Could not save character'));
   };
 
-  window.plushpalRenameCharacter = async (
+  window.toytalkRenameCharacter = async (
     pin,
     currentCharacterAlias,
     newCharacterAlias,
@@ -600,7 +654,7 @@
     if (!response.ok) throw new Error(await responseErrorMessage(response, 'Could not rename character'));
   };
 
-  window.plushpalDeleteCharacter = async (pin, characterAlias, kidId) => {
+  window.toytalkDeleteCharacter = async (pin, characterAlias, kidId) => {
     const response = await stationFetch('/api/v1/characters/delete', {
       method: 'POST',
       body: JSON.stringify({
@@ -638,7 +692,7 @@
     return file;
   });
 
-  window.plushpalPickCharacterPhoto = async () => {
+  window.toytalkPickCharacterPhoto = async () => {
     const file = await pickFile({
       accept: 'image/png,image/jpeg,image/webp,image/heic,.png,.jpg,.jpeg,.webp,.heic',
       maxBytes: 20 * 1024 * 1024,
@@ -657,7 +711,7 @@
     });
   };
 
-  window.plushpalSaveCharacterPhoto = async (pin, characterAlias, photoBase64, photoMime) => {
+  window.toytalkSaveCharacterPhoto = async (pin, characterAlias, photoBase64, photoMime) => {
     const response = await stationFetch('/api/v1/characters/photo', {
       method: 'POST',
       body: JSON.stringify({
@@ -672,10 +726,10 @@
     }
   };
 
-  window.plushpalVoiceStatus = async (characterAlias) =>
+  window.toytalkVoiceStatus = async (characterAlias) =>
     JSON.stringify(await voiceStatusFor(characterAlias));
 
-  window.plushpalEnrollVoice = async (pin, adultAuthorized, characterAlias) => {
+  window.toytalkEnrollVoice = async (pin, adultAuthorized, characterAlias) => {
     const file = await pickFile({
       accept:
         '.m4a,.mp4,.aac,.wav,.mp3,.ogg,.webm,' +
@@ -706,7 +760,7 @@
     }
   };
 
-  window.plushpalPreviewVoice = async (pin, characterAlias) => {
+  window.toytalkPreviewVoice = async (pin, characterAlias) => {
     await playWavResponse(await stationFetch('/api/v1/voice/preview', {
       method: 'POST',
       body: JSON.stringify({
@@ -717,7 +771,7 @@
     }));
   };
 
-  window.plushpalApproveVoice = async (pin, characterAlias) => {
+  window.toytalkApproveVoice = async (pin, characterAlias) => {
     const response = await stationFetch('/api/v1/voice/approve', {
       method: 'POST',
       body: JSON.stringify({pin, character_alias: characterAlias || null}),
@@ -725,7 +779,7 @@
     if (!response.ok) throw new Error(await responseErrorMessage(response, 'Voice approval failed'));
   };
 
-  window.plushpalDeleteVoice = async (pin, characterAlias) => {
+  window.toytalkDeleteVoice = async (pin, characterAlias) => {
     const response = await stationFetch('/api/v1/voice/delete', {
       method: 'POST',
       body: JSON.stringify({pin, character_alias: characterAlias || null}),
@@ -733,10 +787,22 @@
     if (!response.ok) throw new Error(await responseErrorMessage(response, 'Voice deletion failed'));
   };
 
-  window.plushpalSpeakWithVoice = async (text, characterAlias) => {
+  window.toytalkSpeakWithVoice = async (text, characterAlias) => {
     await playWavResponse(await stationFetch('/api/v1/voice/speak', {
       method: 'POST',
       body: JSON.stringify({text, character_alias: characterAlias || null}),
     }));
+  };
+
+  window.toytalkSynthesizeVoice = async (text, characterAlias) => {
+    const response = await stationFetch('/api/v1/voice/speak', {
+      method: 'POST',
+      body: JSON.stringify({text, character_alias: characterAlias || null}),
+    });
+    if (!response.ok) {
+      throw new Error(await responseErrorMessage(response, 'Local voice synthesis failed'));
+    }
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    return bytesToBase64(bytes);
   };
 })();

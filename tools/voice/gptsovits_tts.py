@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small GPT-SoVITS inference wrapper for PlushBuddy voice bakeoffs.
+"""Small GPT-SoVITS inference wrapper for ToyTalk voice bakeoffs.
 
 This is intentionally not part of the app runtime yet. It lets us evaluate
 GPT-SoVITS against the same local toy samples before deciding whether it is
@@ -73,7 +73,7 @@ def validate_models() -> None:
 def prepare_reference(reference: Path) -> tuple[Path, tempfile.TemporaryDirectory[str] | None]:
     """Return a GPT-SoVITS-compatible 3-10s reference file.
 
-    GPT-SoVITS rejects longer references. The PlushPal samples are intentionally
+    GPT-SoVITS rejects longer references. The ToyTalk samples are intentionally
     longer, so for bakeoffs we extract the first high-energy ~9 second window
     into a temporary WAV and leave the original file untouched.
     """
@@ -101,7 +101,7 @@ def prepare_reference(reference: Path) -> tuple[Path, tempfile.TemporaryDirector
     if len(trimmed) < int(3.0 * sample_rate):
         raise ValueError(f"Reference audio is too short after trimming: {reference}")
 
-    temp_dir = tempfile.TemporaryDirectory(prefix="plushpal-gptsovits-ref-")
+    temp_dir = tempfile.TemporaryDirectory(prefix="toytalk-gptsovits-ref-")
     trimmed_path = Path(temp_dir.name) / "reference_9s.wav"
     sf.write(trimmed_path, trimmed, sample_rate)
     return trimmed_path, temp_dir

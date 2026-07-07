@@ -21,13 +21,13 @@ class HubAuthenticationRejectedException implements Exception {
 
 class MethodChannelBackendClient implements BackendClient {
   const MethodChannelBackendClient({
-    this.channel = const MethodChannel('com.plushpal/platform'),
+    this.channel = const MethodChannel('com.toytalk/platform'),
   });
 
   final MethodChannel channel;
 
   Never _hubRequired() => throw UnsupportedError(
-    'Connect PlushBuddy Hub before using family, voice, or conversation data.',
+    'Connect ToyTalk Hub before using family, voice, or conversation data.',
   );
 
   bool _isValidStationResponse(Map<Object?, Object?>? response) {
@@ -43,7 +43,9 @@ class MethodChannelBackendClient implements BackendClient {
         baseUrl.isNotEmpty &&
         cookie.isNotEmpty &&
         clientId.isNotEmpty &&
-        RegExp(r'^(android|ios|web|mac)-[a-f0-9-]{36}$').hasMatch(clientId) &&
+        RegExp(
+          r'^(android|ios|web|macos|windows|linux)-[a-f0-9-]{36}$',
+        ).hasMatch(clientId) &&
         RegExp(r'^hub-[a-f0-9-]{36}$').hasMatch(hubId);
   }
 
@@ -152,7 +154,7 @@ class MethodChannelBackendClient implements BackendClient {
     if (station != null) {
       return station.revokePairedClient(pin: pin, clientId: clientId);
     }
-    throw UnsupportedError('Paired devices are managed by PlushBuddy Hub.');
+    throw UnsupportedError('Paired devices are managed by ToyTalk Hub.');
   }
 
   @override
@@ -162,7 +164,7 @@ class MethodChannelBackendClient implements BackendClient {
     return const ReasoningProviderStatus(
       provider: 'hub',
       configured: false,
-      displayName: 'PlushBuddy Hub',
+      displayName: 'ToyTalk Hub',
     );
   }
 
@@ -232,7 +234,7 @@ class MethodChannelBackendClient implements BackendClient {
     if (station != null) return station.localModelReadiness();
     return const LocalModelReadiness(
       modelId: 'hub-required',
-      displayName: 'PlushBuddy Hub',
+      displayName: 'ToyTalk Hub',
       ready: false,
       installSupported: false,
       installing: false,
@@ -273,7 +275,7 @@ class MethodChannelBackendClient implements BackendClient {
     final station = await _stationBackend();
     if (station != null) return station.transcribeSpeech(wavBytes);
     throw UnsupportedError(
-      'Hub speech-to-text requires PlushBuddy Hub pairing.',
+      'Hub speech-to-text requires ToyTalk Hub pairing.',
     );
   }
 
@@ -651,7 +653,7 @@ class _StationBackendClient implements BackendClient {
         parsed.port == 0 ||
         bootstrap == null ||
         bootstrap.isEmpty) {
-      throw const FormatException('Paste the full PlushBuddy Hub pairing URL.');
+      throw const FormatException('Paste the full ToyTalk Hub pairing URL.');
     }
     final baseUrl = parsed.replace(path: '', query: '', fragment: '');
     final origin = _StationConfig._origin(baseUrl);
@@ -673,10 +675,10 @@ class _StationBackendClient implements BackendClient {
       if (response.statusCode != HttpStatus.noContent) {
         final hint = switch (response.statusCode) {
           HttpStatus.unauthorized =>
-            'The QR code is stale. Open a fresh pairing QR code in PlushBuddy Hub and scan again.',
+            'The QR code is stale. Open a fresh pairing QR code in ToyTalk Hub and scan again.',
           HttpStatus.forbidden =>
             'This phone was forgotten by the Hub. Open a fresh pairing QR code and scan again.',
-          _ => 'Keep PlushBuddy Hub open and scan the latest QR code.',
+          _ => 'Keep ToyTalk Hub open and scan the latest QR code.',
         };
         throw HttpException(
           'Hub rejected the pairing URL with HTTP ${response.statusCode}. $hint',
@@ -737,7 +739,7 @@ class _StationBackendClient implements BackendClient {
         request.headers.set('X-PlushBuddy-Client-Label', clientLabel.trim());
       }
       // Dart/Android HttpClient is not a browser and does not add Origin
-      // automatically. PlushBuddy Hub validates API requests against the
+      // automatically. ToyTalk Hub validates API requests against the
       // paired Hub origin for both reads and writes, so send it on every
       // request. Without this, startup GET readiness checks are rejected and
       // the app clears an otherwise valid pairing.
@@ -803,11 +805,11 @@ class _StationBackendClient implements BackendClient {
       );
       final ready = health['voice_engine_ready'] as bool? ?? false;
       debugPrint(
-        'PlushPal station health ${config.origin}: voice_engine_ready=$ready',
+        'ToyTalk Hub health ${config.origin}: voice_engine_ready=$ready',
       );
       return ready;
     } catch (error) {
-      debugPrint('PlushPal station health ${config.origin} failed: $error');
+      debugPrint('ToyTalk Hub health ${config.origin} failed: $error');
       return false;
     }
   }
@@ -1023,7 +1025,7 @@ class _StationBackendClient implements BackendClient {
               .difference(turnStartedAt)
               .inMilliseconds;
           debugPrint(
-            'PlushBuddy latency request_id=$requestId phase=android_turn '
+            'ToyTalk latency request_id=$requestId phase=android_turn '
             'status=ok total_ms=$totalMs '
             'hub_generate_ms=${event['conversation_generate_ms']} '
             'hub_total_ms=${event['total_ms']}',
@@ -1039,7 +1041,7 @@ class _StationBackendClient implements BackendClient {
               .difference(turnStartedAt)
               .inMilliseconds;
           debugPrint(
-            'PlushBuddy latency request_id=$requestId phase=android_turn '
+            'ToyTalk latency request_id=$requestId phase=android_turn '
             'status=failed total_ms=$totalMs '
             'hub_generate_ms=${event['conversation_generate_ms']} '
             'hub_total_ms=${event['total_ms']}',
@@ -1069,7 +1071,7 @@ class _StationBackendClient implements BackendClient {
         },
       );
       debugPrint(
-        'PlushBuddy latency request_id=$requestId phase=android_command '
+        'ToyTalk latency request_id=$requestId phase=android_command '
         'accepted_ms=${DateTime.now().difference(turnStartedAt).inMilliseconds}',
       );
       final response = await completer.future.timeout(
@@ -1348,7 +1350,7 @@ class _StationBackendClient implements BackendClient {
         ),
       );
       debugPrint(
-        'PlushPal station voice status ${config.origin}: '
+        'ToyTalk Hub voice status ${config.origin}: '
         'runtime=${status.runtimeReady}, health=$runtimeReady, '
         'enrolled=${status.enrolled}, approved=${status.approved}',
       );
@@ -1361,7 +1363,7 @@ class _StationBackendClient implements BackendClient {
       );
     } catch (error) {
       debugPrint(
-        'PlushPal station voice status ${config.origin} failed: $error; '
+        'ToyTalk Hub voice status ${config.origin} failed: $error; '
         'using health=$runtimeReady',
       );
       return VoiceProfileStatus(
@@ -1389,6 +1391,7 @@ class _StationBackendClient implements BackendClient {
     final filename = sourceFilename ?? '';
     final mime = sourceMime ?? '';
     final isWav =
+        _looksLikeWav(wavBytes) ||
         filename.toLowerCase().endsWith('.wav') ||
         mime == 'audio/wav' ||
         mime == 'audio/x-wav';
@@ -1405,6 +1408,18 @@ class _StationBackendClient implements BackendClient {
         'character_alias': characterAlias,
       },
     );
+  }
+
+  bool _looksLikeWav(Uint8List bytes) {
+    if (bytes.length < 12) return false;
+    return bytes[0] == 0x52 && // R
+        bytes[1] == 0x49 && // I
+        bytes[2] == 0x46 && // F
+        bytes[3] == 0x46 && // F
+        bytes[8] == 0x57 && // W
+        bytes[9] == 0x41 && // A
+        bytes[10] == 0x56 && // V
+        bytes[11] == 0x45; // E
   }
 
   Future<void> _playWav(Uint8List bytes) =>
@@ -1455,7 +1470,7 @@ class _StationBackendClient implements BackendClient {
         )
         .then((bytes) {
           debugPrint(
-            'PlushBuddy latency request_id=$requestId phase=android_voice_download '
+            'ToyTalk latency request_id=$requestId phase=android_voice_download '
             'status=ok total_ms=${DateTime.now().difference(startedAt).inMilliseconds} '
             'wav_bytes=${bytes.length}',
           );
@@ -1463,7 +1478,7 @@ class _StationBackendClient implements BackendClient {
         })
         .catchError((Object error) {
           debugPrint(
-            'PlushBuddy latency request_id=$requestId phase=android_voice_download '
+            'ToyTalk latency request_id=$requestId phase=android_voice_download '
             'status=failed total_ms=${DateTime.now().difference(startedAt).inMilliseconds} '
             'error=$error',
           );
@@ -1477,7 +1492,7 @@ class _StationBackendClient implements BackendClient {
     final bytes = await synthesizeVoice(text, characterAlias: characterAlias);
     await _playWav(bytes);
     debugPrint(
-      'PlushBuddy latency phase=android_voice_playback '
+      'ToyTalk latency phase=android_voice_playback '
       'status=started total_ms=${DateTime.now().difference(startedAt).inMilliseconds} '
       'wav_bytes=${bytes.length}',
     );

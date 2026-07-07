@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local Whisper speech-to-text wrapper for PlushBuddy Hub.
+"""Local Whisper speech-to-text wrapper for ToyTalk Hub.
 
 The Hub invokes this script as a tiny CLI:
 
@@ -29,7 +29,9 @@ def _transcribe(input_wav: Path, model_name: str, device: str) -> str:
     protocol_stdout = sys.stdout
     sys.stdout = sys.stderr
     try:
+        import numpy as np
         import torch
+        from scipy.io import wavfile
         from transformers import pipeline
 
         if device == "auto":
@@ -49,7 +51,15 @@ def _transcribe(input_wav: Path, model_name: str, device: str) -> str:
             model=model_name,
             device=device_arg,
         )
-        result = transcriber(str(input_wav))
+        sample_rate, samples = wavfile.read(input_wav)
+        if samples.ndim > 1:
+            samples = samples.mean(axis=1)
+        if samples.dtype.kind in {"i", "u"}:
+            peak = float(np.iinfo(samples.dtype).max)
+            samples = samples.astype(np.float32) / peak
+        else:
+            samples = samples.astype(np.float32)
+        result = transcriber({"sampling_rate": int(sample_rate), "raw": samples})
     finally:
         sys.stdout = protocol_stdout
 
@@ -70,6 +80,8 @@ def main() -> int:
 
     try:
         if args.healthcheck:
+            import numpy  # noqa: F401
+            import scipy  # noqa: F401
             import torch  # noqa: F401
             from transformers import pipeline  # noqa: F401
 

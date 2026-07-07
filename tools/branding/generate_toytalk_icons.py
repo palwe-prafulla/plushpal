@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate PlushBuddy app icons without external image dependencies."""
+"""Generate ToyTalk app icons without external image dependencies."""
 
 from __future__ import annotations
 

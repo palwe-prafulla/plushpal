@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PlushBuddy Hub API smoke/E2E test.
+"""ToyTalk Hub API smoke/E2E test.
 
 This starts the Rust Hub host in an isolated temporary data directory,
 exchanges the bootstrap token for a session cookie, validates health/status,
@@ -33,7 +33,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 ROOT = Path(__file__).resolve().parents[2]
 RESULTS_ROOT = Path(
-    os.environ.get("PLUSHPAL_TEST_RESULTS_DIR", str(Path.home() / "Downloads" / "PlushPal" / "test-results"))
+    os.environ.get("PLUSHPAL_TEST_RESULTS_DIR", str(Path.home() / "Downloads" / "ToyTalk" / "test-results"))
 )
 
 
@@ -122,14 +122,14 @@ def main() -> int:
     RESULTS_ROOT.mkdir(parents=True, exist_ok=True)
     result_dir = RESULTS_ROOT / f"hub-api-{time.strftime('%Y%m%d-%H%M%S')}"
     result_dir.mkdir()
-    data_dir = Path(tempfile.mkdtemp(prefix="plushbuddy-hub-e2e-"))
+    data_dir = Path(tempfile.mkdtemp(prefix="toytalk-hub-e2e-"))
 
     env = os.environ.copy()
     env.update(
         {
             "CARGO_TARGET_DIR": env.get(
                 "CARGO_TARGET_DIR",
-                str(Path.home() / "Downloads" / "PlushPal" / "test-build" / "cargo-target"),
+                str(Path.home() / "Downloads" / "ToyTalk" / "test-build" / "cargo-target"),
             ),
             "PLUSHPAL_NO_BROWSER": "1",
             "PLUSHPAL_PRINT_BOOTSTRAP_URL": "1",
@@ -147,12 +147,12 @@ def main() -> int:
         packaged_hub = (
             Path.home()
             / "Downloads"
-            / "PlushPal"
+            / "ToyTalk"
             / "artifacts"
             / "macos"
-            / "PlushBuddy Hub.app"
+            / "ToyTalk Hub.app"
         )
-        packaged_station = packaged_hub.with_name("PlushBuddy Hub.app")
+        packaged_station = packaged_hub.with_name("ToyTalk Hub.app")
         packaged_app = packaged_hub if packaged_hub.exists() else packaged_station
         env.update(
             {
@@ -200,9 +200,9 @@ def main() -> int:
     }
 
     try:
-        output = read_line_until(process, r"PlushBuddy Hub test bootstrap URL:", timeout=180)
+        output = read_line_until(process, r"ToyTalk Hub test bootstrap URL:", timeout=180)
         (result_dir / "host-startup.log").write_text(output + "\n")
-        match = re.search(r"PlushBuddy Hub test bootstrap URL: (http://[^\s]+)", output)
+        match = re.search(r"ToyTalk Hub test bootstrap URL: (http://[^\s]+)", output)
         if not match:
             raise AssertionError("Could not parse bootstrap URL")
         bootstrap_url = match.group(1)
@@ -411,7 +411,7 @@ def main() -> int:
 
         report["status"] = "pass"
         (result_dir / "report.json").write_text(json.dumps(report, indent=2))
-        print(f"PASS: PlushBuddy Hub API smoke completed. Results: {result_dir}")
+        print(f"PASS: ToyTalk Hub API smoke completed. Results: {result_dir}")
         return 0
     except Exception as exc:  # noqa: BLE001
         report["status"] = "fail"

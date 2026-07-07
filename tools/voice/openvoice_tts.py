@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small OpenVoice V1 wrapper for PlushBuddy voice bakeoffs."""
+"""Small OpenVoice V1 wrapper for ToyTalk voice bakeoffs."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ def prepare_reference(reference: Path) -> tuple[Path, tempfile.TemporaryDirector
         start_frame = max(0, len(audio) - target_frames)
     trimmed = audio[start_frame : start_frame + target_frames]
 
-    temp_dir = tempfile.TemporaryDirectory(prefix="plushpal-openvoice-ref-")
+    temp_dir = tempfile.TemporaryDirectory(prefix="toytalk-openvoice-ref-")
     trimmed_path = Path(temp_dir.name) / "reference.wav"
     sf.write(trimmed_path, trimmed, sample_rate)
     return trimmed_path, temp_dir
@@ -78,7 +78,7 @@ def main() -> int:
     base_dir = OPENVOICE_ROOT / "checkpoints" / "base_speakers" / "EN"
     converter_dir = OPENVOICE_ROOT / "checkpoints" / "converter"
     reference_path, reference_temp = prepare_reference(args.reference.resolve())
-    temp_dir = tempfile.TemporaryDirectory(prefix="plushpal-openvoice-src-")
+    temp_dir = tempfile.TemporaryDirectory(prefix="toytalk-openvoice-src-")
     try:
         base_tts = BaseSpeakerTTS(str(base_dir / "config.json"), device=device)
         base_tts.load_ckpt(str(base_dir / "checkpoint.pth"))
@@ -98,7 +98,7 @@ def main() -> int:
             tgt_se=target_se,
             output_path=str(args.output),
             tau=args.tau,
-            message="PlushBuddy",
+            message="ToyTalk",
         )
     finally:
         temp_dir.cleanup()

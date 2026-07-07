@@ -38,10 +38,10 @@ def make_executable(path: Path) -> None:
 
 
 def main() -> int:
-    with tempfile.TemporaryDirectory(prefix="plushpal-luxtts-installer-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="toytalk-luxtts-installer-") as tmp:
         root = Path(tmp)
         bundle = root / "bundle"
-        app_support = root / "Application Support/PlushPal"
+        app_support = root / "Application Support/ToyTalk"
         venv = root / "luxtts-venv"
         voice_dir = bundle / "voice"
         lux_dir = app_support / "deps/LuxTTS"
@@ -98,7 +98,7 @@ exit 9
         )
         make_executable(fake_python)
 
-        marker = venv / ".plushbuddy-luxtts-runtime.env"
+        marker = venv / ".toytalk-luxtts-runtime.env"
         marker.write_text(
             "\n".join(
                 [

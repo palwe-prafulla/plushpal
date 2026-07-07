@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Denoise PlushBuddy reference recordings without changing pitch or timing."""
+"""Denoise ToyTalk reference recordings without changing pitch or timing."""
 
 from __future__ import annotations
 

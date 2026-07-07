@@ -101,7 +101,71 @@ impl<P: ConversationProvider> LocalConversationSession<P> {
         parent_guidance: Option<String>,
         current_text: String,
     ) -> Result<StructuredCharacterResponse, TurnError> {
-        let recent_turns = {
+        self.generate_with_context_from_history(
+            age_band,
+            character_alias,
+            child_age_years,
+            child_age_months,
+            character_play_age_years,
+            parent_guidance,
+            None,
+            current_text,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn generate_with_persisted_context(
+        &self,
+        age_band: AgeBand,
+        character_alias: String,
+        child_age_years: Option<u8>,
+        child_age_months: Option<u8>,
+        character_play_age_years: Option<u8>,
+        parent_guidance: Option<String>,
+        recent_turns: Vec<ConversationTurn>,
+        current_text: String,
+    ) -> Result<StructuredCharacterResponse, TurnError> {
+        self.generate_with_context_from_history(
+            age_band,
+            character_alias,
+            child_age_years,
+            child_age_months,
+            character_play_age_years,
+            parent_guidance,
+            Some(recent_turns),
+            current_text,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn generate_with_context_from_history(
+        &self,
+        age_band: AgeBand,
+        character_alias: String,
+        child_age_years: Option<u8>,
+        child_age_months: Option<u8>,
+        character_play_age_years: Option<u8>,
+        parent_guidance: Option<String>,
+        persisted_recent_turns: Option<Vec<ConversationTurn>>,
+        current_text: String,
+    ) -> Result<StructuredCharacterResponse, TurnError> {
+        let recent_turns = if let Some(persisted_recent_turns) = persisted_recent_turns {
+            let mut context = self.context.lock().map_err(|_| ProviderError::Internal)?;
+            let scope = (age_band, character_alias.clone());
+            context.scope = Some(scope);
+            context.turns = persisted_recent_turns
+                .iter()
+                .rev()
+                .take(self.maximum_history_turns)
+                .cloned()
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
+            context.turns.iter().cloned().collect()
+        } else {
             let mut context = self.context.lock().map_err(|_| ProviderError::Internal)?;
             let scope = (age_band, character_alias.clone());
             if context.scope.as_ref() != Some(&scope) {
@@ -214,10 +278,14 @@ impl<P: ConversationProvider> ConversationOrchestrator<P> {
             parent_guidance,
             recent_turns,
             current_text,
+            repair_instruction: None,
             max_response_characters: policy.max_output_characters,
         };
 
-        let response = self.provider.generate(request, self.deadline).await?;
+        let response = self
+            .provider
+            .generate(request.clone(), self.deadline)
+            .await?;
         if SafetyPipeline
             .screen_character_output(&response.speech)
             .disposition
@@ -228,14 +296,80 @@ impl<P: ConversationProvider> ConversationOrchestrator<P> {
                 suggest_trusted_adult: false,
             });
         }
-        policy.validate_output(&response.speech)?;
+        let response =
+            repair_response_to_policy(&self.provider, request, response, &policy, self.deadline)
+                .await?;
         Ok(response)
+    }
+}
+
+async fn repair_response_to_policy<P: ConversationProvider>(
+    provider: &P,
+    original_request: BoundedConversationRequest,
+    response: StructuredCharacterResponse,
+    policy: &AgePolicy,
+    deadline: Duration,
+) -> Result<StructuredCharacterResponse, TurnError> {
+    match policy.validate_output(&response.speech) {
+        Ok(()) => Ok(response),
+        Err(PolicyViolation::OutputTooLong) => {
+            repair_overlong_response(provider, original_request, response, policy, deadline).await
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+async fn repair_overlong_response<P: ConversationProvider>(
+    provider: &P,
+    original_request: BoundedConversationRequest,
+    response: StructuredCharacterResponse,
+    policy: &AgePolicy,
+    deadline: Duration,
+) -> Result<StructuredCharacterResponse, TurnError> {
+    let mut repair_request = original_request;
+    repair_request.repair_instruction = Some(shorten_instruction(&response.speech, policy));
+    let repaired = match provider.generate(repair_request, deadline).await {
+        Ok(repaired) => repaired,
+        Err(_) => return Ok(overlong_repair_fallback(response.suggest_trusted_adult)),
+    };
+    if SafetyPipeline
+        .screen_character_output(&repaired.speech)
+        .disposition
+        == SafetyDisposition::Block
+    {
+        return Ok(overlong_repair_fallback(response.suggest_trusted_adult));
+    }
+    match policy.validate_output(&repaired.speech) {
+        Ok(()) => Ok(StructuredCharacterResponse {
+            speech: repaired.speech,
+            suggest_trusted_adult: response.suggest_trusted_adult || repaired.suggest_trusted_adult,
+        }),
+        Err(PolicyViolation::OutputTooLong) => Ok(overlong_repair_fallback(
+            response.suggest_trusted_adult || repaired.suggest_trusted_adult,
+        )),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn shorten_instruction(previous_speech: &str, policy: &AgePolicy) -> String {
+    format!(
+        "Your previous safe draft was too long for spoken play. Rewrite the same answer as a complete, natural toy reply in at most {} characters and no more than {} sentences. Do not mention shortening, limits, drafts, policies, or JSON. Do not add new facts. Previous draft: {:?}",
+        policy.max_output_characters, policy.max_sentences, previous_speech
+    )
+}
+
+fn overlong_repair_fallback(suggest_trusted_adult: bool) -> StructuredCharacterResponse {
+    StructuredCharacterResponse {
+        speech: "Ooh, my answer got too big. Ask me again and I'll say the tiny version!"
+            .to_owned(),
+        suggest_trusted_adult,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use std::{
+        collections::VecDeque,
         future::Future,
         sync::{Arc, Mutex},
         task::{Context, Poll, Wake, Waker},
@@ -256,6 +390,12 @@ mod tests {
     #[derive(Debug)]
     struct RecordingProvider {
         requests: Arc<Mutex<Vec<BoundedConversationRequest>>>,
+    }
+
+    #[derive(Debug)]
+    struct RepairingProvider {
+        requests: Arc<Mutex<Vec<BoundedConversationRequest>>>,
+        responses: Mutex<VecDeque<StructuredCharacterResponse>>,
     }
 
     impl ConversationProvider for PanicProvider {
@@ -322,6 +462,32 @@ mod tests {
         }
     }
 
+    impl ConversationProvider for RepairingProvider {
+        fn capabilities(&self) -> ConversationCapabilities {
+            ConversationCapabilities {
+                provider_id: "repairing-local".to_owned(),
+                local: true,
+                supports_structured_output: true,
+                maximum_context_characters: 4_096,
+            }
+        }
+
+        fn generate(
+            &self,
+            request: BoundedConversationRequest,
+            _deadline: Duration,
+        ) -> ProviderFuture<'_> {
+            self.requests.lock().unwrap().push(request);
+            let response = self
+                .responses
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("test response");
+            Box::pin(async move { Ok(response) })
+        }
+    }
+
     #[derive(Debug)]
     struct NoopWake;
 
@@ -342,26 +508,101 @@ mod tests {
     }
 
     #[test]
-    fn validates_provider_output_after_generation() {
-        let provider = ReadyProvider {
-            response: StructuredCharacterResponse {
-                speech: "x".repeat(241),
-                suggest_trusted_adult: false,
-            },
+    fn asks_provider_to_repair_safe_overlong_output_after_generation() {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let provider = RepairingProvider {
+            requests: Arc::clone(&requests),
+            responses: Mutex::new(VecDeque::from([
+                StructuredCharacterResponse {
+                    speech: format!(
+                        "{}. This is extra text that should not make the whole turn fail.",
+                        "x".repeat(515)
+                    ),
+                    suggest_trusted_adult: false,
+                },
+                StructuredCharacterResponse {
+                    speech: "Sky blue comes from sunlight bouncing through air in a special way."
+                        .to_owned(),
+                    suggest_trusted_adult: false,
+                },
+            ])),
         };
         let orchestrator = ConversationOrchestrator::new(provider, Duration::from_secs(1));
 
-        let result = block_on(orchestrator.generate_turn(
+        let response = block_on(orchestrator.generate_turn(
             AgeBand::FourToFive,
             ConversationMode::Local,
             "bear".to_owned(),
             Vec::new(),
             "Why is the sky blue?".to_owned(),
-        ));
+        ))
+        .unwrap();
 
         assert_eq!(
-            result,
-            Err(TurnError::Policy(PolicyViolation::OutputTooLong))
+            response.speech,
+            "Sky blue comes from sunlight bouncing through air in a special way."
+        );
+        let captured = requests.lock().unwrap();
+        assert_eq!(captured.len(), 2);
+        assert!(captured[0].repair_instruction.is_none());
+        let repair_instruction = captured[1].repair_instruction.as_ref().unwrap();
+        assert!(repair_instruction.contains("at most 520 characters"));
+        assert!(repair_instruction.contains("Previous draft"));
+    }
+
+    #[test]
+    fn asks_provider_to_repair_sentence_limit_after_generation() {
+        let provider = RepairingProvider {
+            requests: Arc::new(Mutex::new(Vec::new())),
+            responses: Mutex::new(VecDeque::from([
+                StructuredCharacterResponse {
+                    speech: "One. Two. Three. Four. Five. Six.".to_owned(),
+                    suggest_trusted_adult: false,
+                },
+                StructuredCharacterResponse {
+                    speech: "One. Two. Three. Four. Five.".to_owned(),
+                    suggest_trusted_adult: false,
+                },
+            ])),
+        };
+        let orchestrator = ConversationOrchestrator::new(provider, Duration::from_secs(1));
+
+        let response = block_on(orchestrator.generate_turn(
+            AgeBand::FourToFive,
+            ConversationMode::Local,
+            "bear".to_owned(),
+            Vec::new(),
+            "Can you tell me something fun?".to_owned(),
+        ))
+        .unwrap();
+
+        assert_eq!(response.speech, "One. Two. Three. Four. Five.");
+    }
+
+    #[test]
+    fn uses_complete_fallback_when_provider_repair_is_still_too_long() {
+        let provider = ReadyProvider {
+            response: StructuredCharacterResponse {
+                speech: "Rain happens when tiny drops in clouds get heavy and fall down to the ground so plants and puddles and rivers can have water and the sky can share what it was holding for a long time without stopping and then every flower and tree and bug and bird gets a little drink from the clouds while the whole world smells fresh and splashy and cozy and bright and every little puddle gets ready for boots to stomp in it while the toy puppy watches from the window and says wow the sky is sharing a big water blanket with the garden today"
+                    .to_owned(),
+                suggest_trusted_adult: false,
+            },
+        };
+        let orchestrator = ConversationOrchestrator::new(provider, Duration::from_secs(1));
+
+        let response = block_on(orchestrator.generate_turn(
+            AgeBand::FourToFive,
+            ConversationMode::Local,
+            "bear".to_owned(),
+            Vec::new(),
+            "Why does rain fall?".to_owned(),
+        ))
+        .unwrap();
+
+        assert!(response.speech.chars().count() <= 520);
+        assert_eq!(
+            response.speech,
+            "Ooh, my answer got too big. Ask me again and I'll say the tiny version!"
         );
     }
 
@@ -452,5 +693,45 @@ mod tests {
         .unwrap();
         assert!(requests.lock().unwrap()[3].recent_turns.is_empty());
         session.clear().unwrap();
+    }
+
+    #[test]
+    fn local_session_can_use_persisted_history_from_storage() {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let session = LocalConversationSession::new(
+            RecordingProvider {
+                requests: Arc::clone(&requests),
+            },
+            Duration::from_secs(1),
+            12,
+        );
+        block_on(session.generate_with_persisted_context(
+            AgeBand::FourToFive,
+            "Buddy".to_owned(),
+            Some(5),
+            Some(6),
+            Some(2),
+            Some("Pretend to be a tiny puppy.".to_owned()),
+            vec![
+                ConversationTurn {
+                    role: plushpal_core_domain::TurnRole::Child,
+                    text: "Why does rain fall?".to_owned(),
+                },
+                ConversationTurn {
+                    role: plushpal_core_domain::TurnRole::Character,
+                    text: "Clouds get heavy and drip drops.".to_owned(),
+                },
+            ],
+            "What did I ask before?".to_owned(),
+        ))
+        .unwrap();
+
+        let captured = requests.lock().unwrap();
+        assert_eq!(captured[0].recent_turns.len(), 2);
+        assert_eq!(captured[0].recent_turns[0].text, "Why does rain fall?");
+        assert_eq!(
+            captured[0].recent_turns[1].text,
+            "Clouds get heavy and drip drops."
+        );
     }
 }

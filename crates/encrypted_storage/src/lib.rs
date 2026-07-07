@@ -929,6 +929,44 @@ impl SqlCipherDatabase {
             .map_err(|_| StorageError::InvalidData)
     }
 
+    pub fn list_history_for_character(
+        &self,
+        character_id: &CharacterId,
+        maximum_turns: usize,
+    ) -> Result<Vec<HistoryTurnRecord>, StorageError> {
+        if maximum_turns == 0 || maximum_turns > 500 {
+            return Err(StorageError::InvalidData);
+        }
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT turns.child_text, turns.character_text, turns.completed_at \
+                 FROM turns \
+                 JOIN sessions ON turns.session_id = sessions.id \
+                 WHERE sessions.character_id = ?1 \
+                 ORDER BY turns.completed_at DESC, turns.id DESC \
+                 LIMIT ?2",
+            )
+            .map_err(|_| StorageError::MigrationFailed)?;
+        let rows = statement
+            .query_map(
+                params![
+                    character_id.0,
+                    i64::try_from(maximum_turns).map_err(|_| StorageError::InvalidData)?
+                ],
+                |row| {
+                    Ok(HistoryTurnRecord {
+                        child_text: row.get(0)?,
+                        character_text: row.get(1)?,
+                        completed_at: row.get(2)?,
+                    })
+                },
+            )
+            .map_err(|_| StorageError::MigrationFailed)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|_| StorageError::InvalidData)
+    }
+
     pub fn cleanup_expired_history(
         &mut self,
         now: TimestampSeconds,
@@ -1941,12 +1979,50 @@ mod tests {
                 })
                 .unwrap();
         }
+        let other_character = CharacterRecord {
+            id: CharacterId("character-2".to_owned()),
+            alias: "Puppy".to_owned(),
+            voice_asset_id: None,
+        };
+        database
+            .put_character(&other_character, r#"["playful"]"#, None, true)
+            .unwrap();
+        let other_session = SessionRecord {
+            id: SessionId("session-3".to_owned()),
+            character_id: other_character.id.clone(),
+            age_band: AgeBand::SixToEight,
+            started_at: 300,
+            ended_at: None,
+        };
+        database.put_session(&other_session).unwrap();
+        database
+            .put_turn(&TurnRecord {
+                session_id: other_session.id,
+                child_text: "puppy question".to_owned(),
+                character_text: "puppy answer".to_owned(),
+                completed_at: 950_000,
+            })
+            .unwrap();
         assert_eq!(
             database.list_history(10).unwrap()[0].child_text,
+            "puppy question"
+        );
+        assert_eq!(
+            database
+                .list_history_for_character(&CharacterId("character-1".to_owned()), 10)
+                .unwrap()[0]
+                .child_text,
             "new question"
         );
         assert_eq!(database.cleanup_expired_history(900_000, 7).unwrap(), 1);
-        assert_eq!(database.list_history(10).unwrap().len(), 1);
+        assert_eq!(database.list_history(10).unwrap().len(), 2);
+        assert_eq!(
+            database
+                .list_history_for_character(&CharacterId("character-1".to_owned()), 10)
+                .unwrap()
+                .len(),
+            1
+        );
         database.delete_history().unwrap();
         assert!(database.list_history(10).unwrap().is_empty());
         database.delete_all().unwrap();

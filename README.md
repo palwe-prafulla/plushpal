@@ -1,13 +1,13 @@
-# PlushBuddy
+# ToyTalk
 
 **A local-first pretend-play voice companion for kids’ plush toys.**
 
-PlushBuddy lets a parent create kid profiles, create toy buddies, upload a short
+ToyTalk lets a parent create kid profiles, create toy buddies, upload a short
 sample of how each toy should sound, approve the cloned voice, and then let a
 child talk to that toy through an Android app, iPhone app, Mac app, or local
 browser UI.
 
-The current architecture centers on **PlushBuddy Hub**: a local private backend
+The current architecture centers on **ToyTalk Hub**: a local private backend
 that runs first on macOS. The Hub owns encrypted storage, child-safety
 guardrails, reasoning orchestration, provider API keys, kid/character data,
 conversation history, and LuxTTS voice synthesis. Native clients are thin UI
@@ -21,25 +21,25 @@ clients for mic capture, local STT when available, and playback.
 **Android app** — parent setup and child-mode entry on a real Android device.
 
 <p>
-  <img src="docs/assets/screenshots/android-welcome.png" alt="PlushBuddy Android welcome screen" width="210" />
+  <img src="docs/assets/screenshots/android-welcome.png" alt="ToyTalk Android welcome screen" width="210" />
 </p>
 
 **iPhone simulator** — same shared Flutter client running on iOS.
 
 <p>
-  <img src="docs/assets/screenshots/iphone-simulator-welcome.png" alt="PlushBuddy iPhone simulator welcome screen" width="210" />
+  <img src="docs/assets/screenshots/iphone-simulator-welcome.png" alt="ToyTalk iPhone simulator welcome screen" width="210" />
 </p>
 
-**Browser client** — local web client opened from PlushBuddy Hub.
+**Browser client** — local web client opened from ToyTalk Hub.
 
 <p>
-  <img src="docs/assets/screenshots/browser-welcome.png" alt="PlushBuddy browser client welcome screen" width="650" />
+  <img src="docs/assets/screenshots/browser-welcome.png" alt="ToyTalk browser client welcome screen" width="650" />
 </p>
 
 **Mac app** — native macOS shell around the same desktop client experience.
 
 <p>
-  <img src="docs/assets/screenshots/mac-client-welcome.png" alt="PlushBuddy Mac client welcome screen" width="650" />
+  <img src="docs/assets/screenshots/mac-client-welcome.png" alt="ToyTalk Mac client welcome screen" width="650" />
 </p>
 
 ## What it does
@@ -58,9 +58,9 @@ clients for mic capture, local STT when available, and playback.
 
 ## Architecture at a glance
 
-PlushBuddy uses a local-Hub architecture:
+ToyTalk uses a local-Hub architecture:
 
-- **PlushBuddy Hub**: the local backend. It owns SQLCipher encrypted storage,
+- **ToyTalk Hub**: the local backend. It owns SQLCipher encrypted storage,
   runtime mode, provider keys, kid/character data, conversation history,
   guardrails, local/cloud reasoning, packaged local STT fallback, and LuxTTS.
 - **Android app**: external voice-first native client paired to the Hub.
@@ -87,7 +87,7 @@ the Hub store explicitly rather than by IP address or hidden global fallback.
 
 ```mermaid
 flowchart TB
-    Clients["Android / iPhone / Mac app / local browser"] --> Hub["PlushBuddy Hub<br/>local private backend"]
+    Clients["Android / iPhone / Mac app / local browser"] --> Hub["ToyTalk Hub<br/>local private backend"]
     Hub --> HubDB["Hub scoped SQLCipher store<br/>PIN, Cloud AI keys, paired devices"]
     Hub --> Registry["Root SQLCipher DB<br/>key + compatibility store"]
     Hub --> ClientDB["Per-client SQLCipher stores<br/>kids, characters, history, voices"]
@@ -112,11 +112,11 @@ Large app binaries are not committed into the git repository. The source repo
 stays lightweight, while downloadable dev artifacts are published on GitHub
 Releases:
 
-**[Download PlushBuddy v2 artifacts](https://github.com/palwe-prafulla/plushpal/releases/tag/v2)**
+**[Download ToyTalk v2 artifacts](https://github.com/palwe-prafulla/toytalk/releases/tag/v2)**
 
 That release includes:
 
-- macOS PlushBuddy Hub DMG;
+- macOS ToyTalk Hub DMG;
 - Android debug APK;
 - iPhone simulator app archive;
 - unsigned iPhone device app archive;
@@ -126,7 +126,7 @@ Older historical snapshots are kept as separate Git refs:
 
 - `v0` — first development artifact release.
 - `v1` — intermediate Hub architecture checkpoint.
-- `v2` — current lightweight PlushBuddy Hub architecture.
+- `v2` — current lightweight ToyTalk Hub architecture.
 
 ## Quick start
 
@@ -141,15 +141,15 @@ make release-bundle
 Artifacts are written outside the source checkout under:
 
 ```text
-~/Downloads/PlushPal/artifacts
-~/Downloads/PlushPal/release
+~/Downloads/ToyTalk/artifacts
+~/Downloads/ToyTalk/release
 ```
 
 To publish a prepared release bundle to GitHub after creating a tag/versioned
 bundle, use:
 
 ```sh
-make publish-release TAG=v0.1.0 RELEASE_DIR=~/Downloads/PlushPal/release/v0.1.0
+make publish-release TAG=v2 RELEASE_DIR=~/Downloads/ToyTalk/release/v2
 ```
 
 The publisher reads `GITHUB_TOKEN` or the macOS Keychain service
@@ -158,7 +158,7 @@ The publisher reads `GITHUB_TOKEN` or the macOS Keychain service
 Open:
 
 ```text
-~/Downloads/PlushPal/artifacts/macos/PlushBuddy Hub.app
+~/Downloads/ToyTalk/artifacts/macos/ToyTalk Hub.app
 ```
 
 Then use Hub to open the Mac app, open the local browser client, or
@@ -182,7 +182,7 @@ Start here:
 
 - [Detailed system design and architecture](docs/architecture/SYSTEM_DESIGN.md)
 - [Codebase directory guide](docs/architecture/CODEBASE_DIRECTORY_GUIDE.md)
-- [PlushBuddy Hub client architecture](docs/architecture/HUB_CLIENT_ARCHITECTURE.md)
+- [ToyTalk Hub client architecture](docs/architecture/HUB_CLIENT_ARCHITECTURE.md)
 - [Documentation publication policy](docs/PUBLICATION_POLICY.md)
 - [Production hardening plan](docs/implementation/PRODUCTION_HARDENING_PLAN.md)
 - [QA test plan and latest execution report](docs/release/QA_TEST_PLAN_AND_EXECUTION_2026-06-25.md)
@@ -197,13 +197,13 @@ Start here:
 
 ## License
 
-PlushBuddy is released under the [MIT License](LICENSE).
+ToyTalk is released under the [MIT License](LICENSE).
 
 ## Current release and Hub architecture
 
 The current `v2` release is buildable and demonstrates the product
 flow with Android, iPhone simulator, Mac client, local browser, and the macOS
-PlushBuddy Hub runtime.
+ToyTalk Hub runtime.
 
 The implementation has moved to this stricter backend model:
 
@@ -218,7 +218,7 @@ The implementation has moved to this stricter backend model:
 
 ### Hub startup
 
-1. Parent opens `PlushBuddy Hub`.
+1. Parent opens `ToyTalk Hub`.
 2. Hub prevents system sleep while active.
 3. Hub opens/creates the SQLCipher database.
 4. Hub shows exactly two setup modes:
@@ -274,7 +274,7 @@ The implementation has moved to this stricter backend model:
 ## Repository structure
 
 ```text
-PlushPal/
+ToyTalk/
   apps/
     android/flutter_app/          Shared Flutter app for Android, iPhone, browser
       lib/src/app.dart            Main UI and state orchestration
@@ -283,8 +283,8 @@ PlushPal/
       ios/Runner/...swift         iOS native bridge
       web/plushpal_backend.js     Local browser bridge
     macos/
-      station_app/AppShell.swift  Native PlushBuddy Hub setup UI
-      client_app/AppShell.swift   Native PlushBuddy Mac client shell
+      station_app/AppShell.swift  Native ToyTalk Hub setup UI
+      client_app/AppShell.swift   Native ToyTalk Mac client shell
     station/macstation_host/      Rust Hub backend; still uses legacy path name
     web/                          Web ownership notes
   crates/                         Reusable Rust crates
@@ -300,7 +300,7 @@ See [CODEBASE_DIRECTORY_GUIDE.md](docs/architecture/CODEBASE_DIRECTORY_GUIDE.md)
 Local-only/private folders such as `audio-samples/`, old `test-artifacts/`,
 old `qa/results/`, model downloads, virtual environments, and packaged build
 outputs are intentionally ignored. Current build/test commands write artifacts
-outside the repo under `~/Downloads/PlushPal` by default.
+outside the repo under `~/Downloads/ToyTalk` by default.
 
 ## Prerequisites
 
@@ -346,8 +346,8 @@ Physical iPhone install requires Apple signing/provisioning.
 ## First-time setup from a fresh clone
 
 ```sh
-git clone <repo-url> PlushPal
-cd PlushPal
+git clone <repo-url> ToyTalk
+cd ToyTalk
 git submodule update --init --recursive
 flutter doctor -v
 ```
@@ -426,22 +426,22 @@ For a clean public-repo style build, use:
 make public-artifacts
 ```
 
-This command builds from an external workspace under `~/Downloads/PlushPal/build`
-and writes artifacts under `~/Downloads/PlushPal/artifacts`, so generated files do
+This command builds from an external workspace under `~/Downloads/ToyTalk/build`
+and writes artifacts under `~/Downloads/ToyTalk/artifacts`, so generated files do
 not dirty the source checkout. The generated apps stay lightweight: LuxTTS
 source/dependencies/model cache and Local AI GGUF models are downloaded later by
-PlushBuddy Hub setup into the user’s application-support/cache directories.
+ToyTalk Hub setup into the user’s application-support/cache directories.
 
 Expected artifacts, depending on installed platform toolchains:
 
 ```text
-~/Downloads/PlushPal/artifacts/macos/PlushBuddy Hub.app
-~/Downloads/PlushPal/artifacts/macos/PlushBuddy.app
-~/Downloads/PlushPal/artifacts/macos/PlushBuddy-0.1.0-macos.zip
-~/Downloads/PlushPal/artifacts/macos/PlushBuddy-0.1.0-macos.dmg
-~/Downloads/PlushPal/artifacts/android/PlushBuddy-debug.apk
-~/Downloads/PlushPal/artifacts/ios/PlushBuddy-iPhoneSimulator.app
-~/Downloads/PlushPal/artifacts/ios/PlushBuddy-iPhoneOS-unsigned.app
+~/Downloads/ToyTalk/artifacts/macos/ToyTalk Hub.app
+~/Downloads/ToyTalk/artifacts/macos/ToyTalk.app
+~/Downloads/ToyTalk/artifacts/macos/ToyTalk-v2-macos.zip
+~/Downloads/ToyTalk/artifacts/macos/ToyTalk-v2-macos.dmg
+~/Downloads/ToyTalk/artifacts/android/ToyTalk-debug.apk
+~/Downloads/ToyTalk/artifacts/ios/ToyTalk-iPhoneSimulator.app
+~/Downloads/ToyTalk/artifacts/ios/ToyTalk-iPhoneOS-unsigned.app
 ```
 
 ### Build Hub and Mac client only
@@ -453,10 +453,10 @@ make package-macos
 Outputs:
 
 ```text
-~/Downloads/PlushPal/artifacts/macos/PlushBuddy Hub.app
-~/Downloads/PlushPal/artifacts/macos/PlushBuddy.app
-~/Downloads/PlushPal/artifacts/macos/PlushBuddy-0.1.0-macos.zip
-~/Downloads/PlushPal/artifacts/macos/PlushBuddy-0.1.0-macos.dmg
+~/Downloads/ToyTalk/artifacts/macos/ToyTalk Hub.app
+~/Downloads/ToyTalk/artifacts/macos/ToyTalk.app
+~/Downloads/ToyTalk/artifacts/macos/ToyTalk-v2-macos.zip
+~/Downloads/ToyTalk/artifacts/macos/ToyTalk-v2-macos.dmg
 ```
 
 ### Build all local MVP artifacts
@@ -475,10 +475,10 @@ This builds:
 
 ## How to run the app
 
-### Start PlushBuddy Hub
+### Start ToyTalk Hub
 
 ```sh
-open "$HOME/Downloads/PlushPal/artifacts/macos/PlushBuddy Hub.app"
+open "$HOME/Downloads/ToyTalk/artifacts/macos/ToyTalk Hub.app"
 ```
 
 Wait until health checks are green. Hub should show:
@@ -489,14 +489,14 @@ Wait until health checks are green. Hub should show:
 - browser/Mac client local attach ready;
 - Android/iPhone/Mac external pairing QR ready.
 
-Local clients on the same Mac do not need QR scanning. Click **Open PlushBuddy
-in browser** or **Open PlushBuddy Mac app** from Hub and the client attaches in
+Local clients on the same Mac do not need QR scanning. Click **Open ToyTalk
+in browser** or **Open ToyTalk Mac app** from Hub and the client attaches in
 the background. QR pairing is for external native clients.
 
 ### Use Android
 
 1. Install the APK.
-2. Open PlushBuddy on Android.
+2. Open ToyTalk on Android.
 3. In Hub, choose the pairing QR option.
 4. Scan the QR in the Android app.
 5. In Hub:
@@ -533,14 +533,14 @@ For physical iPhone:
 ### Use browser
 
 1. Start Hub.
-2. Click **Open PlushBuddy in browser**.
+2. Click **Open ToyTalk in browser**.
 3. The browser attaches to the local Hub session automatically; no QR scan is needed.
 4. Use it only on the same machine running Hub.
 
 ### Use Mac client
 
 1. Start Hub.
-2. Click **Open PlushBuddy Mac app**.
+2. Click **Open ToyTalk Mac app**.
 3. The Mac client opens the Hub-backed client UI and attaches automatically when local.
 
 ## Voice model notes
@@ -587,13 +587,13 @@ make public-artifacts
 ```
 
 `qa/automation/run_local_quality_gate.sh` runs from an external test workspace
-and writes logs under `~/Downloads/PlushPal/test-results`.
+and writes logs under `~/Downloads/ToyTalk/test-results`.
 
 Latest local verification, June 25, 2026:
 
 - public artifact build passed with Hub, Mac client, Android APK,
   iPhone simulator app, and unsigned iPhone device app under
-  `~/Downloads/PlushPal/artifacts`;
+  `~/Downloads/ToyTalk/artifacts`;
 - local quality gate passed: Rust workspace tests, Flutter analysis/tests, web
   Node tests, and product layout check;
 - Hub API smoke passed;
@@ -641,32 +641,32 @@ qa/automation/macstation_api_smoke.py
 # Hub M4A enrollment and profile-isolation smoke.
 # Use your own private local samples outside the repo.
 qa/automation/macstation_api_smoke.py \
-  --sample Sheru="$HOME/Downloads/PlushPal/private/audio-samples/Sheru.m4a" \
-  --sample Jenna="$HOME/Downloads/PlushPal/private/audio-samples/Jenna.m4a" \
-  --sample Buddy="$HOME/Downloads/PlushPal/private/audio-samples/Buddy.m4a"
+  --sample Sheru="$HOME/Downloads/ToyTalk/private/audio-samples/Sheru.m4a" \
+  --sample Jenna="$HOME/Downloads/ToyTalk/private/audio-samples/Jenna.m4a" \
+  --sample Buddy="$HOME/Downloads/ToyTalk/private/audio-samples/Buddy.m4a"
 
 # Lightweight synthetic voice E2E, no LuxTTS download required.
 qa/automation/macstation_api_smoke.py \
   --voice-engine demo \
   --synthesize \
-  --sample Sheru="$HOME/Downloads/PlushPal/private/audio-samples/Sheru.m4a" \
-  --sample Jenna="$HOME/Downloads/PlushPal/private/audio-samples/Jenna.m4a" \
-  --sample Buddy="$HOME/Downloads/PlushPal/private/audio-samples/Buddy.m4a"
+  --sample Sheru="$HOME/Downloads/ToyTalk/private/audio-samples/Sheru.m4a" \
+  --sample Jenna="$HOME/Downloads/ToyTalk/private/audio-samples/Jenna.m4a" \
+  --sample Buddy="$HOME/Downloads/ToyTalk/private/audio-samples/Buddy.m4a"
 
 # Full local LuxTTS synthesis E2E
 qa/automation/macstation_api_smoke.py \
   --voice-engine luxtts \
   --synthesize \
-  --sample Sheru="$HOME/Downloads/PlushPal/private/audio-samples/Sheru.m4a" \
-  --sample Jenna="$HOME/Downloads/PlushPal/private/audio-samples/Jenna.m4a" \
-  --sample Buddy="$HOME/Downloads/PlushPal/private/audio-samples/Buddy.m4a"
+  --sample Sheru="$HOME/Downloads/ToyTalk/private/audio-samples/Sheru.m4a" \
+  --sample Jenna="$HOME/Downloads/ToyTalk/private/audio-samples/Jenna.m4a" \
+  --sample Buddy="$HOME/Downloads/ToyTalk/private/audio-samples/Buddy.m4a"
 
 # Live Gemini reasoning through current Hub command/WebSocket flow.
 # Pass PLUSHPAL_GEMINI_API_KEY in the environment. Do not commit keys.
 qa/automation/macstation_live_reasoning_smoke.mjs
 ```
 
-Generated evidence is written under `~/Downloads/PlushPal/test-results` by default.
+Generated evidence is written under `~/Downloads/ToyTalk/test-results` by default.
 
 ## Known limitations
 

@@ -3,7 +3,7 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.INTERNET" />
     <application
-        android:label="PlushBuddy"
+        android:label="ToyTalk"
         android:name="${applicationName}"
         android:icon="@drawable/ic_launcher"
         android:usesCleartextTraffic="true">

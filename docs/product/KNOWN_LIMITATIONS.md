@@ -2,7 +2,7 @@
 
 Last updated: 2026-07-05
 
-PlushBuddy is public and buildable, but it is still an MVP/prototype. The core
+ToyTalk is public and buildable, but it is still an MVP/prototype. The core
 Hub-backed architecture is implemented for paired product usage, including a
 paired-device registry and parent-gated revocation. The Hub now packages a
 local Whisper STT fallback endpoint, and Android/iPhone can record bounded
@@ -16,7 +16,7 @@ safety/performance QA before product-release claims.
 ## Architecture limitations
 
 - Paired product usage routes durable state, provider calls, guardrails, and
-  business logic through PlushBuddy Hub.
+  business logic through ToyTalk Hub.
 - External clients are UI shells: they keep stable identity, pairing/session
   info, UI preference, permissions, and temporary media-helper state only. Demo
   and mock behavior lives in the Hub runtime, not in client-owned family stores.

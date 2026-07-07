@@ -16,6 +16,16 @@ private enum StartupState {
     case failed(String)
 }
 
+private struct SetupMilestone {
+    let rank: Int
+    let message: String
+}
+
+private struct HostLaunchContext {
+    let lanAddress: String?
+    let localModelEnvironment: [String: String]
+}
+
 private struct StartupFailure: Error {
     let message: String
 }
@@ -24,7 +34,7 @@ class FlippedContentView: NSView {
     override var isFlipped: Bool { true }
 }
 
-final class PlushBuddyHubBackgroundView: FlippedContentView {
+final class ToyTalkHubBackgroundView: FlippedContentView {
     private var isDarkTheme = false
 
     func updateTheme(isDark: Bool) {
@@ -65,7 +75,7 @@ final class PlushBuddyHubBackgroundView: FlippedContentView {
     }
 }
 
-final class PlushBuddyLogoView: NSView {
+final class ToyTalkLogoView: NSView {
     private var shadowColor = NSColor(calibratedRed: 0.55, green: 0.36, blue: 0.96, alpha: 0.25)
 
     override var isFlipped: Bool { true }
@@ -154,7 +164,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var webView: WKWebView!
     private var splashScrollView: NSScrollView!
     private var splashView: NSView!
-    private var logoView: PlushBuddyLogoView!
+    private var logoView: ToyTalkLogoView!
     private var titleLabel: NSTextField!
     private var detailLabel: NSTextField!
     private var progress: NSProgressIndicator!
@@ -166,6 +176,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var sttStatusIcon: NSImageView!
     private var hostStatusIcon: NSImageView!
     private var browserStatusIcon: NSImageView!
+    private var storageStatusProgress: NSProgressIndicator!
+    private var reasoningStatusProgress: NSProgressIndicator!
+    private var voiceStatusProgress: NSProgressIndicator!
+    private var sttStatusProgress: NSProgressIndicator!
+    private var hostStatusProgress: NSProgressIndicator!
+    private var browserStatusProgress: NSProgressIndicator!
     private var storageStatusLabel: NSTextField!
     private var reasoningStatusLabel: NSTextField!
     private var voiceStatusLabel: NSTextField!
@@ -191,6 +207,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var openLogsButton: NSButton!
     private var resetVoiceRuntimeButton: NSButton!
     private var pairingWindow: NSWindow?
+    private var quickGuideWindow: NSWindow?
     private var currentPairingUrlText: String?
     private var hostProcess: Process?
     private var installProcess: Process?
@@ -198,6 +215,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var installPipe: Pipe?
     private var hostOutput = Data()
     private var setupOutput = Data()
+    private var voiceSetupMilestoneRank = 0
     private var didLoadHostUrl = false
     private var hostUrl: URL?
     private var parsedHostUrlText: String?
@@ -206,10 +224,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var isTerminating = false
     private var healthWaitGeneration = 0
     private let healthMaxAttempts = 900
-    private let logQueue = DispatchQueue(label: "com.plushpal.app-shell.logs")
-    private let themeModeKey = "PlushBuddyHubThemeMode"
-    private let themeMigrationKey = "PlushBuddyHubThemeModeV2SystemDefaultMigrated"
-    private let hubClientIdDefaultsKey = "PlushBuddyHubClientId"
+    private let logQueue = DispatchQueue(label: "com.toytalk.app-shell.logs")
+    private let themeModeKey = "ToyTalkHubThemeMode"
+    private let themeMigrationKey = "ToyTalkHubThemeModeV2SystemDefaultMigrated"
+    private let hubClientIdDefaultsKey = "ToyTalkHubClientId"
     private let hubClientIdFileName = "hub-client-id.txt"
     private var themedPanels: [NSView] = []
     private var sectionTitleLabels: [NSTextField] = []
@@ -265,9 +283,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let computerName = Host.current().localizedName?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if let computerName, !computerName.isEmpty {
-            return "PlushBuddy Hub on \(computerName)"
+            return "ToyTalk Hub on \(computerName)"
         }
-        return "PlushBuddy Hub"
+        return "ToyTalk Hub"
     }
 
     private func addHubClientHeaders(_ request: inout URLRequest) {
@@ -312,7 +330,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         configuration.websiteDataStore = .default()
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
         let userContentController = WKUserContentController()
-        userContentController.add(self, name: "plushpalLog")
+        userContentController.add(self, name: "toytalkLog")
         userContentController.addUserScript(WKUserScript(
             source: """
             (() => {
@@ -327,7 +345,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
               };
               const send = (level, values) => {
                 try {
-                  window.webkit.messageHandlers.plushpalLog.postMessage({
+                  window.webkit.messageHandlers.toytalkLog.postMessage({
                     level,
                     message: Array.from(values).map(stringify).join(' '),
                     url: window.location.href,
@@ -372,14 +390,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         splashScrollView.horizontalScrollElasticity = .none
         splashScrollView.borderType = .noBorder
 
-        splashView = PlushBuddyHubBackgroundView()
+        splashView = ToyTalkHubBackgroundView()
         splashView.translatesAutoresizingMaskIntoConstraints = false
         splashScrollView.documentView = splashView
 
-        logoView = PlushBuddyLogoView(frame: NSRect(x: 0, y: 0, width: 86, height: 86))
+        logoView = ToyTalkLogoView(frame: NSRect(x: 0, y: 0, width: 86, height: 86))
         logoView.translatesAutoresizingMaskIntoConstraints = false
 
-        titleLabel = NSTextField(labelWithString: "Starting PlushBuddy Hub")
+        titleLabel = NSTextField(labelWithString: "Starting ToyTalk Hub")
         titleLabel.font = .systemFont(ofSize: 30, weight: .bold)
         titleLabel.alignment = .center
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -409,12 +427,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             return icon
         }
 
+        func makeStatusProgress() -> NSProgressIndicator {
+            let indicator = NSProgressIndicator()
+            indicator.style = .spinning
+            indicator.controlSize = .small
+            indicator.isIndeterminate = true
+            indicator.isDisplayedWhenStopped = false
+            indicator.isHidden = true
+            indicator.translatesAutoresizingMaskIntoConstraints = false
+            return indicator
+        }
+
         storageStatusIcon = makeStatusIcon()
         reasoningStatusIcon = makeStatusIcon()
         voiceStatusIcon = makeStatusIcon()
         sttStatusIcon = makeStatusIcon()
         hostStatusIcon = makeStatusIcon()
         browserStatusIcon = makeStatusIcon()
+        storageStatusProgress = makeStatusProgress()
+        reasoningStatusProgress = makeStatusProgress()
+        voiceStatusProgress = makeStatusProgress()
+        sttStatusProgress = makeStatusProgress()
+        hostStatusProgress = makeStatusProgress()
+        browserStatusProgress = makeStatusProgress()
 
         storageStatusLabel = NSTextField(labelWithString: "Secure storage: getting ready")
         reasoningStatusLabel = NSTextField(labelWithString: "Conversations: checking")
@@ -431,27 +466,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             label?.translatesAutoresizingMaskIntoConstraints = false
         }
 
-        func statusRow(icon: NSImageView, label: NSTextField) -> NSStackView {
-            let row = NSStackView(views: [icon, label])
+        func statusRow(icon: NSImageView, progress: NSProgressIndicator, label: NSTextField) -> NSStackView {
+            let row = NSStackView(views: [icon, progress, label])
             row.orientation = .horizontal
             row.alignment = .centerY
             row.distribution = .fill
-            row.spacing = 8
+            row.spacing = 7
             row.translatesAutoresizingMaskIntoConstraints = false
             NSLayoutConstraint.activate([
                 icon.widthAnchor.constraint(equalToConstant: 18),
                 icon.heightAnchor.constraint(equalToConstant: 18),
+                progress.widthAnchor.constraint(equalToConstant: 16),
+                progress.heightAnchor.constraint(equalToConstant: 16),
             ])
             return row
         }
 
         serviceStatusStack = NSStackView(views: [
-            statusRow(icon: storageStatusIcon, label: storageStatusLabel),
-            statusRow(icon: reasoningStatusIcon, label: reasoningStatusLabel),
-            statusRow(icon: voiceStatusIcon, label: voiceStatusLabel),
-            statusRow(icon: sttStatusIcon, label: sttStatusLabel),
-            statusRow(icon: hostStatusIcon, label: hostStatusLabel),
-            statusRow(icon: browserStatusIcon, label: browserStatusLabel),
+            statusRow(icon: storageStatusIcon, progress: storageStatusProgress, label: storageStatusLabel),
+            statusRow(icon: reasoningStatusIcon, progress: reasoningStatusProgress, label: reasoningStatusLabel),
+            statusRow(icon: voiceStatusIcon, progress: voiceStatusProgress, label: voiceStatusLabel),
+            statusRow(icon: sttStatusIcon, progress: sttStatusProgress, label: sttStatusLabel),
+            statusRow(icon: hostStatusIcon, progress: hostStatusProgress, label: hostStatusLabel),
+            statusRow(icon: browserStatusIcon, progress: browserStatusProgress, label: browserStatusLabel),
         ])
         serviceStatusStack.orientation = .vertical
         serviceStatusStack.alignment = .leading
@@ -474,7 +511,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         quitButton.isHidden = true
         quitButton.translatesAutoresizingMaskIntoConstraints = false
 
-        openBrowserButton = NSButton(title: "Open browser client", target: self, action: #selector(openPlushPalInBrowser))
+        openBrowserButton = NSButton(title: "Open browser client", target: self, action: #selector(openToyTalkInBrowser))
         openBrowserButton.bezelStyle = .rounded
         openBrowserButton.isHidden = true
         openBrowserButton.translatesAutoresizingMaskIntoConstraints = false
@@ -484,7 +521,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         pairAndroidButton.isHidden = true
         pairAndroidButton.translatesAutoresizingMaskIntoConstraints = false
 
-        openInAppButton = NSButton(title: "Open Mac client", target: self, action: #selector(openPlushPalInApp))
+        openInAppButton = NSButton(title: "Open Mac client", target: self, action: #selector(openToyTalkInApp))
         openInAppButton.bezelStyle = .rounded
         openInAppButton.isHidden = true
         openInAppButton.translatesAutoresizingMaskIntoConstraints = false
@@ -499,7 +536,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         themeModeButton.isHidden = true
         themeModeButton.translatesAutoresizingMaskIntoConstraints = false
 
-        quickGuideButton = NSButton(title: "How to use PlushBuddy", target: self, action: #selector(showQuickGuide))
+        quickGuideButton = NSButton(title: "How to use ToyTalk", target: self, action: #selector(showQuickGuide))
         quickGuideButton.bezelStyle = .rounded
         quickGuideButton.isHidden = true
         quickGuideButton.translatesAutoresizingMaskIntoConstraints = false
@@ -648,7 +685,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             openBrowserButton,
             openInAppButton,
             sectionTitle("Look & feel"),
-            helperText("Use the same PlushBuddy colors as the phone app."),
+            helperText("Use the same ToyTalk colors as the phone app."),
             themeModeButton,
         ])
 
@@ -692,7 +729,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
         let advancedPanel = verticalPanel([
             sectionTitle("Advanced / troubleshooting"),
-            helperText("Use these only when setup is stuck or you are changing local/cloud runtime behavior."),
+            helperText("Use these only when setup is stuck or you are changing Local AI / Cloud AI mode."),
             advancedButtonStack,
         ])
 
@@ -769,7 +806,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             backing: .buffered,
             defer: false
         )
-        window.title = "PlushBuddy Hub"
+        window.title = "ToyTalk Hub"
         window.minSize = NSSize(width: 760, height: 520)
         window.center()
         window.contentView = content
@@ -779,25 +816,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     private func prepareAndStart() {
         appendLog("app-shell.log", "prepareAndStart")
+        voiceSetupMilestoneRank = 0
         update(.preparingVoiceRuntime)
         setupOutput.removeAll()
         updateServiceStatuses(
-            storage: "✓ Secure storage: ready",
-            reasoning: "○ Conversations: checking",
-            voice: "○ Buddy voices: checking",
-            stt: "○ Listening helper: checking",
-            host: "○ Hub: starting",
+            storage: "○ Secure storage: preparing",
+            reasoning: "○ Conversations: waiting for Hub",
+            voice: "○ Buddy voices: checking runtime",
+            stt: "○ Listening helper: waiting for voice runtime",
+            host: "○ Hub: waiting for voice runtime",
             browser: "○ Apps: waiting"
         )
+
+        let preparationGroup = DispatchGroup()
+        let preparationLock = NSLock()
+        var hostLaunchContext: HostLaunchContext?
+        var voicePreparationResult: Result<VoiceRuntime?, StartupFailure>?
+
+        preparationGroup.enter()
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            defer { preparationGroup.leave() }
+            guard let self else { return }
+            let context = self.prepareHostLaunchContext()
+            preparationLock.lock()
+            hostLaunchContext = context
+            preparationLock.unlock()
+            self.updateServiceStatuses(
+                storage: "✓ Secure storage: ready",
+                reasoning: nil,
+                voice: nil,
+                stt: nil,
+                host: context.lanAddress == nil ? "○ Hub: LAN optional" : "○ Hub: LAN ready",
+                browser: "○ Apps: waiting for Hub"
+            )
+        }
+
+        preparationGroup.enter()
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            defer { preparationGroup.leave() }
+            guard let self else { return }
+            let result = self.prepareVoiceRuntime()
+            preparationLock.lock()
+            voicePreparationResult = result
+            preparationLock.unlock()
+        }
+
+        preparationGroup.wait()
+
         let voiceRuntime: VoiceRuntime?
-        switch prepareVoiceRuntime() {
+        switch voicePreparationResult ?? .failure(StartupFailure(message: "ToyTalk Hub setup was interrupted before voice runtime preparation completed.")) {
         case .success(let runtime):
             voiceRuntime = runtime
             updateServiceStatuses(
                 storage: nil,
                 reasoning: "○ Conversations: waiting",
                 voice: runtime == nil ? "△ Buddy voices: demo mode" : "✓ Buddy voices: ready",
-                stt: nil,
+                stt: "○ Listening helper: checking",
                 host: "○ Hub: starting",
                 browser: "○ Apps: waiting"
             )
@@ -806,7 +880,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 storage: nil,
                 reasoning: "○ Conversations: waiting",
                 voice: "✕ Buddy voices: setup failed",
-                stt: nil,
+                stt: "○ Listening helper: waiting",
                 host: "○ Hub: waiting",
                 browser: "○ Apps: waiting"
             )
@@ -823,7 +897,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             browser: nil
         )
         update(.startingHost)
-        startHost(voiceRuntime: voiceRuntime, speechToTextRuntime: sttRuntime)
+        startHost(
+            voiceRuntime: voiceRuntime,
+            speechToTextRuntime: sttRuntime,
+            launchContext: hostLaunchContext ?? prepareHostLaunchContext()
+        )
+    }
+
+    private func prepareHostLaunchContext() -> HostLaunchContext {
+        do {
+            try FileManager.default.createDirectory(at: applicationSupportDirectory(), withIntermediateDirectories: true)
+        } catch {
+            appendLog("app-shell.log", "could not create application support directory before host launch: \(error.localizedDescription)")
+        }
+        let lanAddress = preferredLanIPv4Address()
+        let localModelEnvironment = macLocalModelProfileEnvironment()
+        return HostLaunchContext(lanAddress: lanAddress, localModelEnvironment: localModelEnvironment)
     }
 
     private func prepareVoiceRuntime() -> Result<VoiceRuntime?, StartupFailure> {
@@ -831,7 +920,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             return lux
         }
         if ProcessInfo.processInfo.environment["PLUSHPAL_ENABLE_CHATTERBOX_FALLBACK"] == nil {
-            return .failure(StartupFailure(message: "The local LuxTTS voice runtime is missing from the PlushBuddy Hub app bundle."))
+            return .failure(StartupFailure(message: "The local LuxTTS voice runtime is missing from the ToyTalk Hub app bundle."))
         }
         return prepareChatterboxRuntime()
     }
@@ -874,7 +963,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
 
         guard let installer, FileManager.default.isExecutableFile(atPath: installer.path) else {
-            return .failure(StartupFailure(message: "The local LuxTTS installer is missing from the PlushBuddy Hub app bundle."))
+            return .failure(StartupFailure(message: "The local LuxTTS installer is missing from the ToyTalk Hub app bundle."))
         }
 
         do {
@@ -905,8 +994,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self?.setupOutput.append(data)
                 self?.appendLogData("setup.log", data)
                 guard let text = String(data: data, encoding: .utf8) else { return }
-                let line = text.split(separator: "\n").last.map(String.init) ?? text
-                self?.updateDetail("Installing LuxTTS local voice support… \(line)")
+                self?.updateVoiceSetupDetail(from: text, engineName: "LuxTTS")
             }
             try process.run()
             process.waitUntilExit()
@@ -919,11 +1007,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                isLuxTtsRuntimeReady(python: python, script: script, source: source) {
                 return .success(VoiceRuntime(engine: "luxtts", python: python, script: script, source: source))
             }
-            return .failure(StartupFailure(message: "PlushBuddy Hub could not finish installing LuxTTS voice support. \(setupDiagnosticTail())"))
+            return .failure(StartupFailure(message: "ToyTalk Hub could not finish installing LuxTTS voice support. \(setupDiagnosticTail())"))
         } catch {
             installProcess = nil
             installPipe = nil
-            return .failure(StartupFailure(message: "PlushBuddy Hub could not install LuxTTS voice support: \(error.localizedDescription)\n\n\(setupDiagnosticTail())"))
+            return .failure(StartupFailure(message: "ToyTalk Hub could not install LuxTTS voice support: \(error.localizedDescription)\n\n\(setupDiagnosticTail())"))
         }
     }
 
@@ -936,7 +1024,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             .appendingPathComponent("install_chatterbox_runtime.sh")
 
         guard let script, FileManager.default.fileExists(atPath: script.path) else {
-            return .failure(StartupFailure(message: "The local voice setup script is missing from the PlushBuddy Hub app bundle."))
+            return .failure(StartupFailure(message: "The local voice setup script is missing from the ToyTalk Hub app bundle."))
         }
 
         let support = applicationSupportDirectory()
@@ -962,7 +1050,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
 
         guard let installer, FileManager.default.isExecutableFile(atPath: installer.path) else {
-            return .failure(StartupFailure(message: "The local voice installer is missing from the PlushBuddy Hub app bundle."))
+            return .failure(StartupFailure(message: "The local voice installer is missing from the ToyTalk Hub app bundle."))
         }
 
         do {
@@ -992,8 +1080,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self?.setupOutput.append(data)
                 self?.appendLogData("setup.log", data)
                 guard let text = String(data: data, encoding: .utf8) else { return }
-                let line = text.split(separator: "\n").last.map(String.init) ?? text
-                self?.updateDetail("Installing local voice support… \(line)")
+                self?.updateVoiceSetupDetail(from: text, engineName: "voice")
             }
             try process.run()
             process.waitUntilExit()
@@ -1006,11 +1093,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                isChatterboxRuntimeImportReady(python: python) {
                 return .success(VoiceRuntime(engine: "chatterbox", python: python, script: script, source: nil))
             }
-            return .failure(StartupFailure(message: "PlushBuddy Hub could not finish installing local voice support. \(setupDiagnosticTail())"))
+            return .failure(StartupFailure(message: "ToyTalk Hub could not finish installing local voice support. \(setupDiagnosticTail())"))
         } catch {
             installProcess = nil
             installPipe = nil
-            return .failure(StartupFailure(message: "PlushBuddy Hub could not install local voice support: \(error.localizedDescription)\n\n\(setupDiagnosticTail())"))
+            return .failure(StartupFailure(message: "ToyTalk Hub could not install local voice support: \(error.localizedDescription)\n\n\(setupDiagnosticTail())"))
         }
     }
 
@@ -1144,13 +1231,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
-    private func startHost(voiceRuntime: VoiceRuntime?, speechToTextRuntime: SpeechToTextRuntime?) {
+    private func startHost(
+        voiceRuntime: VoiceRuntime?,
+        speechToTextRuntime: SpeechToTextRuntime?,
+        launchContext: HostLaunchContext
+    ) {
         guard let helper = Bundle.main.bundleURL
             .appendingPathComponent("Contents", isDirectory: true)
             .appendingPathComponent("MacOS", isDirectory: true)
             .appendingPathComponent("plushpal-desktop-host", isDirectory: false) as URL?,
               FileManager.default.isExecutableFile(atPath: helper.path) else {
-            update(.failed("The PlushBuddy Hub local service is missing from the app bundle."))
+            update(.failed("The ToyTalk Hub local service is missing from the app bundle."))
             return
         }
 
@@ -1165,8 +1256,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             "PLUSHPAL_CLOUD_LLM_PROVIDER": selectedCloudLlmProvider(),
             "PLUSHPAL_HUB_CLIENT_ID": hubClientId(),
         ]
-        extra.merge(macLocalModelProfileEnvironment()) { _, new in new }
-        if let lanAddress = preferredLanIPv4Address() {
+        extra.merge(launchContext.localModelEnvironment) { _, new in new }
+        if let lanAddress = launchContext.lanAddress {
             extra["PLUSHPAL_ENABLE_LAN"] = "1"
             extra["PLUSHPAL_LAN_HOST"] = lanAddress
             appendLog("app-shell.log", "LAN pairing candidate \(lanAddress)")
@@ -1213,6 +1304,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         process.terminationHandler = { [weak self] terminated in
             DispatchQueue.main.async {
                 guard let self, !self.isTerminating else { return }
+                guard self.hostProcess === terminated else {
+                    self.appendLog("app-shell.log", "ignored stale host termination status=\(terminated.terminationStatus) reason=\(terminated.terminationReason.rawValue)")
+                    return
+                }
                 self.hostPipe?.fileHandleForReading.readabilityHandler = nil
                 self.hostPipe = nil
                 self.hostProcess = nil
@@ -1220,9 +1315,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 let suffix = diagnostic.isEmpty ? "" : "\n\n\(diagnostic)"
                 self.appendLog("app-shell.log", "host terminated status=\(terminated.terminationStatus) reason=\(terminated.terminationReason.rawValue) didLoadHostUrl=\(self.didLoadHostUrl)")
                 if self.didLoadHostUrl {
-                    self.update(.failed("The local PlushBuddy Hub service stopped unexpectedly. Exit code \(terminated.terminationStatus).\(suffix)"))
+                    self.update(.failed("The local ToyTalk Hub service stopped unexpectedly. Exit code \(terminated.terminationStatus).\(suffix)"))
                 } else {
-                    self.update(.failed("The local PlushBuddy Hub service stopped before the app was ready. Exit code \(terminated.terminationStatus).\(suffix)"))
+                    self.update(.failed("The local ToyTalk Hub service stopped before the app was ready. Exit code \(terminated.terminationStatus).\(suffix)"))
                 }
             }
         }
@@ -1230,12 +1325,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         do {
             try process.run()
         } catch {
-            update(.failed("Could not start the local PlushBuddy Hub service: \(error.localizedDescription)"))
+            update(.failed("Could not start the local ToyTalk Hub service: \(error.localizedDescription)"))
         }
     }
 
     @objc private func retryStartup() {
-        if let existingHostUrl = hostUrl, hostProcess?.isRunning == true {
+        restartStartup(forceRestart: false, reason: "retryStartup")
+    }
+
+    private func restartStartup(forceRestart: Bool, reason: String) {
+        if !forceRestart, let existingHostUrl = hostUrl, hostProcess?.isRunning == true {
             appendLog("app-shell.log", "retryStartup resumes existing host \(existingHostUrl.absoluteString)")
             update(.startingHost)
             updateServiceStatuses(
@@ -1248,6 +1347,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             )
             waitForStationHealth(existingHostUrl)
             return
+        }
+        if forceRestart {
+            appendLog("app-shell.log", "\(reason) restarts host process")
         }
         installProcess?.terminate()
         hostProcess?.terminate()
@@ -1312,7 +1414,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = "Reset local voice runtime?"
-        alert.informativeText = "This removes the local LuxTTS Python environment so PlushBuddy Hub can rebuild it. It does not delete kids, characters, conversations, API keys, voice profiles, or downloaded model caches."
+        alert.informativeText = "This removes the local LuxTTS Python environment so ToyTalk Hub can rebuild it. It does not delete kids, characters, conversations, API keys, voice profiles, or downloaded model caches."
         alert.addButton(withTitle: "Reset voice runtime")
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else {
@@ -1340,7 +1442,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
-    @objc private func openPlushPalInBrowser() {
+    @objc private func openToyTalkInBrowser() {
         guard unlockHubIfNeeded(reason: "Open browser client") else { return }
         guard let hostUrl else { return }
         persistStationClientUrl(hostUrl)
@@ -1348,7 +1450,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     @objc private func showAndroidPairingLink() {
-        guard unlockHubIfNeeded(reason: "Pair phone with PlushBuddy Hub") else { return }
+        guard unlockHubIfNeeded(reason: "Pair phone with ToyTalk Hub") else { return }
         guard let pairingUrl = lanPairingUrl ?? hostUrl else { return }
         let isLanUrl = lanPairingUrl != nil
         currentPairingUrlText = pairingUrl.absoluteString
@@ -1367,7 +1469,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         root.translatesAutoresizingMaskIntoConstraints = false
         panel.contentView = root
 
-        let title = NSTextField(labelWithString: "Pair phone with PlushBuddy Hub")
+        let title = NSTextField(labelWithString: "Pair phone with ToyTalk Hub")
         title.font = .systemFont(ofSize: 22, weight: .semibold)
         title.alignment = .center
         title.translatesAutoresizingMaskIntoConstraints = false
@@ -1465,25 +1567,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         return NSImage(cgImage: cgImage, size: NSSize(width: size, height: size))
     }
 
-    @objc private func openPlushPalInApp() {
+    @objc private func openToyTalkInApp() {
         guard unlockHubIfNeeded(reason: "Open Mac client") else { return }
         guard let hostUrl else { return }
         persistStationClientUrl(hostUrl)
         guard let clientAppUrl = bundledClientAppUrl() else {
-            appendLog("app-shell.log", "missing PlushBuddy Mac client app; falling back to browser \(hostUrl.absoluteString)")
+            appendLog("app-shell.log", "missing ToyTalk Mac client app; falling back to browser \(hostUrl.absoluteString)")
             NSWorkspace.shared.open(hostUrl)
             return
         }
 
-        appendLog("app-shell.log", "opening PlushBuddy Mac client \(clientAppUrl.path) url=\(hostUrl.absoluteString)")
+        appendLog("app-shell.log", "opening ToyTalk Mac client \(clientAppUrl.path) url=\(hostUrl.absoluteString)")
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.arguments = ["--station-url", hostUrl.absoluteString]
         NSWorkspace.shared.openApplication(at: clientAppUrl, configuration: configuration) { [weak self] _, error in
             if let error {
-                self?.appendLog("app-shell.log", "failed to open PlushBuddy Mac client: \(error.localizedDescription)")
+                self?.appendLog("app-shell.log", "failed to open ToyTalk Mac client: \(error.localizedDescription)")
                 DispatchQueue.main.async {
                     let alert = NSAlert()
-                    alert.messageText = "Could not open PlushBuddy"
+                    alert.messageText = "Could not open ToyTalk"
                     alert.informativeText = "Hub is healthy, but the Mac client app could not be opened. Opening the browser version instead."
                     alert.addButton(withTitle: "OK")
                     alert.runModal()
@@ -1495,8 +1597,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     private func bundledClientAppUrl() -> URL? {
         let candidates = [
-            Bundle.main.resourceURL?.appendingPathComponent("PlushBuddy.app", isDirectory: true),
-            Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("PlushBuddy.app", isDirectory: true),
+            Bundle.main.resourceURL?.appendingPathComponent("ToyTalk.app", isDirectory: true),
+            Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("ToyTalk.app", isDirectory: true),
         ].compactMap { $0 }
         return candidates.first { FileManager.default.fileExists(atPath: $0.path) }
     }
@@ -1517,7 +1619,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let mainMenu = NSMenu()
         let appMenuItem = NSMenuItem()
         let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "Quit PlushBuddy Hub", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: "Quit ToyTalk Hub", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appMenuItem.submenu = appMenu
         mainMenu.addItem(appMenuItem)
 
@@ -1645,7 +1747,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             : NSColor(calibratedRed: 0.36, green: 0.33, blue: 0.42, alpha: 1.0)
         let accent = NSColor(calibratedRed: 0.55, green: 0.36, blue: 0.96, alpha: 1.0)
 
-        (splashView as? PlushBuddyHubBackgroundView)?.updateTheme(isDark: isDark)
+        (splashView as? ToyTalkHubBackgroundView)?.updateTheme(isDark: isDark)
         logoView?.updateShadow(isDark: isDark)
         titleLabel?.textColor = titleColor
         detailLabel?.textColor = helperColor
@@ -1704,6 +1806,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     @objc private func showQuickGuide() {
+        if let existingWindow = quickGuideWindow, existingWindow.isVisible {
+            existingWindow.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
         func guideCard(number: String, icon: String, title: String, detail: String, color: NSColor) -> NSStackView {
             let badge = NSTextField(labelWithString: "\(icon)\n\(number)")
             badge.font = .systemFont(ofSize: 18, weight: .black)
@@ -1748,7 +1856,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             NSLayoutConstraint.activate([
                 badge.widthAnchor.constraint(equalToConstant: 54),
                 badge.heightAnchor.constraint(equalToConstant: 54),
-                card.widthAnchor.constraint(equalToConstant: 520),
             ])
             return card
         }
@@ -1761,18 +1868,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             return label
         }
 
-        let header = NSTextField(wrappingLabelWithString: "A tiny map from setup to playtime. Do it once, then PlushBuddy is ready whenever the Hub is open.")
+        let title = NSTextField(labelWithString: "ToyTalk playtime map")
+        title.font = .systemFont(ofSize: 24, weight: .black)
+        title.textColor = .labelColor
+        title.alignment = .center
+
+        let header = NSTextField(wrappingLabelWithString: "A tiny map from setup to playtime. Do it once, then ToyTalk is ready whenever the Hub is open.")
         header.font = .systemFont(ofSize: 14, weight: .medium)
         header.textColor = .secondaryLabelColor
         header.alignment = .center
         header.maximumNumberOfLines = 0
 
         let stack = NSStackView(views: [
-            header,
             guideCard(
                 number: "1",
                 icon: "🏠",
-                title: "Start PlushBuddy Hub",
+                title: "Start ToyTalk Hub",
                 detail: "Keep this Mac awake. The Hub runs secure storage, AI, buddy voices, and pairing.",
                 color: NSColor(calibratedRed: 0.55, green: 0.36, blue: 0.96, alpha: 1.0)
             ),
@@ -1813,14 +1924,88 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         stack.alignment = .centerX
         stack.spacing = 8
         stack.edgeInsets = NSEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
-        stack.setFrameSize(NSSize(width: 560, height: 650))
+        stack.translatesAutoresizingMaskIntoConstraints = false
 
-        let alert = NSAlert()
-        alert.messageText = "PlushBuddy playtime map"
-        alert.informativeText = ""
-        alert.accessoryView = stack
-        alert.addButton(withTitle: "Got it")
-        alert.runModal()
+        let documentView = NSView()
+        documentView.translatesAutoresizingMaskIntoConstraints = false
+        documentView.addSubview(stack)
+
+        let scrollView = NSScrollView()
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.documentView = documentView
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+
+        let closeButton = NSButton(title: "Got it", target: self, action: #selector(closeQuickGuideWindow))
+        closeButton.bezelStyle = .rounded
+        closeButton.keyEquivalent = "\r"
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+
+        let buttonRow = NSStackView(views: [closeButton])
+        buttonRow.orientation = .horizontal
+        buttonRow.alignment = .centerY
+        buttonRow.distribution = .gravityAreas
+        buttonRow.translatesAutoresizingMaskIntoConstraints = false
+
+        let root = NSStackView(views: [title, header, scrollView, buttonRow])
+        root.orientation = .vertical
+        root.alignment = .centerX
+        root.spacing = 14
+        root.edgeInsets = NSEdgeInsets(top: 24, left: 24, bottom: 20, right: 24)
+        root.translatesAutoresizingMaskIntoConstraints = false
+        root.wantsLayer = true
+        root.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+
+        let guideWindow = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 620),
+            styleMask: [.titled, .closable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        guideWindow.title = "How to use ToyTalk"
+        guideWindow.contentView = root
+        guideWindow.minSize = NSSize(width: 520, height: 420)
+        guideWindow.isReleasedWhenClosed = false
+
+        NSLayoutConstraint.activate([
+            root.widthAnchor.constraint(greaterThanOrEqualToConstant: 480),
+            title.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 24),
+            title.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -24),
+            header.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 24),
+            header.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -24),
+            scrollView.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12),
+            scrollView.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
+            scrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: 260),
+            scrollView.heightAnchor.constraint(lessThanOrEqualToConstant: 470),
+            buttonRow.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 24),
+            buttonRow.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -24),
+            closeButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 120),
+
+            stack.topAnchor.constraint(equalTo: documentView.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: documentView.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: documentView.trailingAnchor),
+            stack.bottomAnchor.constraint(equalTo: documentView.bottomAnchor),
+            documentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+        ])
+
+        for case let card as NSStackView in stack.arrangedSubviews {
+            if card.orientation == .horizontal {
+                card.widthAnchor.constraint(lessThanOrEqualTo: documentView.widthAnchor, constant: -16).isActive = true
+                card.widthAnchor.constraint(greaterThanOrEqualToConstant: 440).isActive = true
+            }
+        }
+
+        quickGuideWindow = guideWindow
+        guideWindow.center()
+        guideWindow.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc private func closeQuickGuideWindow() {
+        quickGuideWindow?.close()
+        quickGuideWindow = nil
     }
 
     @objc private func configureParentPin() {
@@ -1862,7 +2047,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         do {
             try saveParentPinToHub(pin: pin)
             hubUnlockedParentPin = pin
-            UserDefaults.standard.set(true, forKey: "PlushBuddyHubParentPinConfigured")
+            UserDefaults.standard.set(true, forKey: "ToyTalkHubParentPinConfigured")
             refreshChecklistButtons()
             appendLog("app-shell.log", "parent PIN configured or verified")
             showInfoAlert(title: "Parent PIN ready", message: "Hub parent settings are protected. Next, configure your Cloud AI model if you want cloud conversation mode.")
@@ -1872,7 +2057,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     @discardableResult
-    private func unlockHubIfNeeded(reason: String = "Unlock PlushBuddy Hub") -> Bool {
+    private func unlockHubIfNeeded(reason: String = "Unlock ToyTalk Hub") -> Bool {
         guard (try? hubParentPinConfigured()) == true else {
             hubUnlockedParentPin = nil
             return true
@@ -1884,7 +2069,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     @discardableResult
-    private func promptHubUnlock(reason: String = "Unlock PlushBuddy Hub") -> Bool {
+    private func promptHubUnlock(reason: String = "Unlock ToyTalk Hub") -> Bool {
         guard !hubUnlockPromptVisible else { return false }
         hubUnlockPromptVisible = true
         defer { hubUnlockPromptVisible = false }
@@ -1893,7 +2078,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             let pinInput = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
             let alert = NSAlert()
             alert.messageText = reason
-            alert.informativeText = "Enter the parent PIN to manage PlushBuddy Hub. You will not be asked again until you close and reopen the Hub."
+            alert.informativeText = "Enter the parent PIN to manage ToyTalk Hub. You will not be asked again until you close and reopen the Hub."
             alert.accessoryView = makeDialogForm([("Parent PIN", pinInput)], labelWidth: 92, fieldWidth: 280)
             alert.addButton(withTitle: "Unlock Hub")
             alert.addButton(withTitle: "Cancel")
@@ -1913,7 +2098,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     showHubReadyHero(conversationReady: lastConversationReady)
                     return true
                 }
-                showInfoAlert(title: "Incorrect PIN", message: "That PIN did not unlock PlushBuddy Hub. Try again.")
+                showInfoAlert(title: "Incorrect PIN", message: "That PIN did not unlock ToyTalk Hub. Try again.")
             } catch {
                 showInfoAlert(title: "Could not unlock Hub", message: error.localizedDescription)
                 return false
@@ -1921,7 +2106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
-    private func requireUnlockedParentPin(reason: String = "Unlock PlushBuddy Hub") -> String? {
+    private func requireUnlockedParentPin(reason: String = "Unlock ToyTalk Hub") -> String? {
         if !unlockHubIfNeeded(reason: reason) {
             return nil
         }
@@ -1956,7 +2141,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         do {
             try updateParentPinInHub(currentPin: currentPin, newPin: newPin)
             hubUnlockedParentPin = newPin
-            UserDefaults.standard.set(true, forKey: "PlushBuddyHubParentPinConfigured")
+            UserDefaults.standard.set(true, forKey: "ToyTalkHubParentPinConfigured")
             refreshChecklistButtons()
             appendLog("app-shell.log", "parent PIN updated")
             showInfoAlert(title: "Parent PIN updated", message: "Use the new PIN for future parent settings.")
@@ -2037,8 +2222,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         guard !key.isEmpty else { return }
         do {
             try saveCloudLlmKeyToHub(provider: provider, key: key, pin: pin)
-            UserDefaults.standard.set(provider, forKey: "PlushBuddyCloudLlmProvider")
-            UserDefaults.standard.set(true, forKey: "PlushBuddyHubCloudLlmConfigured")
+            UserDefaults.standard.set(provider, forKey: "ToyTalkCloudLlmProvider")
+            UserDefaults.standard.set(true, forKey: "ToyTalkHubCloudLlmConfigured")
             refreshChecklistButtons(conversationReady: true)
             removeLegacyGeminiKeyFile()
             appendLog("app-shell.log", "\(cloudLlmProviderDisplayName(provider)) key saved to encrypted Hub database")
@@ -2061,8 +2246,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         do {
             try selectCloudAiProviderInHub(provider: provider, pin: pin)
-            UserDefaults.standard.set(provider, forKey: "PlushBuddyCloudLlmProvider")
-            UserDefaults.standard.set(true, forKey: "PlushBuddyHubCloudLlmConfigured")
+            UserDefaults.standard.set(provider, forKey: "ToyTalkCloudLlmProvider")
+            UserDefaults.standard.set(true, forKey: "ToyTalkHubCloudLlmConfigured")
             refreshChecklistButtons(conversationReady: true)
             appendLog("app-shell.log", "\(cloudLlmProviderDisplayName(provider)) selected as active Cloud AI model")
             showInfoAlert(title: "Cloud AI model updated", message: "\(cloudLlmProviderDisplayName(provider)) is now active.")
@@ -2220,7 +2405,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let confirm = NSAlert()
         confirm.messageText = "Install \(modelName)?"
         confirm.informativeText = """
-        PlushBuddy will download and verify the recommended Local AI model for this Mac. This can take a while and may use several GB of disk space.
+        ToyTalk will download and verify the recommended Local AI model for this Mac. This can take a while and may use several GB of disk space.
 
         \(recommendation?.isEmpty == false ? recommendation! + "\n\n" : "")Voice cloning and storage already stay on this Hub. Install this only if you want conversations to use Local AI instead of a Cloud AI model.
         """
@@ -2242,7 +2427,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 browser: nil
             )
             scheduleLocalAiInstallPoll()
-            showInfoAlert(title: "Local AI model install started", message: "Keep this Mac awake. PlushBuddy will update this screen when \(modelName) is ready.")
+            showInfoAlert(title: "Local AI model install started", message: "Keep this Mac awake. ToyTalk will update this screen when \(modelName) is ready.")
         } catch {
             showInfoAlert(title: "Local AI install could not start", message: error.localizedDescription)
         }
@@ -2316,7 +2501,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             guard let self else { return }
             self.progress.stopAnimation(nil)
             self.progress.isHidden = true
-            self.titleLabel.stringValue = "PlushBuddy Hub is ready"
+            self.titleLabel.stringValue = "ToyTalk Hub is ready"
             self.detailLabel.stringValue = "\(self.localAiDisplayName(status)) is installed. You can connect a phone, open a local client, or start testing conversations."
         }
     }
@@ -2324,7 +2509,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func showHubReadyHero(conversationReady: Bool) {
         progress.stopAnimation(nil)
         progress.isHidden = true
-        titleLabel.stringValue = "PlushBuddy Hub is ready"
+        titleLabel.stringValue = "ToyTalk Hub is ready"
         detailLabel.stringValue = conversationReady
             ? "All required local services are healthy. Set parent controls, connect a phone, or open a local client."
             : (selectedRuntimeMode() == "privacy_local_first"
@@ -2335,7 +2520,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func showHubLockedHero() {
         progress.stopAnimation(nil)
         progress.isHidden = true
-        titleLabel.stringValue = "PlushBuddy Hub is locked"
+        titleLabel.stringValue = "ToyTalk Hub is locked"
         detailLabel.stringValue = "Enter the parent PIN to manage settings, paired devices, AI mode, and clients. Voice services stay ready while the Hub is open."
     }
 
@@ -2343,7 +2528,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         guard unlockHubIfNeeded(reason: "Change AI mode") else { return }
         let current = selectedRuntimeMode()
         let alert = NSAlert()
-        alert.messageText = "Choose PlushBuddy AI mode"
+        alert.messageText = "Choose ToyTalk AI mode"
         alert.informativeText = """
         Cloud AI mode uses Gemini/OpenAI for answers after Hub redaction and keeps voice, storage, profiles, and audio local.
 
@@ -2365,17 +2550,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             next = nil
         }
         guard let next, next != current else { return }
-        UserDefaults.standard.set(next, forKey: "PlushBuddyRuntimeMode")
-        UserDefaults.standard.set(next == "privacy_local_first", forKey: "PlushBuddyPromptLocalAiSetupAfterRestart")
-        appendLog("app-shell.log", "runtime mode changed to \(next)")
-        retryStartup()
+        UserDefaults.standard.set(next, forKey: "ToyTalkRuntimeMode")
+        UserDefaults.standard.set(next == "privacy_local_first", forKey: "ToyTalkPromptLocalAiSetupAfterRestart")
+        do {
+            try updateRuntimeModeInHub(next)
+            appendLog("app-shell.log", "runtime mode changed to \(next)")
+            refreshChecklistButtons()
+            refreshHubStatus()
+            if next == "privacy_local_first" {
+                promptLocalAiSetupIfNeeded()
+            }
+        } catch {
+            appendLog("app-shell.log", "runtime mode change failed for \(next): \(error.localizedDescription)")
+            showInfoAlert(title: "AI mode was not changed", message: error.localizedDescription)
+        }
     }
 
     private func promptLocalAiSetupIfNeeded() {
         guard selectedRuntimeMode() == "privacy_local_first" else { return }
-        let shouldPrompt = UserDefaults.standard.bool(forKey: "PlushBuddyPromptLocalAiSetupAfterRestart")
+        let shouldPrompt = UserDefaults.standard.bool(forKey: "ToyTalkPromptLocalAiSetupAfterRestart")
         guard shouldPrompt else { return }
-        UserDefaults.standard.set(false, forKey: "PlushBuddyPromptLocalAiSetupAfterRestart")
+        UserDefaults.standard.set(false, forKey: "ToyTalkPromptLocalAiSetupAfterRestart")
 
         let status = try? localAiModelStatus()
         if status?.ready == true {
@@ -2383,7 +2578,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             return
         }
         if status?.installing == true {
-            showInfoAlert(title: "Local AI model is installing", message: "Keep this Mac awake. PlushBuddy will update the Hub screen when the Local AI model is ready.")
+            showInfoAlert(title: "Local AI model is installing", message: "Keep this Mac awake. ToyTalk will update the Hub screen when the Local AI model is ready.")
             scheduleLocalAiInstallPoll()
             return
         }
@@ -2397,7 +2592,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let alert = NSAlert()
         alert.messageText = "Local AI selected"
         alert.informativeText = """
-        Based on this Mac, PlushBuddy recommends \(modelName).
+        Based on this Mac, ToyTalk recommends \(modelName).
 
         \(recommendation?.isEmpty == false ? recommendation! + "\n\n" : "")Install it now, or come back later using the Local AI setup button.
         """
@@ -2413,7 +2608,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
            !override.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return override
         }
-        if let stored = UserDefaults.standard.string(forKey: "PlushBuddyRuntimeMode"),
+        if let stored = UserDefaults.standard.string(forKey: "ToyTalkRuntimeMode"),
            ["cloud_llm", "privacy_local_first"].contains(stored) {
             return stored
         }
@@ -2438,7 +2633,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 return normalized
             }
         }
-        if let stored = UserDefaults.standard.string(forKey: "PlushBuddyCloudLlmProvider") {
+        if let stored = UserDefaults.standard.string(forKey: "ToyTalkCloudLlmProvider") {
             let normalized = cloudLlmProviderValue(stored)
             if ["gemini", "openai"].contains(normalized) {
                 return normalized
@@ -2515,7 +2710,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     private func refreshChecklistButtons(conversationReady: Bool? = nil) {
         let parentPinReady = (try? hubParentPinConfigured()) ?? false
-        UserDefaults.standard.set(parentPinReady, forKey: "PlushBuddyHubParentPinConfigured")
+        UserDefaults.standard.set(parentPinReady, forKey: "ToyTalkHubParentPinConfigured")
         let runtimeMode = selectedRuntimeMode()
         let localAiMode = runtimeMode == "privacy_local_first"
         let aiModeTitle = localAiMode
@@ -2524,10 +2719,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let localStatus = try? localAiModelStatus()
         let status = try? cloudAiModelStatus()
         if let status {
-            UserDefaults.standard.set(status.provider, forKey: "PlushBuddyCloudLlmProvider")
-            UserDefaults.standard.set(status.configured, forKey: "PlushBuddyHubCloudLlmConfigured")
+            UserDefaults.standard.set(status.provider, forKey: "ToyTalkCloudLlmProvider")
+            UserDefaults.standard.set(status.configured, forKey: "ToyTalkHubCloudLlmConfigured")
         } else {
-            UserDefaults.standard.set(false, forKey: "PlushBuddyHubCloudLlmConfigured")
+            UserDefaults.standard.set(false, forKey: "ToyTalkHubCloudLlmConfigured")
         }
         let cloudReady = status?.configured == true
         let providerName = status?.displayName ?? cloudLlmProviderDisplayName(selectedCloudLlmProvider())
@@ -2615,7 +2810,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func saveParentPinToHub(pin: String) throws {
         guard pin.count >= 4 else {
             throw NSError(
-                domain: "PlushBuddyHub",
+                domain: "ToyTalkHub",
                 code: 1,
                 userInfo: [NSLocalizedDescriptionKey: "Parent PIN must be at least 4 characters."]
             )
@@ -2638,7 +2833,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 message = "Hub returned HTTP \(statusCode)."
             }
             throw NSError(
-                domain: "PlushBuddyHub",
+                domain: "ToyTalkHub",
                 code: statusCode,
                 userInfo: [NSLocalizedDescriptionKey: message]
             )
@@ -2648,7 +2843,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func updateParentPinInHub(currentPin: String, newPin: String) throws {
         guard newPin.count >= 4 else {
             throw NSError(
-                domain: "PlushBuddyHub",
+                domain: "ToyTalkHub",
                 code: 1,
                 userInfo: [NSLocalizedDescriptionKey: "New parent PIN must be at least 4 characters."]
             )
@@ -2669,14 +2864,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             default:
                 message = "Hub returned HTTP \(statusCode)."
             }
-            throw NSError(domain: "PlushBuddyHub", code: statusCode, userInfo: [NSLocalizedDescriptionKey: message])
+            throw NSError(domain: "ToyTalkHub", code: statusCode, userInfo: [NSLocalizedDescriptionKey: message])
         }
     }
 
     private func saveCloudLlmKeyToHub(provider: String, key: String, pin: String) throws {
         guard key.utf8.count >= 16 else {
             throw NSError(
-                domain: "PlushBuddyHub",
+                domain: "ToyTalkHub",
                 code: 1,
                 userInfo: [NSLocalizedDescriptionKey: "\(cloudLlmProviderDisplayName(provider)) API key looks too short."]
             )
@@ -2700,7 +2895,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 message = "Hub returned HTTP \(statusCode)."
             }
             throw NSError(
-                domain: "PlushBuddyHub",
+                domain: "ToyTalkHub",
                 code: statusCode,
                 userInfo: [NSLocalizedDescriptionKey: message]
             )
@@ -2724,7 +2919,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             default:
                 message = "Hub returned HTTP \(statusCode)."
             }
-            throw NSError(domain: "PlushBuddyHub", code: statusCode, userInfo: [NSLocalizedDescriptionKey: message])
+            throw NSError(domain: "ToyTalkHub", code: statusCode, userInfo: [NSLocalizedDescriptionKey: message])
+        }
+    }
+
+    private func updateRuntimeModeInHub(_ mode: String) throws {
+        let statusCode = try postJsonToHub(path: "/api/v1/runtime/mode", body: [
+            "mode": mode,
+        ])
+        guard (200..<300).contains(statusCode) else {
+            let message: String
+            switch statusCode {
+            case 401:
+                message = "Hub session expired. Click Refresh status and try again."
+            case 403:
+                message = "Only this ToyTalk Hub can change AI mode."
+            case 400:
+                message = "The selected AI mode was rejected."
+            default:
+                message = "Hub returned HTTP \(statusCode)."
+            }
+            throw NSError(
+                domain: "ToyTalkHub",
+                code: statusCode,
+                userInfo: [NSLocalizedDescriptionKey: message]
+            )
         }
     }
 
@@ -2764,13 +2983,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             let message: String
             switch statusCode {
             case 403:
-                message = "Only PlushBuddy Hub can install the local AI model."
+                message = "Only ToyTalk Hub can install the local AI model."
             case 501:
                 message = "Local AI model installation is not supported on this Hub build."
             default:
                 message = "Hub returned HTTP \(statusCode)."
             }
-            throw NSError(domain: "PlushBuddyHub", code: statusCode, userInfo: [NSLocalizedDescriptionKey: message])
+            throw NSError(domain: "ToyTalkHub", code: statusCode, userInfo: [NSLocalizedDescriptionKey: message])
         }
     }
 
@@ -2778,7 +2997,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let statusCode = try postEmptyToHub(path: "/api/v1/model/cancel")
         guard (200..<300).contains(statusCode) else {
             throw NSError(
-                domain: "PlushBuddyHub",
+                domain: "ToyTalkHub",
                 code: statusCode,
                 userInfo: [NSLocalizedDescriptionKey: "Hub returned HTTP \(statusCode)."]
             )
@@ -2799,7 +3018,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             return false
         default:
             throw NSError(
-                domain: "PlushBuddyHub",
+                domain: "ToyTalkHub",
                 code: statusCode,
                 userInfo: [NSLocalizedDescriptionKey: "Hub returned HTTP \(statusCode)."]
             )
@@ -2846,7 +3065,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             default:
                 message = "Hub returned HTTP \(statusCode)."
             }
-            throw NSError(domain: "PlushBuddyHub", code: statusCode, userInfo: [NSLocalizedDescriptionKey: message])
+            throw NSError(domain: "ToyTalkHub", code: statusCode, userInfo: [NSLocalizedDescriptionKey: message])
         }
     }
 
@@ -2888,14 +3107,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let result = blockingHttpData(request)
         guard (200..<300).contains(result.statusCode) else {
             throw NSError(
-                domain: "PlushBuddyHub",
+                domain: "ToyTalkHub",
                 code: result.statusCode,
                 userInfo: [NSLocalizedDescriptionKey: "Hub returned HTTP \(result.statusCode)."]
             )
         }
         guard let object = try JSONSerialization.jsonObject(with: result.data) as? [String: Any] else {
             throw NSError(
-                domain: "PlushBuddyHub",
+                domain: "ToyTalkHub",
                 code: 0,
                 userInfo: [NSLocalizedDescriptionKey: "Hub returned an invalid JSON response."]
             )
@@ -2917,7 +3136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let result = blockingHttpData(request)
         guard (200..<300).contains(result.statusCode) else {
             throw NSError(
-                domain: "PlushBuddyHub",
+                domain: "ToyTalkHub",
                 code: result.statusCode,
                 userInfo: [NSLocalizedDescriptionKey: "Hub returned HTTP \(result.statusCode)."]
             )
@@ -2928,7 +3147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func stationApiUrl(path: String) throws -> URL {
         guard let hostUrl else {
             throw NSError(
-                domain: "PlushBuddyHub",
+                domain: "ToyTalkHub",
                 code: 2,
                 userInfo: [NSLocalizedDescriptionKey: "Hub is not running yet."]
             )
@@ -2940,7 +3159,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         components.path = path
         guard let url = components.url else {
             throw NSError(
-                domain: "PlushBuddyHub",
+                domain: "ToyTalkHub",
                 code: 3,
                 userInfo: [NSLocalizedDescriptionKey: "Hub URL is invalid."]
             )
@@ -2953,7 +3172,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
               let scheme = hostUrl.scheme,
               let host = hostUrl.host else {
             throw NSError(
-                domain: "PlushBuddyHub",
+                domain: "ToyTalkHub",
                 code: 5,
                 userInfo: [NSLocalizedDescriptionKey: "Hub origin is invalid."]
             )
@@ -2979,7 +3198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                   .first,
               !token.isEmpty else {
             throw NSError(
-                domain: "PlushBuddyHub",
+                domain: "ToyTalkHub",
                 code: 4,
                 userInfo: [NSLocalizedDescriptionKey: "Hub pairing session is missing. Restart Hub and try again."]
             )
@@ -2997,7 +3216,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
               let cookie = setCookie.split(separator: ";").first.map(String.init),
               cookie.hasPrefix("pp_session=") else {
             throw NSError(
-                domain: "PlushBuddyHub",
+                domain: "ToyTalkHub",
                 code: result.statusCode,
                 userInfo: [NSLocalizedDescriptionKey: "Could not open an authenticated Hub session. Restart Hub and try again."]
             )
@@ -3066,9 +3285,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         guard let text = String(data: hostOutput, encoding: .utf8) else { return }
 
         for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
-            if line.contains("PlushBuddy Hub test bootstrap URL:") {
-                let urlText = line.replacingOccurrences(of: "PlushBuddy Hub test bootstrap URL:", with: "")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            if let urlText = extractHostOutputValue(
+                from: String(line),
+                prefixes: [
+                    "ToyTalk Hub test bootstrap URL:",
+                    "PlushBuddy Hub test bootstrap URL:",
+                    "PlushPal test bootstrap URL:",
+                ]
+            ) {
                 guard parsedHostUrlText != urlText else { continue }
                 if let url = URL(string: urlText) {
                     parsedHostUrlText = urlText
@@ -3088,15 +3312,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     }
                     waitForStationHealth(url)
                 }
-            } else if line.contains("PlushBuddy Hub LAN bootstrap URL:") {
-                let urlText = line.replacingOccurrences(of: "PlushBuddy Hub LAN bootstrap URL:", with: "")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            } else if let urlText = extractHostOutputValue(
+                from: String(line),
+                prefixes: [
+                    "ToyTalk Hub LAN bootstrap URL:",
+                    "PlushBuddy Hub LAN bootstrap URL:",
+                    "PlushPal LAN bootstrap URL:",
+                ]
+            ) {
                 if let url = URL(string: urlText), lanPairingUrl?.absoluteString != urlText {
                     lanPairingUrl = url
                     appendLog("app-shell.log", "Hub LAN pairing url \(urlText)")
                 }
             }
         }
+    }
+
+    private func extractHostOutputValue(from line: String, prefixes: [String]) -> String? {
+        for prefix in prefixes where line.contains(prefix) {
+            return line.replacingOccurrences(of: prefix, with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return nil
     }
 
     private func preferredLanIPv4Address() -> String? {
@@ -3119,7 +3356,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     private func waitForStationHealth(_ hostUrl: URL) {
         guard let healthUrl = healthEndpoint(for: hostUrl) else {
-            update(.failed("The local PlushBuddy Hub service returned an invalid health-check URL."))
+            update(.failed("The local ToyTalk Hub service returned an invalid health-check URL."))
             return
         }
         healthWaitGeneration += 1
@@ -3166,7 +3403,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     host: "✕ Hub: needs attention",
                     browser: "○ Apps: waiting"
                 )
-                self?.update(.failed("PlushBuddy Hub is still not fully healthy after 15 minutes. If logs show model loading, click Retry setup to resume health checks without restarting. If it is stuck, use Reset voice runtime."))
+                self?.update(.failed("ToyTalk Hub is still not fully healthy after 15 minutes. If logs show model loading, click Retry setup to resume health checks without restarting. If it is stuck, use Reset voice runtime."))
             }
         }
     }
@@ -3249,7 +3486,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func diagnosticSnapshot() -> String {
         let timestamp = ISO8601DateFormatter().string(from: Date())
         let lines = [
-            "PlushBuddy Hub diagnostics",
+            "ToyTalk Hub diagnostics",
             "timestamp: \(timestamp)",
             "app_support: \(applicationSupportDirectory().path)",
             "logs: \(logDirectory().path)",
@@ -3321,16 +3558,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         appendLog("app-shell.log", "webView didFail \(error.localizedDescription)")
-        update(.failed("Could not load PlushBuddy: \(error.localizedDescription)"))
+        update(.failed("Could not load ToyTalk: \(error.localizedDescription)"))
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         appendLog("app-shell.log", "webView didFailProvisional \(error.localizedDescription)")
-        update(.failed("Could not load PlushBuddy: \(error.localizedDescription)"))
+        update(.failed("Could not load ToyTalk: \(error.localizedDescription)"))
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard message.name == "plushpalLog" else { return }
+        guard message.name == "toytalkLog" else { return }
         if let body = message.body as? [String: Any] {
             let level = body["level"] as? String ?? "browser"
             let text = body["message"] as? String ?? ""
@@ -3410,8 +3647,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             switch state {
             case .preparingVoiceRuntime:
                 self.setupPanel.isHidden = true
-                self.titleLabel.stringValue = "Preparing PlushBuddy Hub"
-                self.detailLabel.stringValue = "Checking app storage, local voice support, and cached downloads. First launch can take a few minutes; later launches reuse what is already installed."
+                self.titleLabel.stringValue = "Preparing ToyTalk Hub"
+                self.detailLabel.stringValue = "Getting the local Hub ready. The checklist below shows each service as it starts; first launch can take a few minutes, later launches reuse cached installs."
                 self.progress.isHidden = false
                 self.progress.startAnimation(nil)
                 self.retryButton.isHidden = true
@@ -3435,7 +3672,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             case .startingHost:
                 self.setupPanel.isHidden = true
                 self.titleLabel.stringValue = "Starting Hub service"
-                self.detailLabel.stringValue = "Starting the local PlushBuddy Hub service. Client options will appear after health checks pass."
+                self.detailLabel.stringValue = "Starting the local ToyTalk Hub service. The checklist below will turn green as each service becomes ready."
                 self.progress.isHidden = false
                 self.progress.startAnimation(nil)
                 self.retryButton.isHidden = true
@@ -3458,7 +3695,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.resetVoiceRuntimeButton.isHidden = true
             case .loadingApp:
                 self.setupPanel.isHidden = true
-                self.titleLabel.stringValue = "Loading PlushBuddy Hub"
+                self.titleLabel.stringValue = "Loading ToyTalk Hub"
                 self.detailLabel.stringValue = "Almost ready…"
                 self.progress.isHidden = false
                 self.progress.startAnimation(nil)
@@ -3517,7 +3754,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 if (try? self.hubParentPinConfigured()) == true,
                    self.hubUnlockedParentPin == nil {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-                        self?.unlockHubIfNeeded(reason: "Unlock PlushBuddy Hub")
+                        self?.unlockHubIfNeeded(reason: "Unlock ToyTalk Hub")
                     }
                 }
             case .ready:
@@ -3548,7 +3785,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.setupPanel.isHidden = true
                 self.progress.stopAnimation(nil)
                 self.progress.isHidden = true
-                self.titleLabel.stringValue = "PlushBuddy Hub needs setup"
+                self.titleLabel.stringValue = "ToyTalk Hub needs setup"
                 self.detailLabel.stringValue = message
                 self.splashScrollView.isHidden = false
                 self.webView.isHidden = true
@@ -3601,6 +3838,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         icon.image = NSImage(systemSymbolName: state.symbolName, accessibilityDescription: nil)
         icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 14, weight: .semibold)
         icon.contentTintColor = state.color
+        if let progress = statusProgress(for: label) {
+            if statusShouldSpin(text) {
+                progress.isHidden = false
+                progress.startAnimation(nil)
+            } else {
+                progress.stopAnimation(nil)
+                progress.isHidden = true
+            }
+        }
     }
 
     private func statusTextWithoutPrefix(_ text: String) -> String {
@@ -3625,6 +3871,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         return ("clock.fill", .secondaryLabelColor)
     }
 
+    private func statusShouldSpin(_ text: String) -> Bool {
+        guard text.hasPrefix("○") else { return false }
+        let lower = text.lowercased()
+        let activeWords = [
+            "checking",
+            "starting",
+            "preparing",
+            "installing",
+            "downloading",
+            "building",
+            "warming",
+            "waking",
+            "refreshing",
+            "loading",
+        ]
+        return activeWords.contains { lower.contains($0) }
+    }
+
     private func statusIcon(for label: NSTextField) -> NSImageView? {
         if label === storageStatusLabel { return storageStatusIcon }
         if label === reasoningStatusLabel { return reasoningStatusIcon }
@@ -3635,16 +3899,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         return nil
     }
 
+    private func statusProgress(for label: NSTextField) -> NSProgressIndicator? {
+        if label === storageStatusLabel { return storageStatusProgress }
+        if label === reasoningStatusLabel { return reasoningStatusProgress }
+        if label === voiceStatusLabel { return voiceStatusProgress }
+        if label === sttStatusLabel { return sttStatusProgress }
+        if label === hostStatusLabel { return hostStatusProgress }
+        if label === browserStatusLabel { return browserStatusProgress }
+        return nil
+    }
+
     private func updateDetail(_ message: String) {
         DispatchQueue.main.async { [weak self] in
             self?.detailLabel.stringValue = message
         }
     }
 
+    private func updateVoiceSetupDetail(from output: String, engineName: String) {
+        guard let milestone = friendlyVoiceSetupMilestone(from: output, engineName: engineName) else {
+            return
+        }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, milestone.rank >= self.voiceSetupMilestoneRank else { return }
+            self.voiceSetupMilestoneRank = milestone.rank
+            self.updateServiceStatuses(
+                storage: nil,
+                reasoning: nil,
+                voice: "○ Buddy voices: \(milestone.message)",
+                stt: nil,
+                host: nil,
+                browser: nil
+            )
+        }
+    }
+
+    private func friendlyVoiceSetupMilestone(from output: String, engineName: String) -> SetupMilestone? {
+        let lower = output.lowercased()
+        let label = engineName == "LuxTTS" ? "voice model" : "voice runtime"
+        if lower.contains("successfully installed") {
+            return SetupMilestone(rank: 40, message: "finishing \(label) setup")
+        }
+        if lower.contains("installing collected") || lower.contains("installing build dependencies") {
+            return SetupMilestone(rank: 30, message: "installing \(label) support")
+        }
+        if lower.contains("building wheel") || lower.contains("preparing metadata") {
+            return SetupMilestone(rank: 30, message: "building local \(label) components")
+        }
+        if lower.contains("downloading") {
+            return SetupMilestone(rank: 20, message: "downloading \(label) support")
+        }
+        if lower.contains("collecting") || lower.contains("using cached") || lower.contains("metadata") {
+            return SetupMilestone(rank: 10, message: "preparing \(label) support")
+        }
+        return nil
+    }
+
     private func applicationSupportDirectory() -> URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
-        return base.appendingPathComponent("PlushPal", isDirectory: true)
+        return base.appendingPathComponent("ToyTalk", isDirectory: true)
     }
 
     private func macLocalModelProfileEnvironment() -> [String: String] {

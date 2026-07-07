@@ -5,9 +5,17 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 ARTIFACTS_ROOT=${PLUSHPAL_ARTIFACTS_DIR:-"$ROOT/dist"}
 BUILD_ROOT=${PLUSHPAL_BUILD_DIR:-"$ROOT/build"}
 CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-"$BUILD_ROOT/cargo-target"}
-VERSION=${PLUSHPAL_VERSION:-0.1.0}
+VERSION=${PLUSHPAL_VERSION:-}
+if [ -z "$VERSION" ]; then
+  if command -v git >/dev/null 2>&1 && git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    VERSION=$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || git -C "$ROOT" rev-parse --short HEAD)
+  else
+    VERSION="local"
+  fi
+fi
 export PLUSHPAL_ARTIFACTS_DIR="$ARTIFACTS_ROOT"
 export PLUSHPAL_BUILD_DIR="$BUILD_ROOT"
+export PLUSHPAL_VERSION="$VERSION"
 export CARGO_TARGET_DIR
 cd "$ROOT"
 
@@ -44,10 +52,10 @@ xcrun swiftc -parse apps/android/flutter_app/ios/Runner/PlushPalPlatformPlugin.s
 
 sh packaging/macos/package.sh
 test -f apps/android/flutter_app/build/web/assets/assets/fonts/Roboto-Regular.ttf
-codesign --verify --deep --strict --verbose=2 "$ARTIFACTS_ROOT/macos/PlushBuddy Hub.app"
-otool -L "$ARTIFACTS_ROOT/macos/PlushBuddy Hub.app/Contents/MacOS/plushpal-desktop-host" | \
+codesign --verify --deep --strict --verbose=2 "$ARTIFACTS_ROOT/macos/ToyTalk Hub.app"
+otool -L "$ARTIFACTS_ROOT/macos/ToyTalk Hub.app/Contents/MacOS/plushpal-desktop-host" | \
   grep -F '@rpath/libplushpal_llama.dylib' >/dev/null
-otool -l "$ARTIFACTS_ROOT/macos/PlushBuddy Hub.app/Contents/MacOS/plushpal-desktop-host" | \
+otool -l "$ARTIFACTS_ROOT/macos/ToyTalk Hub.app/Contents/MacOS/plushpal-desktop-host" | \
   grep -F '@executable_path/../Frameworks' >/dev/null
 
 if rg -n --hidden \
@@ -60,6 +68,6 @@ fi
 
 git diff --check
 shasum -a 256 \
-  "$ARTIFACTS_ROOT/macos/PlushBuddy-$VERSION-macos.zip" \
-  "$ARTIFACTS_ROOT/macos/PlushBuddy Hub.app/Contents/MacOS/PlushBuddy Hub" \
-  "$ARTIFACTS_ROOT/macos/PlushBuddy Hub.app/Contents/Frameworks/libplushpal_llama.dylib"
+  "$ARTIFACTS_ROOT/macos/ToyTalk-$VERSION-macos.zip" \
+  "$ARTIFACTS_ROOT/macos/ToyTalk Hub.app/Contents/MacOS/ToyTalk Hub" \
+  "$ARTIFACTS_ROOT/macos/ToyTalk Hub.app/Contents/Frameworks/libplushpal_llama.dylib"

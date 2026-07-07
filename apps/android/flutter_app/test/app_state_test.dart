@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:plushpal_ui/src/domain/app_state.dart';
+import 'package:toytalk_ui/src/domain/app_state.dart';
 
 void main() {
   test('onboarding fails closed until age and verified model are present', () {

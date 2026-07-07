@@ -47,7 +47,7 @@ def main() -> int:
         output = Path(args.output)
         output.parent.mkdir(parents=True, exist_ok=True)
 
-        with tempfile.TemporaryDirectory(prefix="plushpal-chatterbox-vc-") as temp_dir:
+        with tempfile.TemporaryDirectory(prefix="toytalk-chatterbox-vc-") as temp_dir:
             source_path = Path(temp_dir) / "source.wav"
 
             tts = ChatterboxTTS.from_pretrained(device=device)

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Applies the public-read / owner-controlled GitHub repository settings used by
-# PlushBuddy. This script intentionally reads the token from the environment or
+# ToyTalk. This script intentionally reads the token from the environment or
 # macOS Keychain and never prints it.
 #
 # Required token:
@@ -13,17 +13,17 @@ set -euo pipefail
 #
 # Usage:
 #   export GITHUB_TOKEN='...'
-#   tools/github/apply_repo_settings.sh palwe-prafulla plushpal main
+#   tools/github/apply_repo_settings.sh palwe-prafulla toytalk main
 #
 # Or store the token in macOS Keychain once:
 #   security add-generic-password -a "$USER" -s codex.github.token -w '...'
-#   tools/github/apply_repo_settings.sh palwe-prafulla plushpal main
+#   tools/github/apply_repo_settings.sh palwe-prafulla toytalk main
 #
 # Optional:
-#   DRY_RUN=1 tools/github/apply_repo_settings.sh palwe-prafulla plushpal main
+#   DRY_RUN=1 tools/github/apply_repo_settings.sh palwe-prafulla toytalk main
 
 OWNER="${1:-palwe-prafulla}"
-REPO="${2:-plushpal}"
+REPO="${2:-toytalk}"
 BRANCH="${3:-main}"
 API_ROOT="${GITHUB_API_ROOT:-https://api.github.com}"
 
@@ -32,7 +32,7 @@ if [[ -z "${GITHUB_TOKEN:-}" ]] && command -v security >/dev/null 2>&1; then
 fi
 
 if [[ -z "${GITHUB_TOKEN:-}" ]] && command -v security >/dev/null 2>&1; then
-  GITHUB_TOKEN="$(security find-generic-password -a "$USER" -s plushpal.github.token -w 2>/dev/null || true)"
+  GITHUB_TOKEN="$(security find-generic-password -a "$USER" -s toytalk.github.token -w 2>/dev/null || true)"
 fi
 
 if [[ -z "${GITHUB_TOKEN:-}" ]]; then
