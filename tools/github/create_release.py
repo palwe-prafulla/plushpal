@@ -58,6 +58,15 @@ def github_token() -> str:
     )
 
 
+class GithubHttpError(RuntimeError):
+    def __init__(self, method: str, url: str, status: int, detail: str):
+        super().__init__(f"GitHub API request failed: {method} {url} -> HTTP {status}\n{detail}")
+        self.method = method
+        self.url = url
+        self.status = status
+        self.detail = detail
+
+
 def api_request(
     method: str,
     path_or_url: str,
@@ -80,10 +89,17 @@ def api_request(
             data = response.read()
     except urllib.error.HTTPError as error:
         detail = error.read().decode("utf-8", errors="replace")
-        raise SystemExit(f"GitHub API request failed: {method} {url} -> HTTP {error.code}\n{detail}") from error
+        raise GithubHttpError(method, url, error.code, detail) from error
     if not data:
         return {}
     return json.loads(data.decode("utf-8"))
+
+
+def checked_api_request(*args, **kwargs) -> dict:
+    try:
+        return api_request(*args, **kwargs)
+    except GithubHttpError as error:
+        raise SystemExit(str(error)) from error
 
 
 def release_assets(release_dir: Path) -> list[Path]:
@@ -104,6 +120,12 @@ def main() -> int:
     parser.add_argument("--name", default=None)
     parser.add_argument("--draft", action="store_true")
     parser.add_argument("--prerelease", action="store_true")
+    parser.add_argument(
+        "--replace-existing-assets",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="When the tag already has a release, update notes and replace same-named assets.",
+    )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -147,17 +169,51 @@ def main() -> int:
         return 0
 
     token = github_token()
-    release = api_request(
-        "POST",
-        f"/repos/{args.owner}/{args.repo}/releases",
-        token,
-        json.dumps(release_payload).encode("utf-8"),
-    )
+    try:
+        release = api_request(
+            "POST",
+            f"/repos/{args.owner}/{args.repo}/releases",
+            token,
+            json.dumps(release_payload).encode("utf-8"),
+        )
+        created = True
+    except GithubHttpError as error:
+        if error.status != 422 or "already_exists" not in error.detail:
+            raise SystemExit(str(error)) from error
+        release = checked_api_request(
+            "GET",
+            f"/repos/{args.owner}/{args.repo}/releases/tags/{urllib.parse.quote(args.tag)}",
+            token,
+        )
+        release = checked_api_request(
+            "PATCH",
+            f"/repos/{args.owner}/{args.repo}/releases/{release['id']}",
+            token,
+            json.dumps(release_payload).encode("utf-8"),
+        )
+        created = False
+
     upload_url = str(release["upload_url"]).split("{", 1)[0]
+    if not created and args.replace_existing_assets:
+        existing_assets = checked_api_request(
+            "GET",
+            f"/repos/{args.owner}/{args.repo}/releases/{release['id']}/assets?per_page=100",
+            token,
+        )
+        desired_names = {asset.name for asset in assets}
+        for existing in existing_assets:
+            if existing.get("name") in desired_names:
+                checked_api_request(
+                    "DELETE",
+                    f"/repos/{args.owner}/{args.repo}/releases/assets/{existing['id']}",
+                    token,
+                )
+                print(f"Deleted existing {existing['name']}")
+
     for asset in assets:
         content_type = mimetypes.guess_type(asset.name)[0] or "application/octet-stream"
         encoded_name = urllib.parse.quote(asset.name)
-        api_request(
+        checked_api_request(
             "POST",
             f"{upload_url}?name={encoded_name}",
             token,
@@ -167,7 +223,8 @@ def main() -> int:
         )
         print(f"Uploaded {asset.name}")
 
-    print(f"Release created: {release.get('html_url', f'{args.owner}/{args.repo}:{args.tag}')}")
+    action = "created" if created else "updated"
+    print(f"Release {action}: {release.get('html_url', f'{args.owner}/{args.repo}:{args.tag}')}")
     return 0
 
 
