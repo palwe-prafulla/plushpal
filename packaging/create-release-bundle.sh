@@ -88,7 +88,9 @@ Local release bundle generated from this checkout.
 
 ## Contents
 
-- macOS ToyTalk Hub and Mac client archives, when macOS packaging was built
+- macOS ToyTalk Hub DMG, when macOS packaging was built. The Hub bundle includes
+  the local Mac client UI internally, so there is no separate Mac client app
+  artifact.
 - Android debug APK, when Android tooling was available
 - iPhone simulator / unsigned device app archives, when Xcode tooling was available
 - SHA256SUMS for all bundled artifacts

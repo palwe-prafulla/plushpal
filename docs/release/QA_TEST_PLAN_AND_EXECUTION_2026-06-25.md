@@ -1,7 +1,7 @@
 # ToyTalk QA Test Plan and Execution Report
 
 Date: 2026-06-25  
-Scope: public-repo artifact build, ToyTalk Hub, Mac client, browser client,
+Scope: public-repo artifact build, ToyTalk Hub, embedded Mac experience, browser client,
 Android real device, iPhone simulator, shared unit tests, and LuxTTS voice E2E.
 
 ## Executive summary
@@ -13,13 +13,13 @@ The tested release shape is:
 
 - source checkout stays clean;
 - public build/test outputs are written under `~/Downloads/ToyTalk`;
-- `make public-artifacts` builds ToyTalk Hub, Mac client, Android APK, iPhone
+- `make public-artifacts` builds ToyTalk Hub, embedded Mac experience, Android APK, iPhone
   simulator app, and unsigned iPhone device app;
 - ToyTalk Hub can enroll/approve/synthesize separate LuxTTS voices for the three
   current M4A samples;
 - Android real-device install/launch and debug Hub pairing pass;
 - iPhone simulator install/launch passes;
-- browser and Mac client attach to packaged Hub.
+- browser and embedded Mac experience attach to packaged Hub.
 
 Live Gemini/OpenAI conversation through the UI was not rerun in the June 25
 pass because the local Gemini key file was intentionally deleted before
@@ -33,7 +33,6 @@ Public artifacts:
 
 ```text
 ~/Downloads/ToyTalk/artifacts/macos/ToyTalk Hub.app
-~/Downloads/ToyTalk/artifacts/macos/ToyTalk.app
 ~/Downloads/ToyTalk/artifacts/macos/ToyTalk-v2-macos.dmg
 ~/Downloads/ToyTalk/artifacts/macos/ToyTalk-v2-macos.zip
 ~/Downloads/ToyTalk/artifacts/android/ToyTalk-debug.apk
@@ -64,7 +63,7 @@ Private local samples were moved outside the repository:
 | Hub LuxTTS E2E | `qa/automation/macstation_api_smoke.py --voice-engine luxtts --synthesize --sample ...` | PASS | `macstation-api-20260625-182107` |
 | Packaged Hub launch/readiness | Packaged app launch/log readiness smoke | PASS | `macstation-packaged-20260625-182639`; evidence folder uses legacy name |
 | Browser client through packaged Hub | Hub-served Flutter UI render smoke | PASS | `packaged-station-clients-20260625-182741/browser-report.json` |
-| Mac client through packaged Hub | Packaged `ToyTalk.app --station-url ...` | PASS | `packaged-station-clients-20260625-182741/mac-client-status.txt` |
+| embedded Mac experience through packaged Hub | Hub-bundled `Contents/Resources/ToyTalk.app --station-url ...` | PASS | `packaged-station-clients-20260625-182741/mac-client-status.txt` |
 | Android real device install/launch | `qa/automation/android_device_smoke.sh` | PASS | `android-device-20260625-183045` |
 | Android Hub pairing | `qa/automation/android_station_pairing_smoke.sh` | PASS | `android-station-pairing-20260625-183121`; script name is legacy |
 | iPhone simulator install/launch | `qa/automation/ios_simulator_smoke.sh` | PASS | `ios-simulator-20260625-183045` |
@@ -125,9 +124,9 @@ verified the ToyTalk title plus Flutter-rendered UI. A previous CSP
 Flutter's local `<base href="/">` behavior while still blocking external base
 URI injection.
 
-### Mac client
+### embedded Mac experience
 
-The packaged Mac client was launched with `--station-url` against packaged
+The packaged embedded Mac experience was launched with `--station-url` against packaged
 Hub. It stayed alive and logged successful navigation.
 
 ## Public repository hygiene
@@ -147,7 +146,7 @@ Completed before this report:
 These are not blockers for creating the public GitHub repository, but they are
 still product-release work:
 
-- add production signing/notarization for Hub and Mac client;
+- add production signing/notarization for the Hub bundle, including its embedded Mac experience;
 - add Android release signing;
 - add iPhone physical-device E2E with Apple signing/provisioning;
 - rerun live Gemini/OpenAI conversation UI E2E with a fresh local provider key;

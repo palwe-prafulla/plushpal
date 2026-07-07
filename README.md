@@ -4,8 +4,8 @@
 
 ToyTalk lets a parent create kid profiles, create toy buddies, upload a short
 sample of how each toy should sound, approve the cloned voice, and then let a
-child talk to that toy through an Android app, iPhone app, Mac app, or local
-browser UI.
+child talk to that toy through Android, iPhone, the local Mac experience inside
+ToyTalk Hub, or the optional local browser UI.
 
 The current architecture centers on **ToyTalk Hub**: a local private backend
 that runs first on macOS. The Hub owns encrypted storage, child-safety
@@ -36,10 +36,10 @@ clients for mic capture, local STT when available, and playback.
   <img src="docs/assets/screenshots/browser-welcome.png" alt="ToyTalk browser client welcome screen" width="650" />
 </p>
 
-**Mac app** — native macOS shell around the same desktop client experience.
+**Mac experience** — the local desktop client opens from inside ToyTalk Hub.
 
 <p>
-  <img src="docs/assets/screenshots/mac-client-welcome.png" alt="ToyTalk Mac client welcome screen" width="650" />
+  <img src="docs/assets/screenshots/mac-client-welcome.png" alt="ToyTalk Mac experience welcome screen" width="650" />
 </p>
 
 ## What it does
@@ -65,11 +65,11 @@ ToyTalk uses a local-Hub architecture:
   guardrails, local/cloud reasoning, packaged local STT fallback, and LuxTTS.
 - **Android app**: external voice-first native client paired to the Hub.
 - **iPhone app**: external voice-first native client paired to the Hub.
-- **Mac app**: native client that can run on the Hub Mac or another Mac.
+- **Mac desktop experience**: native client UI embedded inside ToyTalk Hub for the same Mac.
 - **Local browser**: same-machine browser UI for the computer running the Hub.
   Remote browser clients are not supported for now.
 
-Android/iPhone/Mac/browser clients now route parent setup, kids, characters,
+Android/iPhone/Mac-local/browser clients now route parent setup, kids, characters,
 provider keys, history, voice enrollment, and conversation turns through the
 Hub. External apps only keep the minimum local shell state needed to operate:
 stable client identity, pairing/session information, theme/UI preferences, OS
@@ -87,7 +87,7 @@ the Hub store explicitly rather than by IP address or hidden global fallback.
 
 ```mermaid
 flowchart TB
-    Clients["Android / iPhone / Mac app / local browser"] --> Hub["ToyTalk Hub<br/>local private backend"]
+    Clients["Android / iPhone / embedded Mac experience / local browser"] --> Hub["ToyTalk Hub<br/>local private backend"]
     Hub --> HubDB["Hub scoped SQLCipher store<br/>PIN, Cloud AI keys, paired devices"]
     Hub --> Registry["Root SQLCipher DB<br/>key + compatibility store"]
     Hub --> ClientDB["Per-client SQLCipher stores<br/>kids, characters, history, voices"]
@@ -112,7 +112,7 @@ Large app binaries are not committed into the git repository. The source repo
 stays lightweight, while downloadable dev artifacts are published on GitHub
 Releases:
 
-**[Download ToyTalk v2 artifacts](https://github.com/palwe-prafulla/toytalk/releases/tag/v2)**
+**[Download ToyTalk v2 artifacts](https://github.com/palwe-prafulla/plushpal/releases/tag/v2)**
 
 That release includes:
 
@@ -161,7 +161,7 @@ Open:
 ~/Downloads/ToyTalk/artifacts/macos/ToyTalk Hub.app
 ```
 
-Then use Hub to open the Mac app, open the local browser client, or
+Then use Hub to use ToyTalk on this Mac, open the local browser client, or
 scan the QR code from Android/iPhone.
 
 For a lightweight developer demo without LuxTTS voice cloning or a cloud API
@@ -202,14 +202,14 @@ ToyTalk is released under the [MIT License](LICENSE).
 ## Current release and Hub architecture
 
 The current `v2` release is buildable and demonstrates the product
-flow with Android, iPhone simulator, Mac client, local browser, and the macOS
-ToyTalk Hub runtime.
+flow with Android, iPhone simulator, the embedded Mac desktop experience, local
+browser, and the macOS ToyTalk Hub runtime.
 
 The implementation has moved to this stricter backend model:
 
 - Hub owns durable data, encrypted storage, provider keys, guardrails,
   redaction, local/cloud reasoning, voice profiles, and conversation history.
-- Android/iPhone/Mac/future Windows clients are thin voice-first UI clients.
+- Android/iPhone/future Windows clients are thin voice-first UI clients; the Mac desktop client is embedded in Hub.
 - Clients store only stable pairing/client identity and session data.
 - Local browser is supported only on the same machine running the Hub.
 - Remote browser clients are intentionally out of scope.
@@ -225,8 +225,8 @@ The implementation has moved to this stricter backend model:
    - Local AI mode;
    - Cloud AI.
 5. Hub verifies required runtimes for the selected mode.
-6. Parent opens local browser/Mac client or displays QR pairing for native
-   external clients.
+6. Parent uses ToyTalk on this Mac, opens the local browser, or displays QR
+   pairing for Android/iPhone.
 
 ### Character voice creation
 
@@ -260,7 +260,7 @@ The implementation has moved to this stricter backend model:
 | Shared UI | Flutter / Dart |
 | Android native client | Kotlin, verified on-device STT target, bounded WAV fallback capture, WAV playback, file picker, QR pairing |
 | iOS native client | Swift, on-device Speech target, bounded WAV fallback capture, AVAudio playback, file picker, QR pairing |
-| Mac client | Swift AppKit client shell |
+| Embedded Mac experience | Swift AppKit client shell bundled inside ToyTalk Hub |
 | Local browser | Flutter web served only on the Hub machine, with bounded mic capture to Hub STT when browser APIs allow it |
 | Hub launcher | Swift AppKit first; Windows/Linux launchers later |
 | Hub backend | Rust, Axum, Tokio |
@@ -284,7 +284,7 @@ ToyTalk/
       web/plushpal_backend.js     Local browser bridge
     macos/
       station_app/AppShell.swift  Native ToyTalk Hub setup UI
-      client_app/AppShell.swift   Native ToyTalk Mac client shell
+      client_app/AppShell.swift   Embedded native ToyTalk Mac experience shell
     station/macstation_host/      Rust Hub backend; still uses legacy path name
     web/                          Web ownership notes
   crates/                         Reusable Rust crates
@@ -436,7 +436,6 @@ Expected artifacts, depending on installed platform toolchains:
 
 ```text
 ~/Downloads/ToyTalk/artifacts/macos/ToyTalk Hub.app
-~/Downloads/ToyTalk/artifacts/macos/ToyTalk.app
 ~/Downloads/ToyTalk/artifacts/macos/ToyTalk-v2-macos.zip
 ~/Downloads/ToyTalk/artifacts/macos/ToyTalk-v2-macos.dmg
 ~/Downloads/ToyTalk/artifacts/android/ToyTalk-debug.apk
@@ -444,7 +443,7 @@ Expected artifacts, depending on installed platform toolchains:
 ~/Downloads/ToyTalk/artifacts/ios/ToyTalk-iPhoneOS-unsigned.app
 ```
 
-### Build Hub and Mac client only
+### Build macOS Hub only
 
 ```sh
 make package-macos
@@ -454,7 +453,6 @@ Outputs:
 
 ```text
 ~/Downloads/ToyTalk/artifacts/macos/ToyTalk Hub.app
-~/Downloads/ToyTalk/artifacts/macos/ToyTalk.app
 ~/Downloads/ToyTalk/artifacts/macos/ToyTalk-v2-macos.zip
 ~/Downloads/ToyTalk/artifacts/macos/ToyTalk-v2-macos.dmg
 ```
@@ -467,8 +465,7 @@ make build-all
 
 This builds:
 
-- Hub app;
-- Mac client app;
+- Hub app with embedded local Mac experience;
 - Android debug APK;
 - iPhone simulator app;
 - unsigned iPhone device app.
@@ -486,11 +483,11 @@ Wait until health checks are green. Hub should show:
 - app storage ready;
 - voice engine ready;
 - local service healthy;
-- browser/Mac client local attach ready;
-- Android/iPhone/Mac external pairing QR ready.
+- browser/embedded Mac experience local attach ready;
+- Android/iPhone pairing QR ready.
 
 Local clients on the same Mac do not need QR scanning. Click **Open ToyTalk
-in browser** or **Open ToyTalk Mac app** from Hub and the client attaches in
+in browser** or **Use ToyTalk on this Mac** from Hub and the client attaches in
 the background. QR pairing is for external native clients.
 
 ### Use Android
@@ -537,11 +534,11 @@ For physical iPhone:
 3. The browser attaches to the local Hub session automatically; no QR scan is needed.
 4. Use it only on the same machine running Hub.
 
-### Use Mac client
+### Use ToyTalk on this Mac
 
 1. Start Hub.
-2. Click **Open ToyTalk Mac app**.
-3. The Mac client opens the Hub-backed client UI and attaches automatically when local.
+2. Click **Use ToyTalk on this Mac**.
+3. The embedded Mac experience UI opens and attaches automatically to the local Hub.
 
 ## Voice model notes
 
@@ -591,7 +588,7 @@ and writes logs under `~/Downloads/ToyTalk/test-results`.
 
 Latest local verification, June 25, 2026:
 
-- public artifact build passed with Hub, Mac client, Android APK,
+- public artifact build passed with the Hub bundle, embedded Mac experience, Android APK,
   iPhone simulator app, and unsigned iPhone device app under
   `~/Downloads/ToyTalk/artifacts`;
 - local quality gate passed: Rust workspace tests, Flutter analysis/tests, web
@@ -601,7 +598,7 @@ Latest local verification, June 25, 2026:
   verify unique profile IDs, and synthesize WAV;
 - packaged Hub launched and reached readiness;
 - browser client rendered through packaged Hub;
-- packaged Mac client attached to packaged Hub;
+- embedded Mac experience attached to packaged Hub;
 - Android real-device install/launch and Hub pairing passed on a connected
   Pixel 10 Pro;
 - iPhone simulator install/launch passed.
@@ -686,8 +683,8 @@ Generated evidence is written under `~/Downloads/ToyTalk/test-results` by defaul
 ## Remaining production milestones
 
 The current release can be built locally and publishes downloadable dev
-artifacts for Hub/Mac, Android, and iPhone simulator/unsigned device
-testing. The items below are still valid because they are product-release
+artifacts for the macOS Hub, Android, and iPhone simulator/unsigned
+device testing. The items below are still valid because they are product-release
 hardening work beyond the current `v2` release:
 
 1. Run physical iPhone E2E with QR pairing, microphone, local-network
@@ -697,7 +694,7 @@ hardening work beyond the current `v2` release:
 4. Polish the two-mode setup screen and local-model install progress UX.
 5. Extend visible latency metrics for STT, AI, Hub queue, LuxTTS synthesis,
    WAV transfer, and playback.
-6. Add production signing/notarization for Hub and the Mac client.
+6. Add production signing/notarization for the macOS Hub bundle.
 7. Add managed CI/CD release pipelines for Android, iPhone, and Mac. The repo
    already has local build/release scripts and the current GitHub prerelease
    artifacts; this milestone is about repeatable hosted release automation,

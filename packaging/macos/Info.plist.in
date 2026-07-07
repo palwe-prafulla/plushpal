@@ -13,7 +13,7 @@
   <key>NSMicrophoneUsageDescription</key>
   <string>ToyTalk uses the microphone only when you tap to talk, so your child can speak to a character.</string>
   <key>NSSpeechRecognitionUsageDescription</key>
-  <string>ToyTalk uses on-device speech recognition only when you tap to talk in the Mac client.</string>
+  <string>ToyTalk uses on-device speech recognition only when you tap to talk in the local Mac experience.</string>
   <key>NSAppTransportSecurity</key>
   <dict>
     <key>NSAllowsLocalNetworking</key><true/>

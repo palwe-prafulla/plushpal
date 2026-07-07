@@ -53,7 +53,7 @@ final class MacClientAppDelegate: NSObject, NSApplicationDelegate, WKNavigationD
             source: """
             (() => {
               window.__toytalkClientPlatform = 'macos';
-              window.__toytalkClientLabel = 'ToyTalk Mac app';
+              window.__toytalkClientLabel = 'ToyTalk on this Mac';
               window.__toytalkNativeSpeechCallbacks = new Map();
               window.__toytalkNativeSpeechResolve = (payload) => {
                 const callback = window.__toytalkNativeSpeechCallbacks.get(payload && payload.id);
@@ -155,7 +155,7 @@ final class MacClientAppDelegate: NSObject, NSApplicationDelegate, WKNavigationD
         title.translatesAutoresizingMaskIntoConstraints = false
 
         statusLabel = NSTextField(wrappingLabelWithString: """
-        ToyTalk is the Mac client UI. Start ToyTalk Hub first so it can prepare voice services, then click “Open Mac client” in Hub.
+        ToyTalk on this Mac opens from ToyTalk Hub. Start Hub first so it can prepare voice services, then click “Use ToyTalk on this Mac”.
         """)
         statusLabel.font = .systemFont(ofSize: 15)
         statusLabel.textColor = .secondaryLabelColor

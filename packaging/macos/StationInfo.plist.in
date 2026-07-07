@@ -11,9 +11,9 @@
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSMicrophoneUsageDescription</key>
-  <string>ToyTalk uses the microphone only when you tap to talk in the local Mac client.</string>
+  <string>ToyTalk uses the microphone only when you tap to talk in the local Mac experience.</string>
   <key>NSSpeechRecognitionUsageDescription</key>
-  <string>ToyTalk uses on-device speech recognition only when you tap to talk in the Mac client.</string>
+  <string>ToyTalk uses on-device speech recognition only when you tap to talk in the local Mac experience.</string>
   <key>NSAppTransportSecurity</key>
   <dict>
     <key>NSAllowsLocalNetworking</key><true/>

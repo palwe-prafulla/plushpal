@@ -12,7 +12,7 @@ talk to that toy through native clients.
 The current architecture makes **ToyTalk Hub** the local private backend:
 
 - the Hub runs first on macOS;
-- Android, iPhone, Mac app, and future Windows/Linux apps are thin UI clients;
+- Android, iPhone, and future Windows/Linux apps are thin UI clients; the local Mac desktop experience is embedded inside ToyTalk Hub;
 - the browser client is local-only on the same computer as the Hub;
 - durable app data is stored in Hub-owned encrypted SQLCipher stores: the Hub
   has its own stable `hub-*` scoped store for admin state, and each paired UI
@@ -25,7 +25,7 @@ This is intentionally similar to a production cloud backend architecture, but
 the backend runs on the parent’s own computer instead of AWS/GCP.
 
 ```text
-Native clients + local browser UI
+Native clients + embedded Mac/local browser UI
         |
         | paired local-network session / localhost
         v
@@ -49,8 +49,8 @@ The current implementation has completed the main Hub-first migration:
 - Hub admin state uses a stable `hub-*` client identity. The Hub scoped store
   owns Hub parent PIN, Cloud AI provider keys, active provider, and the
   paired-device registry/revocation list.
-- Browser/Mac web client APIs call the Hub instead of storing durable family
-  data in browser storage.
+- Browser and embedded Mac client APIs call the Hub instead of storing durable family
+  data in browser/WebKit storage.
 - Paired Android/iPhone clients call the Hub for parent setup, kids,
   characters, provider keys, voice lifecycle, conversation turns, and history.
 - Gemini and OpenAI cloud reasoning are activated from the Hub after parent
@@ -85,8 +85,8 @@ Now:
 
 ## 3. Product goals
 
-- Voice-first child experience on Android, iPhone, Mac app, and future Windows
-  apps.
+- Voice-first child experience on Android, iPhone, the embedded Mac desktop
+  experience inside Hub, and future Windows apps.
 - Local-only browser UI on the same machine running the Hub.
 - Parent-friendly setup with exactly two runtime choices:
   1. Local AI mode;
@@ -112,7 +112,7 @@ Now:
 |---|---|---|
 | Android app | External voice-first native client | QR pairing over same Wi-Fi/LAN |
 | iPhone app | External voice-first native client | QR pairing over same Wi-Fi/LAN |
-| Mac app | Native client; can run on Hub Mac or another Mac | Local attach or QR pairing |
+| Embedded Mac experience | Native desktop client inside ToyTalk Hub | Local attach |
 | Local browser | Convenience UI on the Hub machine only | `localhost` attach |
 | Windows app | Future native client | QR pairing over same Wi-Fi/LAN |
 | Linux app | Future native client | QR pairing over same Wi-Fi/LAN |
@@ -208,7 +208,7 @@ All native clients are voice-first. The default STT policy is:
 |---|---|---|---|
 | Android | `createOnDeviceSpeechRecognizer` | Must verify availability | Bounded local WAV capture to Hub Whisper/STT |
 | iPhone | `SFSpeechRecognizer` with `requiresOnDeviceRecognition = true` | Must check `supportsOnDeviceRecognition` | Bounded local WAV capture to Hub Whisper/STT |
-| Mac app | Apple on-device speech recognition | Must enforce local mode | Hub Whisper/STT |
+| Embedded Mac experience | Apple on-device speech recognition | Must enforce local mode | Hub Whisper/STT |
 | Windows app future | Windows device-based/in-process recognizer | Must verify local mode | Hub Whisper/STT |
 | Local browser | Browser mic on `localhost` | Can send audio to Hub | Hub Whisper/STT |
 
@@ -219,7 +219,7 @@ Cloud AI providers receive text, not raw audio.
 
 ```mermaid
 flowchart TB
-    Parent["Parent"] --> Client["Thin client UI<br/>Android / iPhone / Mac app / local browser"]
+    Parent["Parent"] --> Client["Thin client UI<br/>Android / iPhone / embedded Mac experience / local browser"]
     Child["Child"] --> Client
 
     Client --> Mic["Mic capture + local STT when verified"]
@@ -413,8 +413,8 @@ is created and the parent can revoke the old one from Hub settings.
 ## 12. Pairing and networking
 
 - Local browser on the Hub machine uses `localhost` and does not need QR.
-- Mac app on the same Hub machine can use local attach.
-- Android/iPhone/Mac app from another device uses QR pairing.
+- The embedded Mac experience on the Hub machine uses local attach.
+- Android/iPhone native apps use QR pairing.
 - Remote browsers are not supported.
 - Hub should keep the host machine awake while active.
 - Hub should show LAN reachability and paired-device status.
@@ -449,7 +449,7 @@ sequenceDiagram
     Shell-->>Parent: Ready + mode + pairing/local launch options
 ```
 
-The Hub intentionally does not expose pairing, browser, or Mac-client launch
+The Hub intentionally does not expose pairing, browser, or local-Mac launch
 options until the final health gate passes. Parallel setup is used to reduce
 startup time without creating a confusing partially usable state where parents
 can configure clients before buddy voices and Hub services are ready.

@@ -154,7 +154,7 @@ Done.
 ### Already done
 
 - Product-focused README intro.
-- Screenshot gallery for Android, iPhone simulator, browser, and Mac client.
+- Screenshot gallery for Android, iPhone simulator, browser, and local Mac experience.
 - Quick start with `make doctor` and `make public-artifacts`.
 - Architecture-at-a-glance diagram.
 - Documentation map.
@@ -236,7 +236,7 @@ Done for baseline clone health.
 - API keys/private samples excluded from repo.
 - Hub-owned redaction/pseudonymization path shared by local and cloud models.
 - Cloud AI provider keys are Hub-scoped SQLCipher encrypted records; browser,
-  Android, iPhone, and Mac clients do not persist provider keys.
+  Android, iPhone, and Mac experiences do not persist provider keys.
 - Browser backend test asserts localStorage does not contain provider API keys
   after configuration.
 - Hub diagnostics endpoint/smoke test verifies private diagnostic fields
@@ -388,7 +388,7 @@ GET /api/v1/diagnostics
 - Hub demo voice E2E.
 - Android install/launch and pairing smokes.
 - iOS simulator launch smoke.
-- Browser and Mac client render smokes.
+- Browser and Mac experience render smokes.
 
 ### Remaining deliverables
 
@@ -407,7 +407,7 @@ GET /api/v1/diagnostics
   - delete character/history/all data.
 - Run matrix:
   - browser demo;
-  - Mac client demo;
+  - Mac experience demo;
   - Android debug demo;
   - iOS simulator demo where feasible.
 
@@ -507,7 +507,7 @@ Completes item 9.
 
 Deliver:
 
-- Browser/Mac client scripted journey.
+- Browser/Mac experience scripted journey.
 - Android scripted journey.
 - iOS simulator best-effort journey.
 - Stable result artifacts under `~/Downloads/ToyTalk/test-results`.

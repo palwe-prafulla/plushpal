@@ -16,7 +16,7 @@ ToyTalk Hub
 Thin clients
   Android app
   iPhone app
-  Mac app
+  embedded Mac experience
   local browser on the Hub machine
 ```
 
@@ -157,7 +157,7 @@ apps/macos/client_app/AppShell.swift
   LuxTTS voice-runtime checks/downloads;
 - starts and health-checks the Rust backend after required runtime paths are
   known;
-- keeps phone/browser/Mac-client options hidden until the Hub is fully healthy;
+- keeps phone/browser/local-Mac options hidden until the Hub is fully healthy;
 - shows row-level setup progress so independent setup work can turn green
   separately without exposing partially usable client flows;
 - prepares LuxTTS/STT/model runtime dependencies;
@@ -165,9 +165,9 @@ apps/macos/client_app/AppShell.swift
 - configures Cloud AI provider keys in Hub SQLCipher;
 - starts Local AI model install when selected;
 - shows Hub health and paired devices;
-- creates QR pairing links for Android/iPhone/external clients;
+- creates QR pairing links for Android/iPhone clients;
 - opens the local browser client;
-- opens the native Mac client.
+- opens the embedded local Mac experience.
 
 Packaged app:
 
@@ -175,16 +175,18 @@ Packaged app:
 ~/Downloads/ToyTalk/artifacts/macos/ToyTalk Hub.app
 ```
 
-### ToyTalk Mac client
+### ToyTalk embedded Mac experience
 
 `apps/macos/client_app/AppShell.swift` is a native WKWebView shell around the
 same Hub-backed client UI. It does not start services or own durable data.
 
-Packaged app:
+Packaged inside the Hub bundle:
 
 ```text
-~/Downloads/ToyTalk/artifacts/macos/ToyTalk.app
+~/Downloads/ToyTalk/artifacts/macos/ToyTalk Hub.app/Contents/Resources/ToyTalk.app
 ```
+
+It is not published as a separate macOS artifact.
 
 ## 6. Local browser client
 

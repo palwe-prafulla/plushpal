@@ -14,7 +14,7 @@ For a distribution-signed macOS build, set both `PLUSHPAL_CODESIGN_IDENTITY` and
 - [x] `.gitignore` excludes common secrets, private samples, generated voice/model artifacts, venvs, build outputs, and QA results.
 - [x] `make public-artifacts` builds from an external workspace and writes artifacts under `~/Downloads/ToyTalk/artifacts`.
 - [x] Local QA writes evidence under `~/Downloads/ToyTalk/test-results`.
-- [x] June 25, 2026 QA pass covers public artifact build, unit/local quality gate, Hub backend, LuxTTS voice E2E, packaged Hub, browser, Mac client, Android real device, Android pairing, and iPhone simulator launch.
+- [x] June 25, 2026 QA pass covers public artifact build, unit/local quality gate, Hub backend, LuxTTS voice E2E, packaged Hub, browser, embedded Mac experience, Android real device, Android pairing, and iPhone simulator launch.
 - [x] July 5, 2026 local smoke verified Hub Cloud AI mode with stored Gemini key and Android child-mode typed chat through Hub/Gemini.
 - [ ] Before a hosted release tag, rerun the full voice-sample E2E in both Local AI and Cloud AI modes with private local samples.
 
@@ -47,4 +47,4 @@ For a distribution-signed macOS build, set both `PLUSHPAL_CODESIGN_IDENTITY` and
 
 - [ ] macOS arm64 and supported Intel/Windows hardware complete install, upgrade, rollback, and uninstall.
 - [ ] Supported iPhone/iPad and Android devices complete QR pairing, microphone/file-picker, playback, interruption, and background/foreground tests.
-- [ ] Local browser and Mac client launch from Hub, auto-attach without QR scanning on the Hub machine, and complete settings/character/voice/conversation flows.
+- [ ] Local browser and embedded Mac experience launch from Hub, auto-attach without QR scanning on the Hub machine, and complete settings/character/voice/conversation flows.

@@ -49,8 +49,9 @@ The current private copy of the removed interview-prep document is stored at:
 The public docs should describe this architecture consistently:
 
 1. ToyTalk Hub is the local private backend and durable encrypted store.
-2. Android, iPhone, Mac app, and future Windows/Linux apps are thin native UI
-   clients that pair with Hub.
+2. Android, iPhone, and future Windows/Linux apps are thin native UI clients
+   that pair with Hub; the local Mac desktop experience is embedded inside Hub
+   and attaches locally without QR pairing.
 3. Local browser is supported only on the same machine running Hub; remote
    browser clients are out of scope.
 4. Hub owns parent settings, kids, characters, conversations, runtime mode,

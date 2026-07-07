@@ -117,7 +117,7 @@ Prefer structured status/error codes over content logs.
 Before a consumer release, ToyTalk should add:
 
 - signed and notarized Hub launcher;
-- signed Android/iPhone/Mac clients;
+- signed Android/iPhone clients and signed/notarized Hub bundle including the embedded Mac experience;
 - stronger paired-client key-pair credentials beyond bearer session cookies;
 - file-based backup/export/import UX polish beyond the current parent-PIN
   encrypted clipboard flow;

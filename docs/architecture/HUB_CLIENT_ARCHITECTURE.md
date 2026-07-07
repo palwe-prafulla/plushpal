@@ -54,7 +54,7 @@ Current Hub-backed product path:
 |---|---|
 | Android app | External native voice-first client |
 | iPhone app | External native voice-first client |
-| Mac app | Native voice-first client, local or external |
+| Embedded Mac experience | Native voice-first client inside ToyTalk Hub |
 | Local browser | Same-machine browser UI only |
 | ToyTalk Hub for macOS | First backend/runtime host |
 

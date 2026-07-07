@@ -521,7 +521,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         pairAndroidButton.isHidden = true
         pairAndroidButton.translatesAutoresizingMaskIntoConstraints = false
 
-        openInAppButton = NSButton(title: "Open Mac client", target: self, action: #selector(openToyTalkInApp))
+        openInAppButton = NSButton(title: "Use ToyTalk on this Mac", target: self, action: #selector(openToyTalkInApp))
         openInAppButton.bezelStyle = .rounded
         openInAppButton.isHidden = true
         openInAppButton.translatesAutoresizingMaskIntoConstraints = false
@@ -662,7 +662,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
         let statusPanel = verticalPanel([
             sectionTitle("Today’s status"),
-            helperText("Keep this Mac awake while your phone or Mac client is using buddy voices."),
+            helperText("Keep this Mac awake while your phone or ToyTalk on this Mac is using buddy voices."),
             serviceStatusStack,
             refreshStatusButton,
         ])
@@ -1568,25 +1568,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     @objc private func openToyTalkInApp() {
-        guard unlockHubIfNeeded(reason: "Open Mac client") else { return }
+        guard unlockHubIfNeeded(reason: "Use ToyTalk on this Mac") else { return }
         guard let hostUrl else { return }
         persistStationClientUrl(hostUrl)
         guard let clientAppUrl = bundledClientAppUrl() else {
-            appendLog("app-shell.log", "missing ToyTalk Mac client app; falling back to browser \(hostUrl.absoluteString)")
+            appendLog("app-shell.log", "missing embedded ToyTalk client; falling back to browser \(hostUrl.absoluteString)")
             NSWorkspace.shared.open(hostUrl)
             return
         }
 
-        appendLog("app-shell.log", "opening ToyTalk Mac client \(clientAppUrl.path) url=\(hostUrl.absoluteString)")
+        appendLog("app-shell.log", "opening embedded ToyTalk client \(clientAppUrl.path) url=\(hostUrl.absoluteString)")
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.arguments = ["--station-url", hostUrl.absoluteString]
         NSWorkspace.shared.openApplication(at: clientAppUrl, configuration: configuration) { [weak self] _, error in
             if let error {
-                self?.appendLog("app-shell.log", "failed to open ToyTalk Mac client: \(error.localizedDescription)")
+                self?.appendLog("app-shell.log", "failed to open embedded ToyTalk client: \(error.localizedDescription)")
                 DispatchQueue.main.async {
                     let alert = NSAlert()
                     alert.messageText = "Could not open ToyTalk"
-                    alert.informativeText = "Hub is healthy, but the Mac client app could not be opened. Opening the browser version instead."
+                    alert.informativeText = "Hub is healthy, but the embedded Mac experience could not be opened. Opening the browser version instead."
                     alert.addButton(withTitle: "OK")
                     alert.runModal()
                     NSWorkspace.shared.open(hostUrl)
@@ -1596,11 +1596,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     private func bundledClientAppUrl() -> URL? {
-        let candidates = [
-            Bundle.main.resourceURL?.appendingPathComponent("ToyTalk.app", isDirectory: true),
-            Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("ToyTalk.app", isDirectory: true),
-        ].compactMap { $0 }
-        return candidates.first { FileManager.default.fileExists(atPath: $0.path) }
+        guard let embeddedClient = Bundle.main.resourceURL?.appendingPathComponent("ToyTalk.app", isDirectory: true),
+              FileManager.default.fileExists(atPath: embeddedClient.path) else {
+            return nil
+        }
+        return embeddedClient
     }
 
     private func persistStationClientUrl(_ url: URL) {
@@ -2502,7 +2502,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             self.progress.stopAnimation(nil)
             self.progress.isHidden = true
             self.titleLabel.stringValue = "ToyTalk Hub is ready"
-            self.detailLabel.stringValue = "\(self.localAiDisplayName(status)) is installed. You can connect a phone, open a local client, or start testing conversations."
+            self.detailLabel.stringValue = "\(self.localAiDisplayName(status)) is installed. You can connect a phone, use ToyTalk on this Mac, or start testing conversations."
         }
     }
 
@@ -2511,7 +2511,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         progress.isHidden = true
         titleLabel.stringValue = "ToyTalk Hub is ready"
         detailLabel.stringValue = conversationReady
-            ? "All required local services are healthy. Set parent controls, connect a phone, or open a local client."
+            ? "All required local services are healthy. Set parent controls, connect a phone, or use ToyTalk on this Mac."
             : (selectedRuntimeMode() == "privacy_local_first"
                 ? "Voice, storage, and pairing are ready. Local AI needs its model installed and ready before real conversations."
                 : "Voice, storage, and pairing are ready. Set or verify the parent PIN, then configure a Cloud AI model before real conversations.")

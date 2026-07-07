@@ -63,7 +63,7 @@ export PACKAGE_CARGO_TARGET_DIR="$BUILD_ROOT/cargo-target-public"
 
 cd "$WORKTREE"
 
-echo "Building macOS ToyTalk Hub and Mac client artifacts..."
+echo "Building macOS ToyTalk Hub artifact..."
 if [ "${PLUSHPAL_SKIP_MACOS:-0}" = "1" ]; then
   echo "Skipping macOS artifacts because PLUSHPAL_SKIP_MACOS=1"
 else
@@ -125,7 +125,6 @@ Build workspace: $WORKTREE
 
 macOS:
   $ARTIFACTS_ROOT/macos/ToyTalk Hub.app
-  $ARTIFACTS_ROOT/macos/ToyTalk.app
   $ARTIFACTS_ROOT/macos/ToyTalk-*.zip
   $ARTIFACTS_ROOT/macos/ToyTalk-*.dmg, when hdiutil is available
 

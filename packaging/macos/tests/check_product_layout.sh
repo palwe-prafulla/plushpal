@@ -24,10 +24,12 @@ for path in $required_paths; do
 done
 
 grep -q 'ToyTalk Hub.app' packaging/macos/package.sh
-grep -q 'ToyTalk.app' packaging/macos/package.sh
 grep -q 'apps/macos/station_app/AppShell.swift' packaging/macos/package.sh
 grep -q 'apps/macos/client_app/AppShell.swift' packaging/macos/package.sh
 grep -q 'Contents/Resources/ToyTalk.app' packaging/macos/package.sh
+grep -q 'CLIENT_APP_BUILD' packaging/macos/package.sh
+grep -q 'Use ToyTalk on this Mac' apps/macos/station_app/AppShell.swift
+grep -q 'Bundle.main.resourceURL?.appendingPathComponent("ToyTalk.app"' apps/macos/station_app/AppShell.swift
 grep -q 'ToyTalkHubBackgroundView' apps/macos/station_app/AppShell.swift
 grep -q 'ToyTalkLogoView' apps/macos/station_app/AppShell.swift
 grep -q 'NSSpeechRecognitionUsageDescription' packaging/macos/StationInfo.plist.in
