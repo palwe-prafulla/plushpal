@@ -1,6 +1,6 @@
 # Known limitations
 
-Last updated: 2026-07-05
+Last updated: 2026-07-08
 
 ToyTalk is public and buildable, but it is still an MVP/prototype. The core
 Hub-backed architecture is implemented for paired product usage, including a
@@ -12,6 +12,10 @@ capture is available. Per-client encrypted Hub data stores are implemented on
 top of stable client identity. Local-first AI mode is implemented with signed
 Google Gemma GGUF manifests and Hub-side model recommendation, but needs broader
 safety/performance QA before product-release claims.
+The Hub also prepares a small local current-info router using MiniLM-L6
+embeddings plus a ToyTalk classifier. It runs on every child question so
+current/live questions can be handled without silently returning stale model
+memory.
 
 ## Architecture limitations
 
@@ -57,8 +61,15 @@ safety/performance QA before product-release claims.
   Python/Transformers `openai/whisper-base` wrapper and health-checked by the
   Hub launcher; it is still heavier than the future `whisper.cpp` runtime
   target.
-- Fully local mode is available through Hub-installed Gemma GGUF tiers, but
-  response quality, latency, and safety should be tested further across devices.
+- Fully local mode defaults to the recommended Gemma E4B GGUF model on current
+  Apple Silicon Macs, with larger Gemma tiers treated as optional/manual
+  experiments until broader latency and safety testing is complete.
+- Current/live question detection is implemented locally. Parent-controlled web
+  search can let Gemini/OpenAI use their native web-search tools only when the
+  classifier says a turn needs latest information. Local AI normally asks the
+  child to check current/live questions with a grown-up rather than guessing
+  from stale model memory. A hidden Brave Search env hook exists for advanced
+  Local AI evidence experiments, but it is not part of the normal parent UX.
 - Cloud AI mode requires a parent-provided Gemini/OpenAI key, stored by the
   Hub and never returned to clients.
 - Prompt guardrails reduce risk but are not a complete safety system.

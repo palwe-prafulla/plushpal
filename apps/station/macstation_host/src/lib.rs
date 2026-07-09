@@ -24,7 +24,9 @@ use axum::{
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use plushpal_character_voice::{inspect_wav, CharacterProfile, ProfileError, VoiceSampleFacts};
-use plushpal_core_domain::{AgeBand, ConversationTurn, StructuredCharacterResponse, TurnRole};
+use plushpal_core_domain::{
+    AgeBand, ConversationTurn, GroundingEvidence, StructuredCharacterResponse, TurnRole,
+};
 #[cfg(feature = "native-runtime")]
 use plushpal_core_domain::{BoundedConversationRequest, ConversationMode};
 use plushpal_desktop_gateway::{
@@ -33,7 +35,9 @@ use plushpal_desktop_gateway::{
 };
 use plushpal_parent_controls::{ParentGate, ParentPinHash};
 #[cfg(feature = "native-runtime")]
-use plushpal_policy_engine::{AgePolicy, ModelPromptContract, ModelPromptMode};
+use plushpal_policy_engine::{
+    redact_personal_info, AgePolicy, ModelPromptContract, ModelPromptMode, MODEL_RESPONSE_SCHEMA,
+};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
@@ -47,6 +51,7 @@ pub enum HostError {
     InvalidPersistedProfile,
     InvalidVoiceSample,
     VoiceUnavailable,
+    SearchRouterUnavailable,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -128,6 +133,7 @@ pub trait ParentProfileStore: fmt::Debug + Send + Sync {
             configured: false,
             display_name: "ToyTalk Hub".to_owned(),
             configured_providers: Vec::new(),
+            web_search_enabled: false,
         })
     }
     fn save_provider_api_key(&self, _provider: &str, _api_key: &str) -> Result<(), HostError> {
@@ -144,6 +150,12 @@ pub trait ParentProfileStore: fmt::Debug + Send + Sync {
     }
     fn configured_provider_names(&self) -> Result<Vec<String>, HostError> {
         Ok(Vec::new())
+    }
+    fn web_search_enabled(&self) -> Result<bool, HostError> {
+        Ok(false)
+    }
+    fn set_web_search_enabled(&self, _enabled: bool) -> Result<(), HostError> {
+        Err(HostError::PersistenceUnavailable)
     }
     fn record_paired_client(&self, _client: &PairedClientConfiguration) -> Result<(), HostError> {
         Ok(())
@@ -276,6 +288,7 @@ pub struct ReasoningProviderConfiguration {
     pub configured: bool,
     pub display_name: String,
     pub configured_providers: Vec<String>,
+    pub web_search_enabled: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -318,6 +331,13 @@ pub struct LocalTurnCommand {
     pub recent_turns: Vec<ConversationTurn>,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ConversationGenerationOptions {
+    pub web_search_needed: bool,
+    pub web_search_allowed: bool,
+    pub web_search_evidence: Vec<GroundingEvidence>,
+}
+
 pub trait ConversationEngine: fmt::Debug + Send + Sync {
     fn is_ready(&self) -> bool;
     fn runtime_mode_label(&self) -> &'static str {
@@ -333,6 +353,13 @@ pub trait ConversationEngine: fmt::Debug + Send + Sync {
         &self,
         command: LocalTurnCommand,
     ) -> Result<StructuredCharacterResponse, ConversationEngineError>;
+    fn generate_with_options(
+        &self,
+        command: LocalTurnCommand,
+        _options: ConversationGenerationOptions,
+    ) -> Result<StructuredCharacterResponse, ConversationEngineError> {
+        self.generate_local(command)
+    }
     fn cancel(&self) -> Result<(), ConversationEngineError>;
     fn clear_session(&self) -> Result<(), ConversationEngineError>;
 }
@@ -345,6 +372,26 @@ pub trait VoiceEngine: fmt::Debug + Send + Sync {
 pub trait SpeechToTextEngine: fmt::Debug + Send + Sync {
     fn is_ready(&self) -> bool;
     fn transcribe_wav(&self, wav: &[u8]) -> Result<String, HostError>;
+}
+
+#[derive(Clone, Debug)]
+pub struct SearchRoutingDecision {
+    pub needs_web_search: bool,
+    pub confidence: f32,
+    pub reason: String,
+    pub model: String,
+    pub source: &'static str,
+}
+
+pub trait SearchRouter: fmt::Debug + Send + Sync {
+    fn is_ready(&self) -> bool;
+    fn classify(&self, text: &str) -> Result<SearchRoutingDecision, HostError>;
+}
+
+pub trait WebSearchProvider: fmt::Debug + Send + Sync {
+    fn is_ready(&self) -> bool;
+    fn search(&self, query: &str, maximum_results: u8)
+        -> Result<Vec<GroundingEvidence>, HostError>;
 }
 
 #[derive(Debug)]
@@ -370,6 +417,36 @@ impl SpeechToTextEngine for UnavailableSpeechToTextEngine {
 
     fn transcribe_wav(&self, _wav: &[u8]) -> Result<String, HostError> {
         Err(HostError::VoiceUnavailable)
+    }
+}
+
+#[derive(Debug)]
+struct UnavailableSearchRouter;
+
+impl SearchRouter for UnavailableSearchRouter {
+    fn is_ready(&self) -> bool {
+        false
+    }
+
+    fn classify(&self, _text: &str) -> Result<SearchRoutingDecision, HostError> {
+        Err(HostError::SearchRouterUnavailable)
+    }
+}
+
+#[derive(Debug)]
+struct UnavailableWebSearchProvider;
+
+impl WebSearchProvider for UnavailableWebSearchProvider {
+    fn is_ready(&self) -> bool {
+        false
+    }
+
+    fn search(
+        &self,
+        _query: &str,
+        _maximum_results: u8,
+    ) -> Result<Vec<GroundingEvidence>, HostError> {
+        Err(HostError::SearchRouterUnavailable)
     }
 }
 
@@ -502,6 +579,8 @@ pub struct HostState {
     hub_client_id: Arc<str>,
     voice_engine: Arc<dyn VoiceEngine>,
     speech_to_text_engine: Arc<dyn SpeechToTextEngine>,
+    search_router: Arc<dyn SearchRouter>,
+    web_search: Arc<dyn WebSearchProvider>,
     voice_synthesis_busy: Arc<AtomicBool>,
     runtime_mode: Arc<RwLock<String>>,
 }
@@ -537,6 +616,8 @@ impl fmt::Debug for HostState {
             .field("hub_client_id", &self.hub_client_id)
             .field("voice_engine", &self.voice_engine)
             .field("speech_to_text_engine", &self.speech_to_text_engine)
+            .field("search_router", &self.search_router)
+            .field("web_search", &self.web_search)
             .field(
                 "voice_synthesis_busy",
                 &self.voice_synthesis_busy.load(Ordering::Acquire),
@@ -569,6 +650,8 @@ impl HostState {
             hub_client_id: Arc::from("hub-00000000-0000-0000-0000-000000000000"),
             voice_engine: Arc::new(UnavailableVoiceEngine),
             speech_to_text_engine: Arc::new(UnavailableSpeechToTextEngine),
+            search_router: Arc::new(UnavailableSearchRouter),
+            web_search: Arc::new(UnavailableWebSearchProvider),
             voice_synthesis_busy: Arc::new(AtomicBool::new(false)),
             runtime_mode: Arc::new(RwLock::new("custom".to_owned())),
         }
@@ -622,6 +705,18 @@ impl HostState {
     #[must_use]
     pub fn with_speech_to_text_engine(mut self, engine: Arc<dyn SpeechToTextEngine>) -> Self {
         self.speech_to_text_engine = engine;
+        self
+    }
+
+    #[must_use]
+    pub fn with_search_router(mut self, router: Arc<dyn SearchRouter>) -> Self {
+        self.search_router = router;
+        self
+    }
+
+    #[must_use]
+    pub fn with_web_search_provider(mut self, provider: Arc<dyn WebSearchProvider>) -> Self {
+        self.web_search = provider;
         self
     }
 
@@ -679,6 +774,7 @@ pub fn build_router(state: HostState) -> Router {
         .route("/api/v1/provider/status", get(reasoning_provider_status))
         .route("/api/v1/provider/api-key", post(save_provider_api_key))
         .route("/api/v1/provider/select", post(select_provider))
+        .route("/api/v1/provider/web-search", post(set_web_search_enabled))
         .route("/api/v1/runtime/mode", post(select_runtime_mode))
         .route(
             "/api/v1/paired-clients/summary",
@@ -728,6 +824,7 @@ struct HealthPayload {
     voice_engine_ready: bool,
     speech_to_text_ready: bool,
     conversation_engine_ready: bool,
+    web_search_provider_ready: bool,
     model_install_supported: bool,
     model_installing: bool,
     browser_ui_ready: bool,
@@ -751,6 +848,7 @@ async fn health(State(state): State<HostState>) -> Response {
         voice_engine_ready,
         speech_to_text_ready,
         conversation_engine_ready,
+        web_search_provider_ready: state.web_search.is_ready(),
         model_install_supported: state.model_installer.supported(),
         model_installing: state.model_installer.installing(),
         browser_ui_ready: true,
@@ -1168,12 +1266,7 @@ fn hub_store(state: &HostState) -> Result<Option<Arc<dyn ParentProfileStore>>, S
 }
 
 fn validate_hub_id_for_headers(state: &HostState, headers: &HeaderMap) -> Result<(), StatusCode> {
-    let Some(value) = headers
-        .get("x-plushbuddy-hub-id")
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
+    let Some(value) = header_text(headers, "x-toytalk-hub-id", "x-plushbuddy-hub-id") else {
         return Err(StatusCode::UNAUTHORIZED);
     };
     if value == state.hub_client_id.as_ref() {
@@ -1521,6 +1614,13 @@ struct ProviderSelectPayload {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct WebSearchSettingPayload {
+    pin: String,
+    enabled: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RuntimeModePayload {
     mode: String,
 }
@@ -1651,6 +1751,7 @@ async fn reasoning_provider_status(State(state): State<HostState>, headers: Head
             configured: false,
             display_name: "Gemini".to_owned(),
             configured_providers: Vec::new(),
+            web_search_enabled: false,
         })
         .into_response();
     }
@@ -1731,6 +1832,35 @@ async fn select_provider(
     }
 }
 
+async fn set_web_search_enabled(
+    State(state): State<HostState>,
+    headers: HeaderMap,
+    Json(payload): Json<WebSearchSettingPayload>,
+) -> Response {
+    if !is_authenticated(&state, &headers) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let Some(store) = (match hub_store_for_headers(&state, &headers) {
+        Ok(store) => store,
+        Err(status) => return status.into_response(),
+    }) else {
+        return StatusCode::NOT_IMPLEMENTED.into_response();
+    };
+    if let Err(status) = authorize_pin_text_for_store(
+        &state,
+        state.hub_client_id.as_ref(),
+        store.as_ref(),
+        &payload.pin,
+    ) {
+        return status.into_response();
+    }
+    match store.set_web_search_enabled(payload.enabled) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(HostError::InvalidPersistedProfile) => StatusCode::BAD_REQUEST.into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
 async fn select_runtime_mode(
     State(state): State<HostState>,
     headers: HeaderMap,
@@ -1777,6 +1907,18 @@ fn activate_runtime_mode(
     match mode {
         "privacy_local_first" | "cloud_llm" => Ok(()),
         _ => Err(ConversationEngineError::InvalidRequest),
+    }
+}
+
+fn web_search_enabled_for_headers(
+    state: &HostState,
+    headers: &HeaderMap,
+) -> Result<bool, StatusCode> {
+    match hub_store_for_headers(state, headers)? {
+        Some(store) => store
+            .web_search_enabled()
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR),
+        None => Ok(false),
     }
 }
 
@@ -2414,7 +2556,7 @@ fn convert_imported_audio_to_wav(
     let mut random = [0_u8; 16];
     getrandom::fill(&mut random).map_err(|_| VoiceUploadError::UnsupportedAudio)?;
     let token = hex::encode(random);
-    let temporary_directory = std::env::temp_dir().join(format!("plushpal-voice-import-{token}"));
+    let temporary_directory = std::env::temp_dir().join(format!("toytalk-voice-import-{token}"));
     std::fs::create_dir_all(&temporary_directory)
         .map_err(|_| VoiceUploadError::UnsupportedAudio)?;
     let input = temporary_directory.join(format!("sample.{extension}"));
@@ -2783,6 +2925,39 @@ fn sanitize_latency_log_token(value: &str) -> String {
     }
 }
 
+fn ai_response_log_json(value: &str) -> String {
+    let mut sanitized = String::new();
+    let mut truncated = false;
+    for (index, ch) in value.chars().enumerate() {
+        if index >= 2_000 {
+            truncated = true;
+            break;
+        }
+        if ch.is_control() {
+            sanitized.push(' ');
+        } else {
+            sanitized.push(ch);
+        }
+    }
+    if truncated {
+        sanitized.push_str(" [truncated]");
+    }
+    serde_json::to_string(&sanitized).unwrap_or_else(|_| "\"[unavailable]\"".to_owned())
+}
+
+fn log_ai_response(request_id: &str, outcome: &ConversationGenerationOutcome) {
+    eprintln!(
+        "ToyTalk ai_response request_id={} mode={} provider={} model={} speech_chars={} suggest_trusted_adult={} speech_json={}",
+        sanitize_latency_log_token(request_id),
+        outcome.mode,
+        outcome.provider,
+        outcome.model,
+        outcome.response.speech.chars().count(),
+        outcome.response.suggest_trusted_adult,
+        ai_response_log_json(&outcome.response.speech)
+    );
+}
+
 fn conversation_log_fields(
     engine: Option<&Arc<dyn ConversationEngine>>,
 ) -> (&'static str, &'static str, String) {
@@ -2816,8 +2991,158 @@ fn conversation_generation_outcome(
     }
 }
 
-fn should_try_local_ai_fallback(engine: &Arc<dyn ConversationEngine>) -> bool {
+fn should_try_local_ai_fallback(
+    engine: &Arc<dyn ConversationEngine>,
+    routing: &SearchRoutingDecision,
+) -> bool {
+    if engine.runtime_mode_label() == "cloud_llm" && routing.needs_web_search {
+        return false;
+    }
     engine.runtime_mode_label() == "cloud_llm" || engine.provider_label() != "local_ai"
+}
+
+fn search_routing_decision_for_text(state: &HostState, text: &str) -> SearchRoutingDecision {
+    let started = Instant::now();
+    let mut decision = if state.search_router.is_ready() {
+        match state.search_router.classify(text) {
+            Ok(decision) => decision,
+            Err(error) => {
+                eprintln!(
+                    "ToyTalk search_router status=failed source=model error={error:?}; using keyword fallback"
+                );
+                keyword_search_routing_decision(text)
+            }
+        }
+    } else {
+        keyword_search_routing_decision(text)
+    };
+    let keyword_decision = keyword_search_routing_decision(text);
+    if keyword_decision.needs_web_search && !decision.needs_web_search {
+        decision = SearchRoutingDecision {
+            needs_web_search: true,
+            confidence: keyword_decision.confidence,
+            reason: format!("keyword_current_data_override:{}", decision.reason),
+            model: keyword_decision.model,
+            source: "keyword_override",
+        };
+    }
+    eprintln!(
+        "ToyTalk search_router status=ok source={} model={} needs_web_search={} confidence={:.3} reason={} latency_ms={} text_chars={}",
+        decision.source,
+        sanitize_latency_log_token(&decision.model),
+        decision.needs_web_search,
+        decision.confidence,
+        sanitize_latency_log_token(&decision.reason),
+        started.elapsed().as_millis(),
+        text.chars().count()
+    );
+    decision
+}
+
+fn keyword_search_routing_decision(text: &str) -> SearchRoutingDecision {
+    let lower = text.to_ascii_lowercase();
+    let has_current_marker = [
+        "today",
+        "tomorrow",
+        "right now",
+        "currently",
+        "current ",
+        "latest",
+        "this week",
+        "this month",
+        "this year",
+        "new movie",
+        "came out",
+        "who won",
+        "score",
+        "last night",
+        "yesterday",
+        "news",
+        "price of",
+        "how much",
+        "open now",
+        "close today",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle));
+    let asks_current_role = ["who is", "who's", "who runs"]
+        .iter()
+        .any(|prefix| lower.trim_start().starts_with(prefix))
+        && [
+            "president",
+            "vice president",
+            "vice-president",
+            "vp",
+            "prime minister",
+            "mayor",
+            "governor",
+            "leader",
+        ]
+        .iter()
+        .any(|needle| lower.contains(needle));
+    let asks_live_weather = (lower.contains("weather") || lower.contains("rain"))
+        && [
+            "today",
+            "tomorrow",
+            "right now",
+            "outside",
+            "this week",
+            "will it",
+        ]
+        .iter()
+        .any(|needle| lower.contains(needle));
+    let needs_web_search = [
+        has_current_marker,
+        asks_current_role,
+        asks_live_weather,
+        lower.contains("election") && has_current_marker,
+    ]
+    .into_iter()
+    .any(|flag| flag);
+    SearchRoutingDecision {
+        needs_web_search,
+        confidence: if needs_web_search { 0.95 } else { 0.50 },
+        reason: if needs_web_search {
+            "keyword_current_data_fallback".to_owned()
+        } else {
+            "keyword_no_current_data_fallback".to_owned()
+        },
+        model: "keyword-fallback".to_owned(),
+        source: "keyword_fallback",
+    }
+}
+
+fn local_web_search_evidence_for_turn(
+    state: &HostState,
+    request_id: &str,
+    turn: &LocalTurnCommand,
+) -> Result<Vec<GroundingEvidence>, HostError> {
+    if !state.web_search.is_ready() {
+        eprintln!(
+            "ToyTalk latency request_id={request_id} phase=hub_web_search status=unavailable reason=provider_not_ready"
+        );
+        return Err(HostError::SearchRouterUnavailable);
+    }
+    let started = Instant::now();
+    let evidence = state.web_search.search(&turn.text, 3)?;
+    let usable = evidence
+        .into_iter()
+        .filter(|record| !record.title.trim().is_empty() || !record.excerpt.trim().is_empty())
+        .take(3)
+        .collect::<Vec<_>>();
+    if usable.is_empty() {
+        eprintln!(
+            "ToyTalk latency request_id={request_id} phase=hub_web_search status=insufficient total_ms={}",
+            started.elapsed().as_millis()
+        );
+        return Err(HostError::SearchRouterUnavailable);
+    }
+    eprintln!(
+        "ToyTalk latency request_id={request_id} phase=hub_web_search status=ok total_ms={} evidence_count={}",
+        started.elapsed().as_millis(),
+        usable.len()
+    );
+    Ok(usable)
 }
 
 fn generate_turn_with_retries(
@@ -2825,9 +3150,86 @@ fn generate_turn_with_retries(
     request_id: &str,
     engine: Arc<dyn ConversationEngine>,
     turn: LocalTurnCommand,
+    web_search_enabled: bool,
 ) -> Result<ConversationGenerationOutcome, ConversationEngineError> {
     let (mode, provider, model) = conversation_log_fields(Some(&engine));
-    match engine.generate_local(turn.clone()) {
+    let routing = search_routing_decision_for_text(state, &turn.text);
+    if routing.needs_web_search && engine.provider_label() == "local_ai" {
+        if !web_search_enabled {
+            eprintln!(
+                "ToyTalk latency request_id={request_id} phase=conversation_search_gate status=blocked reason=web_search_disabled provider={provider} model={model}"
+            );
+            return Ok(ConversationGenerationOutcome {
+                response: current_info_unavailable_fallback(&turn),
+                mode,
+                provider,
+                model,
+            });
+        }
+        let evidence = match local_web_search_evidence_for_turn(state, request_id, &turn) {
+            Ok(evidence) => evidence,
+            Err(error) => {
+                eprintln!(
+                    "ToyTalk latency request_id={request_id} phase=conversation_search_gate status=blocked reason=hub_web_search_failed provider={provider} model={model} error={error:?}"
+                );
+                return Ok(ConversationGenerationOutcome {
+                    response: current_info_unavailable_fallback(&turn),
+                    mode,
+                    provider,
+                    model,
+                });
+            }
+        };
+        let options = ConversationGenerationOptions {
+            web_search_needed: true,
+            web_search_allowed: true,
+            web_search_evidence: evidence,
+        };
+        return match engine.generate_with_options(turn.clone(), options.clone()) {
+            Ok(response) => Ok(conversation_generation_outcome(&engine, response)),
+            Err(ConversationEngineError::NotReady) => Err(ConversationEngineError::NotReady),
+            Err(first_error) => {
+                eprintln!(
+                    "ToyTalk latency request_id={request_id} phase=conversation_retry attempt=1 status=failed mode={mode} provider={provider} model={model} error={first_error:?}"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                match engine.generate_with_options(turn.clone(), options) {
+                    Ok(response) => Ok(conversation_generation_outcome(&engine, response)),
+                    Err(ConversationEngineError::NotReady) => {
+                        Err(ConversationEngineError::NotReady)
+                    }
+                    Err(second_error) => {
+                        eprintln!(
+                            "ToyTalk latency request_id={request_id} phase=conversation_retry attempt=2 status=failed mode={mode} provider={provider} model={model} error={second_error:?} trying_local_fallback=false"
+                        );
+                        Ok(ConversationGenerationOutcome {
+                            response: current_info_unavailable_fallback(&turn),
+                            mode,
+                            provider,
+                            model,
+                        })
+                    }
+                }
+            }
+        };
+    }
+    if routing.needs_web_search && !web_search_enabled {
+        eprintln!(
+            "ToyTalk latency request_id={request_id} phase=conversation_search_gate status=blocked reason=web_search_disabled provider={provider} model={model}"
+        );
+        return Ok(ConversationGenerationOutcome {
+            response: current_info_unavailable_fallback(&turn),
+            mode,
+            provider,
+            model,
+        });
+    }
+    let options = ConversationGenerationOptions {
+        web_search_needed: routing.needs_web_search,
+        web_search_allowed: web_search_enabled && routing.needs_web_search,
+        web_search_evidence: Vec::new(),
+    };
+    match engine.generate_with_options(turn.clone(), options.clone()) {
         Ok(response) => Ok(conversation_generation_outcome(&engine, response)),
         Err(ConversationEngineError::NotReady) => Err(ConversationEngineError::NotReady),
         Err(first_error) => {
@@ -2835,11 +3237,11 @@ fn generate_turn_with_retries(
                 "ToyTalk latency request_id={request_id} phase=conversation_retry attempt=1 status=failed mode={mode} provider={provider} model={model} error={first_error:?}"
             );
             std::thread::sleep(std::time::Duration::from_millis(150));
-            match engine.generate_local(turn.clone()) {
+            match engine.generate_with_options(turn.clone(), options.clone()) {
                 Ok(response) => Ok(conversation_generation_outcome(&engine, response)),
                 Err(ConversationEngineError::NotReady) => Err(ConversationEngineError::NotReady),
                 Err(second_error) => {
-                    let will_try_local = should_try_local_ai_fallback(&engine);
+                    let will_try_local = should_try_local_ai_fallback(&engine, &routing);
                     eprintln!(
                         "ToyTalk latency request_id={request_id} phase=conversation_retry attempt=2 status=failed mode={mode} provider={provider} model={model} error={second_error:?} trying_local_fallback={will_try_local}"
                     );
@@ -2848,7 +3250,10 @@ fn generate_turn_with_retries(
                             Ok(local_engine) => {
                                 let (local_mode, local_provider, local_model) =
                                     conversation_log_fields(Some(&local_engine));
-                                match local_engine.generate_local(turn.clone()) {
+                                match local_engine.generate_with_options(
+                                    turn.clone(),
+                                    ConversationGenerationOptions::default(),
+                                ) {
                                     Ok(response) => {
                                         eprintln!(
                                             "ToyTalk latency request_id={request_id} phase=conversation_local_fallback status=ok from_mode={mode} from_provider={provider} mode={local_mode} provider={local_provider} model={local_model}"
@@ -2868,7 +3273,10 @@ fn generate_turn_with_retries(
                                             "ToyTalk latency request_id={request_id} phase=conversation_local_fallback attempt=1 status=failed from_mode={mode} from_provider={provider} mode={local_mode} provider={local_provider} model={local_model} error={local_error:?}"
                                         );
                                         std::thread::sleep(std::time::Duration::from_millis(75));
-                                        match local_engine.generate_local(turn.clone()) {
+                                        match local_engine.generate_with_options(
+                                            turn.clone(),
+                                            ConversationGenerationOptions::default(),
+                                        ) {
                                             Ok(response) => {
                                                 eprintln!(
                                                     "ToyTalk latency request_id={request_id} phase=conversation_local_fallback attempt=2 status=ok from_mode={mode} from_provider={provider} mode={local_mode} provider={local_provider} model={local_model}"
@@ -3003,12 +3411,11 @@ fn add_security_headers(headers: &mut HeaderMap) {
 }
 
 async fn exchange_bootstrap(State(state): State<HostState>, headers: HeaderMap) -> Response {
-    let Some(presented) = headers
-        .get("x-plushpal-bootstrap")
-        .map(|value| value.as_bytes())
+    let Some(presented_text) = header_text(&headers, "x-toytalk-bootstrap", "x-plushpal-bootstrap")
     else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
+    let presented = presented_text.as_bytes();
     let Ok(session_bytes) = state.token_source.generate() else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
@@ -3043,6 +3450,9 @@ async fn exchange_bootstrap(State(state): State<HostState>, headers: HeaderMap) 
         response.headers_mut().insert(header::SET_COOKIE, value);
     }
     if let Ok(value) = HeaderValue::from_str(state.hub_client_id.as_ref()) {
+        response
+            .headers_mut()
+            .insert("x-toytalk-hub-id", value.clone());
         response.headers_mut().insert("x-plushbuddy-hub-id", value);
     }
     response
@@ -3064,6 +3474,7 @@ struct StatusPayload {
     model_install_supported: bool,
     model_installing: bool,
     speech_to_text_ready: bool,
+    web_search_provider_ready: bool,
     parent_configured: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     age_band: Option<&'static str>,
@@ -3083,6 +3494,7 @@ struct DiagnosticsPayload {
     voice_engine_ready: bool,
     speech_to_text_ready: bool,
     conversation_engine_ready: bool,
+    web_search_provider_ready: bool,
     model_install_supported: bool,
     model_installing: bool,
     browser_ui_ready: bool,
@@ -3174,6 +3586,7 @@ async fn status(State(state): State<HostState>, headers: HeaderMap) -> Response 
         model_install_supported: state.model_installer.supported(),
         model_installing: state.model_installer.installing(),
         speech_to_text_ready: state.speech_to_text_engine.is_ready(),
+        web_search_provider_ready: state.web_search.is_ready(),
         parent_configured,
         age_band: persisted_profile
             .as_ref()
@@ -3229,6 +3642,7 @@ async fn diagnostics(State(state): State<HostState>, headers: HeaderMap) -> Resp
         voice_engine_ready,
         speech_to_text_ready,
         conversation_engine_ready,
+        web_search_provider_ready: state.web_search.is_ready(),
         model_install_supported: state.model_installer.supported(),
         model_installing: state.model_installer.installing(),
         browser_ui_ready: true,
@@ -3341,6 +3755,10 @@ async fn command(
             Ok(store) => store,
             Err(status) => return status.into_response(),
         };
+        let web_search_enabled = match web_search_enabled_for_headers(&state, &headers) {
+            Ok(enabled) => enabled,
+            Err(status) => return status.into_response(),
+        };
         let clock = state.clock.clone();
         let accepted_at = Instant::now();
         tokio::task::spawn_blocking(move || {
@@ -3352,6 +3770,7 @@ async fn command(
                     &request_id,
                     engine,
                     local_turn.clone(),
+                    web_search_enabled,
                 )
             } else {
                 Err(ConversationEngineError::NotReady)
@@ -3370,6 +3789,7 @@ async fn command(
                     outcome.model,
                     outcome.response.speech.chars().count()
                 );
+                log_ai_response(&request_id, outcome);
             }
             if let (Ok(outcome), Some(store), Ok(completed_at)) =
                 (generated.as_ref(), profile_store, clock.now_seconds())
@@ -3474,6 +3894,30 @@ fn safe_turn_fallback(command: &LocalTurnCommand) -> StructuredCharacterResponse
     }
 }
 
+fn current_info_unavailable_fallback(command: &LocalTurnCommand) -> StructuredCharacterResponse {
+    let alias = command
+        .character_alias
+        .split_whitespace()
+        .next()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("Buddy");
+    let speech = match command.age_band {
+        AgeBand::FourToFive => format!(
+            "{alias} would need a grown-up to check the newest information for that. I do not want to guess."
+        ),
+        AgeBand::SixToEight => format!(
+            "{alias} needs the latest information for that one, and web search is turned off. Please ask a grown-up to check it with you."
+        ),
+        AgeBand::NineToTwelve => format!(
+            "{alias} would need current information to answer that correctly. Web search is off, so please check with a parent or trusted grown-up."
+        ),
+    };
+    StructuredCharacterResponse {
+        speech,
+        suggest_trusted_adult: true,
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
 struct ConversationTurnResponse {
@@ -3502,11 +3946,23 @@ async fn conversation_turn(
     };
     let (conversation_mode, conversation_provider, conversation_model) =
         conversation_log_fields(Some(&conversation));
+    let web_search_enabled = match web_search_enabled_for_headers(&state, &headers) {
+        Ok(enabled) => enabled,
+        Err(status) => return status.into_response(),
+    };
     let generate_started_at = Instant::now();
     let generated = match tokio::task::spawn_blocking({
         let turn = turn.clone();
         let generation_state = state.clone();
-        move || generate_turn_with_retries(&generation_state, "sync-http", conversation, turn)
+        move || {
+            generate_turn_with_retries(
+                &generation_state,
+                "sync-http",
+                conversation,
+                turn,
+                web_search_enabled,
+            )
+        }
     })
     .await
     {
@@ -3528,6 +3984,7 @@ async fn conversation_turn(
         generate_started_at.elapsed().as_millis(),
         generated.response.speech.chars().count()
     );
+    log_ai_response("sync-http", &generated);
     if let (Ok(Some(store)), Ok(completed_at)) = (
         store_for_headers(&state, &headers),
         state.clock.now_seconds(),
@@ -3746,19 +4203,16 @@ fn session_cookie(headers: &HeaderMap) -> Option<String> {
 }
 
 fn client_id_from_headers(headers: &HeaderMap) -> Option<String> {
-    let value = headers.get("x-plushbuddy-client-id")?.to_str().ok()?.trim();
+    let value = header_text(headers, "x-toytalk-client-id", "x-plushbuddy-client-id")?;
     is_valid_client_id(value).then(|| value.to_owned())
 }
 
 fn client_label_from_headers(headers: &HeaderMap) -> Option<String> {
-    let value = headers
-        .get("x-plushbuddy-client-label")?
-        .to_str()
-        .ok()?
-        .trim();
-    if value.is_empty() {
-        return None;
-    }
+    let value = header_text(
+        headers,
+        "x-toytalk-client-label",
+        "x-plushbuddy-client-label",
+    )?;
     let sanitized = value
         .chars()
         .filter(|character| !character.is_control())
@@ -3767,6 +4221,16 @@ fn client_label_from_headers(headers: &HeaderMap) -> Option<String> {
         .trim()
         .to_owned();
     (!sanitized.is_empty()).then_some(sanitized)
+}
+
+fn header_text<'a>(headers: &'a HeaderMap, primary: &str, legacy: &str) -> Option<&'a str> {
+    headers
+        .get(primary)
+        .or_else(|| headers.get(legacy))?
+        .to_str()
+        .ok()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
 }
 
 fn is_valid_client_id(value: &str) -> bool {
@@ -3861,8 +4325,9 @@ pub mod native_runtime {
     use plushpal_application::{LocalConversationSession, TurnError};
     use plushpal_encrypted_storage::{
         migrate_database, CharacterId, CharacterRecord, EncryptedDatabaseFactory, HistoryPolicy,
-        KidRecord, PairedClientRecord, SecretRef, SessionId, SessionRecord, SqlCipherDatabase,
-        SqlCipherFactory, TurnRecord, VoiceAssetId, VoiceAssetRecord, APPLICATION_MIGRATIONS,
+        InMemoryKeyVault, KeyVault, KidRecord, PairedClientRecord, SecretRef, SessionId,
+        SessionRecord, SqlCipherDatabase, SqlCipherFactory, TurnRecord, VoiceAssetId,
+        VoiceAssetRecord, APPLICATION_MIGRATIONS,
     };
     use plushpal_llama_native_ffi::CAbiLlamaApi;
     use plushpal_local_llm_llamacpp::{LlamaCppProvider, NativeLlamaBackend};
@@ -3870,6 +4335,7 @@ pub mod native_runtime {
         trusted_private_beta_manifest, trusted_private_beta_manifests, verify_model_artifact,
         ModelManifest, ProductionModelDownloader,
     };
+    use plushpal_search_api::{SanitizedSearchQuery, SearchProvider};
     use serde::{Deserialize, Serialize};
     use sha2::{Digest, Sha256};
     use sherpa_onnx::{
@@ -3881,8 +4347,8 @@ pub mod native_runtime {
 
     type NativeProvider = LlamaCppProvider<NativeLlamaBackend<CAbiLlamaApi>>;
 
-    const DATABASE_KEY_FILENAME: &str = "plushpal-database.key";
-    const DATABASE_FILENAME: &str = "plushpal.sqlcipher";
+    const DATABASE_KEY_FILENAME: &str = "toytalk-database.key";
+    const DATABASE_FILENAME: &str = "toytalk.sqlcipher";
     const PIN_HASH_SETTING: &str = "parent_pin_hash";
     const AGE_BAND_SETTING: &str = "child_age_band";
     const CHARACTER_ALIAS_SETTING: &str = "character_alias";
@@ -3893,11 +4359,12 @@ pub mod native_runtime {
     const VOICE_DURATION_SETTING: &str = "voice_duration_ms";
     const REASONING_PROVIDER_SETTING: &str = "reasoning_provider";
     const REASONING_PROVIDER_KEY_PREFIX: &str = "reasoning_api_key_";
+    const WEB_SEARCH_ENABLED_SETTING: &str = "web_search_enabled";
     const PAIRED_SESSION_DIGESTS_SETTING: &str = "paired_session_digests_v1";
     const PRIMARY_CHARACTER_ID: &str = "primary-character";
     const PRIMARY_VOICE_ID: &str = "primary-voice";
-    const PRIMARY_VOICE_KEY_PREFIX: &str = "plushpal-desktop-primary-voice-key-v1";
-    const BACKUP_FORMAT: &str = "plushbuddy.hub.backup";
+    const PRIMARY_VOICE_KEY_PREFIX: &str = "toytalk-hub-primary-voice-key-v1";
+    const BACKUP_FORMAT: &str = "toytalk.hub.backup";
     const BACKUP_VERSION: u8 = 1;
     const BACKUP_KDF_ROUNDS: u32 = 50_000;
 
@@ -4592,7 +5059,7 @@ pub mod native_runtime {
         if character_id.0 == PRIMARY_CHARACTER_ID {
             PRIMARY_VOICE_KEY_PREFIX.to_owned()
         } else {
-            format!("plushpal-desktop-{}-key-v1", character_id.0)
+            format!("toytalk-character-{}-key-v1", character_id.0)
         }
     }
 
@@ -4703,7 +5170,7 @@ pub mod native_runtime {
                 return Err(HostError::PersistenceUnavailable);
             }
             let mut digest = Sha256::new();
-            digest.update(b"plushbuddy-client-database-key-v1");
+            digest.update(b"toytalk-client-database-key-v1");
             digest.update(client_id.as_bytes());
             digest.update(&root_key);
             let client_key = digest.finalize().to_vec();
@@ -5094,11 +5561,17 @@ pub mod native_runtime {
                         .map(|_| candidate.to_owned())
                 })
                 .collect();
+            let web_search_enabled = database
+                .get_setting(WEB_SEARCH_ENABLED_SETTING)
+                .map_err(|_| HostError::PersistenceUnavailable)?
+                .as_deref()
+                == Some("true");
             Ok(ReasoningProviderConfiguration {
                 provider,
                 configured,
                 display_name,
                 configured_providers,
+                web_search_enabled,
             })
         }
 
@@ -5182,6 +5655,29 @@ pub mod native_runtime {
                         .map(|_| provider.to_owned())
                 })
                 .collect())
+        }
+
+        fn web_search_enabled(&self) -> Result<bool, HostError> {
+            let database = self
+                .database
+                .lock()
+                .map_err(|_| HostError::PersistenceUnavailable)?;
+            Ok(database
+                .get_setting(WEB_SEARCH_ENABLED_SETTING)
+                .map_err(|_| HostError::PersistenceUnavailable)?
+                .as_deref()
+                == Some("true"))
+        }
+
+        fn set_web_search_enabled(&self, enabled: bool) -> Result<(), HostError> {
+            self.database
+                .lock()
+                .map_err(|_| HostError::PersistenceUnavailable)?
+                .put_setting(
+                    WEB_SEARCH_ENABLED_SETTING,
+                    if enabled { "true" } else { "false" },
+                )
+                .map_err(|_| HostError::PersistenceUnavailable)
         }
 
         fn record_paired_client(
@@ -6057,8 +6553,14 @@ pub mod native_runtime {
                 match result {
                     Ok(worker) => {
                         if let Ok(mut guard) = worker_slot.lock() {
-                            *guard = Some(worker);
-                            eprintln!("LuxTTS worker warmed and ready.");
+                            if guard.is_none() {
+                                *guard = Some(worker);
+                                eprintln!("LuxTTS worker warmed and ready.");
+                            } else {
+                                eprintln!(
+                                    "LuxTTS background worker warmed after an on-demand worker was already ready; keeping warmed request cache."
+                                );
+                            }
                         }
                     }
                     Err(error) => {
@@ -6248,7 +6750,7 @@ pub mod native_runtime {
             output_path: &Path,
             cache_key: &str,
             text: &str,
-        ) -> Result<(), HostError> {
+        ) -> Result<LuxTtsWorkerResponse, HostError> {
             let payload = serde_json::json!({
                 "command": "synthesize",
                 "reference": reference_path,
@@ -6268,7 +6770,7 @@ pub mod native_runtime {
                 .ok_or(HostError::VoiceUnavailable)?
                 .request(payload.clone());
             match first {
-                Ok(response) if response.ok => Ok(()),
+                Ok(response) if response.ok => Ok(response),
                 Ok(response) => {
                     if let Some(error) = response.error {
                         eprintln!("LuxTTS worker synthesis failed: {error}");
@@ -6282,7 +6784,7 @@ pub mod native_runtime {
                         .ok_or(HostError::VoiceUnavailable)?
                         .request(payload)?;
                     if response.ok {
-                        Ok(())
+                        Ok(response)
                     } else {
                         if let Some(error) = response.error {
                             eprintln!("LuxTTS worker synthesis failed after restart: {error}");
@@ -6309,13 +6811,23 @@ pub mod native_runtime {
             std::fs::write(&reference_path, reference_wav)
                 .map_err(|_| HostError::PersistenceUnavailable)?;
             let cache_key = format!("{:x}", Sha256::digest(reference_wav));
+            let worker_started_at = Instant::now();
             let status =
                 self.synthesize_with_worker(&reference_path, &output_path, &cache_key, text);
             let _ = std::fs::remove_file(&reference_path);
-            if let Err(error) = status {
-                let _ = std::fs::remove_file(&output_path);
-                return Err(error);
-            }
+            let response = match status {
+                Ok(response) => response,
+                Err(error) => {
+                    let _ = std::fs::remove_file(&output_path);
+                    return Err(error);
+                }
+            };
+            eprintln!(
+                "ToyTalk latency phase=voice_worker status=ok cache_hit={} worker_ms={} text_chars={}",
+                response.cache_hit.unwrap_or(false),
+                worker_started_at.elapsed().as_millis(),
+                text.chars().count()
+            );
             let output = std::fs::read(&output_path).map_err(|_| HostError::VoiceUnavailable)?;
             let _ = std::fs::remove_file(&output_path);
             hound::WavReader::new(Cursor::new(&output)).map_err(|_| HostError::VoiceUnavailable)?;
@@ -6392,6 +6904,362 @@ pub mod native_runtime {
         }
     }
 
+    pub struct MiniLmSearchRouter {
+        python_executable: PathBuf,
+        script_path: PathBuf,
+        model: String,
+        runtime_directory: PathBuf,
+        worker: Arc<Mutex<Option<SearchRouterWorker>>>,
+        worker_starting: Arc<AtomicBool>,
+    }
+
+    struct SearchRouterWorker {
+        child: Child,
+        stdin: ChildStdin,
+        stdout: BufReader<ChildStdout>,
+    }
+
+    impl fmt::Debug for SearchRouterWorker {
+        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter
+                .debug_struct("SearchRouterWorker")
+                .field("child_id", &self.child.id())
+                .finish_non_exhaustive()
+        }
+    }
+
+    impl Drop for SearchRouterWorker {
+        fn drop(&mut self) {
+            let _ = writeln!(self.stdin, r#"{{"command":"shutdown"}}"#);
+            let _ = self.stdin.flush();
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct SearchRouterWorkerResponse {
+        ok: bool,
+        event: Option<String>,
+        error: Option<String>,
+        needs_web_search: Option<bool>,
+        confidence: Option<f32>,
+        reason: Option<String>,
+        model: Option<String>,
+    }
+
+    impl SearchRouterWorker {
+        fn request(
+            &mut self,
+            payload: serde_json::Value,
+        ) -> Result<SearchRouterWorkerResponse, HostError> {
+            writeln!(self.stdin, "{payload}").map_err(|_| HostError::SearchRouterUnavailable)?;
+            self.stdin
+                .flush()
+                .map_err(|_| HostError::SearchRouterUnavailable)?;
+            let mut line = String::new();
+            self.stdout
+                .read_line(&mut line)
+                .map_err(|_| HostError::SearchRouterUnavailable)?;
+            if line.trim().is_empty() {
+                return Err(HostError::SearchRouterUnavailable);
+            }
+            serde_json::from_str::<SearchRouterWorkerResponse>(&line)
+                .map_err(|_| HostError::SearchRouterUnavailable)
+        }
+    }
+
+    impl fmt::Debug for MiniLmSearchRouter {
+        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter
+                .debug_struct("MiniLmSearchRouter")
+                .field("python_executable", &self.python_executable)
+                .field("script_path", &self.script_path)
+                .field("model", &self.model)
+                .finish_non_exhaustive()
+        }
+    }
+
+    impl MiniLmSearchRouter {
+        pub fn new(
+            python_executable: PathBuf,
+            script_path: PathBuf,
+            data_directory: &Path,
+            model: String,
+        ) -> Result<Self, HostError> {
+            if !script_path.is_file() {
+                return Err(HostError::SearchRouterUnavailable);
+            }
+            let runtime_directory = data_directory.join("search-router-runtime");
+            std::fs::create_dir_all(&runtime_directory)
+                .map_err(|_| HostError::PersistenceUnavailable)?;
+            let router = Self {
+                python_executable,
+                script_path,
+                model,
+                runtime_directory,
+                worker: Arc::new(Mutex::new(None)),
+                worker_starting: Arc::new(AtomicBool::new(false)),
+            };
+            router.start_worker_in_background();
+            Ok(router)
+        }
+
+        fn start_worker_in_background(&self) {
+            if self.worker_starting.swap(true, Ordering::SeqCst) {
+                return;
+            }
+            let python_executable = self.python_executable.clone();
+            let script_path = self.script_path.clone();
+            let model = self.model.clone();
+            let runtime_directory = self.runtime_directory.clone();
+            let worker_slot = Arc::clone(&self.worker);
+            let worker_starting = Arc::clone(&self.worker_starting);
+            thread::spawn(move || {
+                let result = Self::start_worker_from_parts(
+                    &python_executable,
+                    &script_path,
+                    &model,
+                    &runtime_directory,
+                );
+                match result {
+                    Ok(worker) => {
+                        if let Ok(mut guard) = worker_slot.lock() {
+                            if guard.is_none() {
+                                *guard = Some(worker);
+                                eprintln!("ToyTalk search router warmed and ready.");
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        eprintln!("ToyTalk search router background startup failed: {error:?}");
+                    }
+                }
+                worker_starting.store(false, Ordering::SeqCst);
+            });
+        }
+
+        fn base_command_for(python_executable: &Path, runtime_directory: &Path) -> Command {
+            let mut command = Command::new(python_executable);
+            let bundled_hf_home = env::current_dir()
+                .ok()
+                .map(|directory| directory.join("model-cache/huggingface"))
+                .filter(|path| path.join("hub").is_dir());
+            let hf_home = env::var_os("PLUSHPAL_SEARCH_ROUTER_HF_HOME")
+                .map(PathBuf::from)
+                .or_else(|| env::var_os("HF_HOME").map(PathBuf::from))
+                .or(bundled_hf_home)
+                .unwrap_or_else(|| runtime_directory.join("huggingface"));
+            let hf_hub_cache = env::var_os("HF_HUB_CACHE")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| hf_home.join("hub"));
+            let transformers_cache = env::var_os("TRANSFORMERS_CACHE")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| hf_hub_cache.clone());
+            command
+                .env("PYTHONDONTWRITEBYTECODE", "1")
+                .env("PYTHONNOUSERSITE", "1")
+                .env("HF_HOME", hf_home)
+                .env("HF_HUB_CACHE", hf_hub_cache)
+                .env("TRANSFORMERS_CACHE", transformers_cache);
+            command
+        }
+
+        fn start_worker(&self) -> Result<SearchRouterWorker, HostError> {
+            Self::start_worker_from_parts(
+                &self.python_executable,
+                &self.script_path,
+                &self.model,
+                &self.runtime_directory,
+            )
+        }
+
+        fn start_worker_from_parts(
+            python_executable: &Path,
+            script_path: &Path,
+            model: &str,
+            runtime_directory: &Path,
+        ) -> Result<SearchRouterWorker, HostError> {
+            let mut command = Self::base_command_for(python_executable, runtime_directory);
+            command
+                .arg(script_path)
+                .arg("--model")
+                .arg(model)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::inherit());
+            let mut child = command
+                .spawn()
+                .map_err(|_| HostError::SearchRouterUnavailable)?;
+            let stdin = child
+                .stdin
+                .take()
+                .ok_or(HostError::SearchRouterUnavailable)?;
+            let stdout = child
+                .stdout
+                .take()
+                .ok_or(HostError::SearchRouterUnavailable)?;
+            let mut worker = SearchRouterWorker {
+                child,
+                stdin,
+                stdout: BufReader::new(stdout),
+            };
+            let mut ready_line = String::new();
+            worker
+                .stdout
+                .read_line(&mut ready_line)
+                .map_err(|_| HostError::SearchRouterUnavailable)?;
+            let ready = serde_json::from_str::<SearchRouterWorkerResponse>(&ready_line)
+                .map_err(|_| HostError::SearchRouterUnavailable)?;
+            if ready.ok && ready.event.as_deref() == Some("ready") {
+                Ok(worker)
+            } else {
+                if let Some(error) = ready.error {
+                    eprintln!("ToyTalk search router startup failed: {error}");
+                }
+                Err(HostError::SearchRouterUnavailable)
+            }
+        }
+
+        fn classify_with_worker(
+            &self,
+            text: &str,
+        ) -> Result<SearchRouterWorkerResponse, HostError> {
+            let payload = serde_json::json!({
+                "command": "classify",
+                "text": text,
+            });
+            let mut guard = self
+                .worker
+                .lock()
+                .map_err(|_| HostError::SearchRouterUnavailable)?;
+            if guard.is_none() {
+                *guard = Some(self.start_worker()?);
+            }
+            let first = guard
+                .as_mut()
+                .ok_or(HostError::SearchRouterUnavailable)?
+                .request(payload.clone());
+            match first {
+                Ok(response) if response.ok => Ok(response),
+                Ok(response) => {
+                    if let Some(error) = response.error {
+                        eprintln!("ToyTalk search router classification failed: {error}");
+                    }
+                    Err(HostError::SearchRouterUnavailable)
+                }
+                Err(_) => {
+                    *guard = Some(self.start_worker()?);
+                    let response = guard
+                        .as_mut()
+                        .ok_or(HostError::SearchRouterUnavailable)?
+                        .request(payload)?;
+                    if response.ok {
+                        Ok(response)
+                    } else {
+                        if let Some(error) = response.error {
+                            eprintln!(
+                                "ToyTalk search router classification failed after restart: {error}"
+                            );
+                        }
+                        Err(HostError::SearchRouterUnavailable)
+                    }
+                }
+            }
+        }
+    }
+
+    impl SearchRouter for MiniLmSearchRouter {
+        fn is_ready(&self) -> bool {
+            self.worker
+                .lock()
+                .is_ok_and(|guard| guard.as_ref().is_some_and(|worker| worker.child.id() > 0))
+        }
+
+        fn classify(&self, text: &str) -> Result<SearchRoutingDecision, HostError> {
+            let started_at = Instant::now();
+            let response = self.classify_with_worker(text)?;
+            let needs_web_search = response.needs_web_search.unwrap_or(false);
+            let confidence = response.confidence.unwrap_or(0.5).clamp(0.0, 1.0);
+            let reason = response
+                .reason
+                .unwrap_or_else(|| "search_router_decision".to_owned());
+            let model = response.model.unwrap_or_else(|| self.model.clone());
+            eprintln!(
+                "ToyTalk latency phase=search_router_worker status=ok worker_ms={} needs_web_search={} confidence={confidence:.3} reason={}",
+                started_at.elapsed().as_millis(),
+                needs_web_search,
+                sanitize_latency_log_token(&reason)
+            );
+            Ok(SearchRoutingDecision {
+                needs_web_search,
+                confidence,
+                reason,
+                model,
+                source: "minilm_l6_classifier",
+            })
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct BraveWebSearchProvider {
+        provider: plushpal_curated_search::BraveSearchProvider<InMemoryKeyVault>,
+    }
+
+    impl BraveWebSearchProvider {
+        pub fn new(api_key: String) -> Result<Self, HostError> {
+            if api_key.trim().is_empty() || api_key.chars().any(char::is_control) {
+                return Err(HostError::SearchRouterUnavailable);
+            }
+            let mut vault = InMemoryKeyVault::default();
+            let credential_ref = vault.store("brave-search-api-key", api_key.into_bytes());
+            let provider = plushpal_curated_search::BraveSearchProvider::new(vault, credential_ref)
+                .map_err(|_| HostError::SearchRouterUnavailable)?;
+            Ok(Self { provider })
+        }
+    }
+
+    impl WebSearchProvider for BraveWebSearchProvider {
+        fn is_ready(&self) -> bool {
+            true
+        }
+
+        fn search(
+            &self,
+            query: &str,
+            maximum_results: u8,
+        ) -> Result<Vec<GroundingEvidence>, HostError> {
+            let query = plushpal_curated_search::sanitize_query(query, maximum_results)
+                .map_err(|_| HostError::SearchRouterUnavailable)?;
+            let search_future = self.provider.search(
+                SanitizedSearchQuery {
+                    text: query.text,
+                    maximum_results: query.maximum_results,
+                },
+                Duration::from_secs(6),
+            );
+            let records = match tokio::runtime::Handle::try_current() {
+                Ok(handle) => handle.block_on(search_future),
+                Err(_) => tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|_| HostError::SearchRouterUnavailable)?
+                    .block_on(search_future),
+            }
+            .map_err(|_| HostError::SearchRouterUnavailable)?;
+            Ok(records
+                .into_iter()
+                .take(usize::from(maximum_results))
+                .map(|record| GroundingEvidence {
+                    source_id: record.source_id,
+                    title: record.title.chars().take(180).collect(),
+                    excerpt: record.excerpt.chars().take(600).collect(),
+                    source_url: Some(record.source_url),
+                })
+                .collect())
+        }
+    }
+
     #[cfg(all(test, unix))]
     mod voice_engine_tests {
         use std::os::unix::fs::PermissionsExt;
@@ -6401,7 +7269,7 @@ pub mod native_runtime {
         fn unique_temp_dir() -> PathBuf {
             let mut random = [0_u8; 8];
             getrandom::fill(&mut random).expect("random temp suffix");
-            std::env::temp_dir().join(format!("plushpal-chatterbox-test-{}", hex::encode(random)))
+            std::env::temp_dir().join(format!("toytalk-chatterbox-test-{}", hex::encode(random)))
         }
 
         fn fixture_wav() -> Vec<u8> {
@@ -6470,6 +7338,139 @@ pub mod native_runtime {
         }
 
         #[test]
+        fn gemini_request_body_uses_system_instruction_and_json_schema() {
+            let body = GeminiConversationEngine::gemini_request_body(&LocalTurnCommand {
+                age_band: AgeBand::FourToFive,
+                character_alias: "Buddy".to_owned(),
+                text: "Who is the president?".to_owned(),
+                parent_guidance: Some("Pretend to be a tiny puppy.".to_owned()),
+                child_age_years: Some(5),
+                child_age_months: Some(6),
+                character_play_age_years: Some(2),
+                recent_turns: Vec::new(),
+            });
+            let system_text = body["systemInstruction"]["parts"][0]["text"]
+                .as_str()
+                .unwrap();
+            assert!(system_text.contains("bare word"));
+            assert!(system_text.contains("one JSON object"));
+            assert_eq!(
+                body["generationConfig"]["responseMimeType"],
+                "application/json"
+            );
+            assert_eq!(
+                body["generationConfig"]["responseSchema"]["required"],
+                serde_json::json!(["speech", "suggest_trusted_adult"])
+            );
+            let user_text = body["contents"][0]["parts"][0]["text"].as_str().unwrap();
+            let contract: serde_json::Value = serde_json::from_str(user_text).unwrap();
+            assert_eq!(contract["current_child_text"], "Who is the president?");
+            assert_eq!(contract["mode"], "cloud");
+        }
+
+        #[test]
+        fn gemini_search_tool_is_added_only_when_search_is_needed_and_allowed() {
+            let command = LocalTurnCommand {
+                age_band: AgeBand::FourToFive,
+                character_alias: "Buddy".to_owned(),
+                text: "Who is the president today?".to_owned(),
+                parent_guidance: None,
+                child_age_years: Some(5),
+                child_age_months: Some(6),
+                character_play_age_years: Some(2),
+                recent_turns: Vec::new(),
+            };
+            let without_search = GeminiConversationEngine::gemini_request_body_with_options(
+                &command,
+                ConversationGenerationOptions {
+                    web_search_needed: true,
+                    web_search_allowed: false,
+                    web_search_evidence: Vec::new(),
+                },
+            );
+            assert!(without_search.get("tools").is_none());
+
+            let with_search = GeminiConversationEngine::gemini_request_body_with_options(
+                &command,
+                ConversationGenerationOptions {
+                    web_search_needed: true,
+                    web_search_allowed: true,
+                    web_search_evidence: Vec::new(),
+                },
+            );
+            assert_eq!(
+                with_search["tools"],
+                serde_json::json!([{ "google_search": {} }])
+            );
+            assert!(with_search["generationConfig"]
+                .get("responseMimeType")
+                .is_none());
+            assert!(with_search["generationConfig"]
+                .get("responseSchema")
+                .is_none());
+            let system_text = with_search["systemInstruction"]["parts"][0]["text"]
+                .as_str()
+                .unwrap();
+            let user_text = with_search["contents"][0]["parts"][0]["text"]
+                .as_str()
+                .unwrap();
+            assert!(system_text.contains("one JSON object"));
+            assert!(system_text.contains("clarifying question"));
+            assert!(user_text.contains("cloud_search"));
+            assert!(user_text.contains("clarification_rule"));
+            assert!(!system_text.contains("sexual content"));
+            assert!(!user_text.contains("sexual content"));
+            assert!(!system_text.contains("self-harm"));
+            assert!(!user_text.contains("self-harm"));
+        }
+
+        #[test]
+        fn openai_search_tool_is_added_only_when_search_is_needed_and_allowed() {
+            let command = LocalTurnCommand {
+                age_band: AgeBand::FourToFive,
+                character_alias: "Buddy".to_owned(),
+                text: "What is the weather today?".to_owned(),
+                parent_guidance: None,
+                child_age_years: Some(5),
+                child_age_months: Some(6),
+                character_play_age_years: Some(2),
+                recent_turns: Vec::new(),
+            };
+            let without_search = OpenAiConversationEngine::openai_request_body(
+                "gpt-4.1-mini",
+                &command,
+                ConversationGenerationOptions {
+                    web_search_needed: true,
+                    web_search_allowed: false,
+                    web_search_evidence: Vec::new(),
+                },
+            );
+            assert!(without_search.get("tools").is_none());
+
+            let with_search = OpenAiConversationEngine::openai_request_body(
+                "gpt-4.1-mini",
+                &command,
+                ConversationGenerationOptions {
+                    web_search_needed: true,
+                    web_search_allowed: true,
+                    web_search_evidence: Vec::new(),
+                },
+            );
+            assert_eq!(
+                with_search["tools"],
+                serde_json::json!([{ "type": "web_search" }])
+            );
+            assert_eq!(with_search["tool_choice"], "auto");
+            assert_eq!(
+                with_search["instructions"],
+                serde_json::json!(GEMINI_SEARCH_SYSTEM_INSTRUCTIONS)
+            );
+            let input = with_search["input"].as_str().unwrap();
+            assert!(input.contains("cloud_search"));
+            assert!(input.contains("clarification_rule"));
+        }
+
+        #[test]
         fn cloud_prompt_includes_recent_conversation_turns() {
             let prompt = GeminiConversationEngine::prompt(&LocalTurnCommand {
                 age_band: AgeBand::FourToFive,
@@ -6498,6 +7499,46 @@ pub mod native_runtime {
         }
 
         #[test]
+        fn cloud_search_prompt_prioritizes_current_child_text_over_recent_turns() {
+            let prompt = GeminiConversationEngine::search_prompt(&LocalTurnCommand {
+                age_band: AgeBand::FourToFive,
+                character_alias: "Buddy".to_owned(),
+                text: "Why does rain fall from clouds?".to_owned(),
+                parent_guidance: Some("Pretend to be a tiny puppy.".to_owned()),
+                child_age_years: Some(5),
+                child_age_months: Some(6),
+                character_play_age_years: Some(2),
+                recent_turns: vec![
+                    ConversationTurn {
+                        role: TurnRole::Child,
+                        text: "Who is the Vice President of the United States?".to_owned(),
+                    },
+                    ConversationTurn {
+                        role: TurnRole::Character,
+                        text: "The Vice President is JD Vance.".to_owned(),
+                    },
+                ],
+            });
+            let current_index = prompt.find("current_child_text").unwrap();
+            let recent_index = prompt.find("recent_turns").unwrap();
+            assert!(current_index < recent_index);
+            let contract: serde_json::Value = serde_json::from_str(&prompt).unwrap();
+            assert_eq!(
+                contract["current_child_text"],
+                "Why does rain fall from clouds?"
+            );
+            assert_eq!(contract["recent_turns"], serde_json::json!([]));
+            assert!(contract["must_answer"]
+                .as_str()
+                .unwrap()
+                .contains("Answer current_child_text only"));
+            assert!(contract["clarification_rule"]
+                .as_str()
+                .unwrap()
+                .contains("ask exactly one short friendly clarifying question"));
+        }
+
+        #[test]
         fn openai_response_format_uses_strict_json_schema() {
             let format = GeminiConversationEngine::openai_strict_response_format();
             assert_eq!(format["type"], "json_schema");
@@ -6510,12 +7551,80 @@ pub mod native_runtime {
         }
 
         #[test]
-        fn gemini_parser_rejects_non_json_text() {
+        fn gemini_parser_accepts_complete_plain_text_when_schema_is_ignored() {
             let response = br#"{
                 "candidates": [{
                     "content": {
                         "parts": [{
-                            "text": "Sure, I can do that!"
+                            "text": "Ooh, the president is Donald Trump right now."
+                        }]
+                    }
+                }]
+            }"#;
+            let parsed = GeminiConversationEngine::parse_response(response).unwrap();
+            assert_eq!(
+                parsed.speech,
+                "Ooh, the president is Donald Trump right now."
+            );
+            assert!(!parsed.suggest_trusted_adult);
+        }
+
+        #[test]
+        fn gemini_parser_unwraps_complete_json_string_when_object_schema_is_ignored() {
+            let response = br#"{
+                "candidates": [{
+                    "content": {
+                        "parts": [{
+                            "text": "\"Ooh, the president is Donald Trump right now.\""
+                        }]
+                    }
+                }]
+            }"#;
+            let parsed = GeminiConversationEngine::parse_response(response).unwrap();
+            assert_eq!(
+                parsed.speech,
+                "Ooh, the president is Donald Trump right now."
+            );
+            assert!(!parsed.suggest_trusted_adult);
+        }
+
+        #[test]
+        fn gemini_parser_rejects_bare_plain_or_json_string_fragments() {
+            let plain = br#"{
+                "candidates": [{
+                    "content": {
+                        "parts": [{
+                            "text": "Donald Trump"
+                        }]
+                    }
+                }]
+            }"#;
+            assert_eq!(
+                GeminiConversationEngine::parse_response(plain),
+                Err(ConversationEngineError::GenerationFailed)
+            );
+            let json_string = br#"{
+                "candidates": [{
+                    "content": {
+                        "parts": [{
+                            "text": "\"Donald Trump\""
+                        }]
+                    }
+                }]
+            }"#;
+            assert_eq!(
+                GeminiConversationEngine::parse_response(json_string),
+                Err(ConversationEngineError::GenerationFailed)
+            );
+        }
+
+        #[test]
+        fn gemini_parser_rejects_empty_plain_text() {
+            let response = br#"{
+                "candidates": [{
+                    "content": {
+                        "parts": [{
+                            "text": "   "
                         }]
                     }
                 }]
@@ -6788,8 +7897,16 @@ done
             &self,
             command: LocalTurnCommand,
         ) -> Result<StructuredCharacterResponse, ConversationEngineError> {
-            tokio::runtime::Handle::current()
-                .block_on(self.session.generate_with_persisted_context(
+            self.generate_with_options(command, ConversationGenerationOptions::default())
+        }
+
+        fn generate_with_options(
+            &self,
+            command: LocalTurnCommand,
+            options: ConversationGenerationOptions,
+        ) -> Result<StructuredCharacterResponse, ConversationEngineError> {
+            let result = tokio::runtime::Handle::current()
+                .block_on(self.session.generate_with_persisted_context_and_evidence(
                     command.age_band,
                     command.character_alias,
                     command.child_age_years,
@@ -6797,6 +7914,7 @@ done
                     command.character_play_age_years,
                     command.parent_guidance,
                     command.recent_turns,
+                    options.web_search_evidence,
                     command.text,
                 ))
                 .map_err(|error| {
@@ -6805,7 +7923,20 @@ done
                         local_turn_error_label(&error)
                     );
                     ConversationEngineError::GenerationFailed
-                })
+                });
+            if result.is_ok() {
+                if let Ok(metrics) = self.provider.metrics() {
+                    eprintln!(
+                        "ToyTalk latency phase=local_ai_backend status=ok model={} prompt_chars={} output_chars={} backend_ms={} peak_memory_bytes={}",
+                        sanitize_latency_log_token(&self.model_label),
+                        metrics.prompt_characters,
+                        metrics.output_characters,
+                        metrics.elapsed_milliseconds,
+                        metrics.peak_memory_bytes
+                    );
+                }
+            }
+            result
         }
 
         fn cancel(&self) -> Result<(), ConversationEngineError> {
@@ -6939,6 +8070,8 @@ done
         suggest_trusted_adult: bool,
     }
 
+    const GEMINI_SEARCH_SYSTEM_INSTRUCTIONS: &str = "You are a fictional child-safe plush toy character. Answer only the child's current_child_text. Recent turns are context only; never answer an older question instead of the current_child_text. Use available search results only when they help answer the current_child_text. Public, age-safe current facts such as current officeholders are okay to answer when search is available; do not refuse them just because they are grown-up topics. If necessary context is missing, ask exactly one short friendly clarifying question instead of guessing. Keep the reply warm, accurate, age-appropriate, and in character. Do not ask for private details, secrets, purchases, account access, meetings, or unsafe actions. If the child needs a grown-up's help, give a brief supportive answer and set suggest_trusted_adult=true. Return only one JSON object with exactly speech and suggest_trusted_adult fields, and no Markdown or extra prose.";
+
     #[derive(Deserialize)]
     struct OpenAiResponseEnvelope {
         output: Vec<OpenAiOutputItem>,
@@ -6988,6 +8121,7 @@ done
                 character_play_age_years: command.character_play_age_years,
                 parent_guidance: command.parent_guidance.clone(),
                 recent_turns: command.recent_turns.clone(),
+                grounding_evidence: Vec::new(),
                 current_text: command.text.clone(),
                 repair_instruction: None,
                 max_response_characters: policy.max_output_characters,
@@ -6999,6 +8133,81 @@ done
             .unwrap_or_else(|_| {
                 "{\"schema_version\":1,\"current_child_text\":\"Please answer safely.\",\"store\":false}".to_owned()
             })
+        }
+
+        fn search_prompt(command: &LocalTurnCommand) -> String {
+            let policy = AgePolicy::for_age_band(command.age_band);
+            let child_age = plushpal_policy_engine::child_age_label(
+                command.child_age_years,
+                command.child_age_months,
+            );
+            serde_json::json!({
+                "schema_version": 1,
+                "mode": "cloud_search",
+                "current_child_text": redact_personal_info(&command.text),
+                "must_answer": "Answer current_child_text only. Do not answer or continue any older recent_turns unless current_child_text explicitly asks to continue them.",
+                "clarification_rule": "If the current_child_text is missing necessary context such as location, person, object, or time, ask exactly one short friendly clarifying question. Do not guess the missing detail.",
+                "character_alias": command.character_alias,
+                "child_age": child_age,
+                "character_play_age_years": command.character_play_age_years,
+                "parent_guidance": command.parent_guidance.as_deref().map(redact_personal_info),
+                "recent_turns": [],
+                "response_style": "Speak as the toy. Prefer 2-5 short spoken sentences. Start with a tiny natural reaction when it helps, then answer the actual question clearly.",
+                "accuracy_rule": "For public current or live facts, use search-grounded information when available and answer directly in kid-friendly words. If search is unavailable, context is missing, or you are not sure, ask a clarifying question or say to check with a grown-up instead of guessing.",
+                "maximum_response_characters": policy.max_output_characters,
+                "response_schema": MODEL_RESPONSE_SCHEMA,
+                "store": false
+            })
+            .to_string()
+        }
+
+        #[cfg(test)]
+        fn gemini_request_body(command: &LocalTurnCommand) -> serde_json::Value {
+            Self::gemini_request_body_with_options(
+                command,
+                ConversationGenerationOptions::default(),
+            )
+        }
+
+        fn gemini_request_body_with_options(
+            command: &LocalTurnCommand,
+            options: ConversationGenerationOptions,
+        ) -> serde_json::Value {
+            let search_enabled = options.web_search_needed && options.web_search_allowed;
+            let mut body = serde_json::json!({
+                "systemInstruction": {
+                    "parts": [{
+                        "text": if search_enabled {
+                            GEMINI_SEARCH_SYSTEM_INSTRUCTIONS
+                        } else {
+                            ModelPromptContract::immutable_instructions()
+                        }
+                    }]
+                },
+                "contents": [{
+                    "role": "user",
+                    "parts": [{
+                        "text": if search_enabled {
+                            Self::search_prompt(command)
+                        } else {
+                            Self::prompt(command)
+                        }
+                    }]
+                }],
+                "generationConfig": {
+                    "temperature": 0.2,
+                    "topP": 0.9,
+                    "maxOutputTokens": 400
+                }
+            });
+            if search_enabled {
+                body["tools"] = serde_json::json!([{ "google_search": {} }]);
+            } else {
+                body["generationConfig"]["responseMimeType"] =
+                    serde_json::json!("application/json");
+                body["generationConfig"]["responseSchema"] = Self::gemini_response_schema();
+            }
+            body
         }
 
         fn gemini_response_schema() -> serde_json::Value {
@@ -7056,7 +8265,14 @@ done
                     log_cloud_provider_failure(
                         "gemini",
                         "response_envelope_parse",
-                        &error.to_string(),
+                        &format!(
+                            "{}; body={}",
+                            error,
+                            String::from_utf8_lossy(bytes)
+                                .chars()
+                                .take(800)
+                                .collect::<String>()
+                        ),
                     );
                     return Err(ConversationEngineError::GenerationFailed);
                 }
@@ -7071,14 +8287,9 @@ done
                     log_cloud_provider_failure("gemini", "empty_candidate_text", "no text part");
                     ConversationEngineError::GenerationFailed
                 })?;
-            let json = extract_json_object(&text).ok_or_else(|| {
-                log_cloud_provider_failure(
-                    "gemini",
-                    "structured_json_extract",
-                    &format!("text_chars={}", text.chars().count()),
-                );
-                ConversationEngineError::GenerationFailed
-            })?;
+            let Some(json) = extract_json_object(&text) else {
+                return Self::parse_plain_text_response(&text);
+            };
             let structured: GeminiStructuredResponse = match serde_json::from_str(json) {
                 Ok(structured) => structured,
                 Err(error) => {
@@ -7104,6 +8315,53 @@ done
                 suggest_trusted_adult: structured.suggest_trusted_adult,
             })
         }
+
+        fn parse_plain_text_response(
+            text: &str,
+        ) -> Result<StructuredCharacterResponse, ConversationEngineError> {
+            let trimmed = text.trim();
+            let unwrapped_json_string = serde_json::from_str::<serde_json::Value>(trimmed)
+                .ok()
+                .and_then(|value| match value {
+                    serde_json::Value::String(value) => Some(value),
+                    _ => None,
+                });
+            let owned_speech;
+            let speech = if let Some(value) = unwrapped_json_string {
+                owned_speech = value;
+                owned_speech.trim()
+            } else {
+                trimmed
+            };
+            if speech.is_empty()
+                || speech.chars().count() > 500
+                || !looks_like_complete_spoken_fallback(speech)
+            {
+                log_cloud_provider_failure(
+                    "gemini",
+                    "plain_text_policy_validation",
+                    &format!("speech_chars={}", speech.chars().count()),
+                );
+                return Err(ConversationEngineError::GenerationFailed);
+            }
+            eprintln!(
+                "ToyTalk cloud provider notice provider=gemini stage=plain_text_response text_chars={}",
+                speech.chars().count()
+            );
+            Ok(StructuredCharacterResponse {
+                speech: speech.to_owned(),
+                suggest_trusted_adult: false,
+            })
+        }
+    }
+
+    fn looks_like_complete_spoken_fallback(speech: &str) -> bool {
+        let trimmed = speech.trim();
+        trimmed.chars().count() >= 24
+            && trimmed
+                .chars()
+                .last()
+                .is_some_and(|character| matches!(character, '.' | '!' | '?'))
     }
 
     fn extract_json_object(text: &str) -> Option<&str> {
@@ -7137,23 +8395,19 @@ done
             &self,
             command: LocalTurnCommand,
         ) -> Result<StructuredCharacterResponse, ConversationEngineError> {
+            self.generate_with_options(command, ConversationGenerationOptions::default())
+        }
+
+        fn generate_with_options(
+            &self,
+            command: LocalTurnCommand,
+            options: ConversationGenerationOptions,
+        ) -> Result<StructuredCharacterResponse, ConversationEngineError> {
             let url = format!(
                 "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
                 self.model
             );
-            let body = serde_json::json!({
-                "contents": [{
-                    "role": "user",
-                    "parts": [{"text": Self::prompt(&command)}]
-                }],
-                "generationConfig": {
-                    "temperature": 0.2,
-                    "topP": 0.9,
-                    "maxOutputTokens": 400,
-                    "responseMimeType": "application/json",
-                    "responseSchema": Self::gemini_response_schema()
-                }
-            });
+            let body = Self::gemini_request_body_with_options(&command, options);
             let response = self
                 .client
                 .post(url)
@@ -7212,6 +8466,36 @@ done
                 model,
                 client,
             })
+        }
+
+        fn openai_request_body(
+            model: &str,
+            command: &LocalTurnCommand,
+            options: ConversationGenerationOptions,
+        ) -> serde_json::Value {
+            let search_enabled = options.web_search_needed && options.web_search_allowed;
+            let mut body = serde_json::json!({
+                "model": model,
+                "store": false,
+                "instructions": if search_enabled {
+                    GEMINI_SEARCH_SYSTEM_INSTRUCTIONS
+                } else {
+                    ModelPromptContract::immutable_instructions()
+                },
+                "input": if search_enabled {
+                    GeminiConversationEngine::search_prompt(command)
+                } else {
+                    GeminiConversationEngine::prompt(command)
+                },
+                "text": {
+                    "format": GeminiConversationEngine::openai_strict_response_format()
+                }
+            });
+            if search_enabled {
+                body["tools"] = serde_json::json!([{ "type": "web_search" }]);
+                body["tool_choice"] = serde_json::json!("auto");
+            }
+            body
         }
 
         fn parse_response(
@@ -7294,15 +8578,15 @@ done
             &self,
             command: LocalTurnCommand,
         ) -> Result<StructuredCharacterResponse, ConversationEngineError> {
-            let body = serde_json::json!({
-                "model": self.model,
-                "store": false,
-                "instructions": ModelPromptContract::immutable_instructions(),
-                "input": GeminiConversationEngine::prompt(&command),
-                "text": {
-                    "format": GeminiConversationEngine::openai_strict_response_format()
-                }
-            });
+            self.generate_with_options(command, ConversationGenerationOptions::default())
+        }
+
+        fn generate_with_options(
+            &self,
+            command: LocalTurnCommand,
+            options: ConversationGenerationOptions,
+        ) -> Result<StructuredCharacterResponse, ConversationEngineError> {
+            let body = Self::openai_request_body(&self.model, &command, options);
             let response = self
                 .client
                 .post("https://api.openai.com/v1/responses")
@@ -7700,6 +8984,7 @@ mod tests {
         session_digests: Mutex<HashMap<String, String>>,
         provider_keys: Mutex<HashMap<String, String>>,
         active_provider: Mutex<String>,
+        web_search_enabled: AtomicBool,
         scoped_children: Mutex<HashMap<String, Arc<MemoryProfileStore>>>,
         voice_approved: AtomicBool,
         deleted: AtomicBool,
@@ -7974,6 +9259,7 @@ mod tests {
                 configured,
                 display_name,
                 configured_providers,
+                web_search_enabled: self.web_search_enabled.load(Ordering::Acquire),
             })
         }
 
@@ -8035,6 +9321,15 @@ mod tests {
                 .active_provider
                 .lock()
                 .map_err(|_| HostError::PersistenceUnavailable)? = provider;
+            Ok(())
+        }
+
+        fn web_search_enabled(&self) -> Result<bool, HostError> {
+            Ok(self.web_search_enabled.load(Ordering::Acquire))
+        }
+
+        fn set_web_search_enabled(&self, enabled: bool) -> Result<(), HostError> {
+            self.web_search_enabled.store(enabled, Ordering::Release);
             Ok(())
         }
 
@@ -8363,6 +9658,107 @@ mod tests {
     }
 
     #[derive(Debug)]
+    struct RecordingCloudEngine {
+        seen_web_search_allowed: Arc<AtomicBool>,
+    }
+
+    impl ConversationEngine for RecordingCloudEngine {
+        fn is_ready(&self) -> bool {
+            true
+        }
+
+        fn runtime_mode_label(&self) -> &'static str {
+            "cloud_llm"
+        }
+
+        fn provider_label(&self) -> &'static str {
+            "gemini"
+        }
+
+        fn model_label(&self) -> String {
+            "fixture-gemini".to_owned()
+        }
+
+        fn generate_local(
+            &self,
+            command: LocalTurnCommand,
+        ) -> Result<StructuredCharacterResponse, ConversationEngineError> {
+            self.generate_with_options(command, ConversationGenerationOptions::default())
+        }
+
+        fn generate_with_options(
+            &self,
+            _command: LocalTurnCommand,
+            options: ConversationGenerationOptions,
+        ) -> Result<StructuredCharacterResponse, ConversationEngineError> {
+            self.seen_web_search_allowed
+                .store(options.web_search_allowed, Ordering::Release);
+            Ok(StructuredCharacterResponse {
+                speech: "I checked carefully and answered.".to_owned(),
+                suggest_trusted_adult: false,
+            })
+        }
+
+        fn cancel(&self) -> Result<(), ConversationEngineError> {
+            Ok(())
+        }
+
+        fn clear_session(&self) -> Result<(), ConversationEngineError> {
+            Ok(())
+        }
+    }
+
+    #[derive(Debug)]
+    struct RecordingLocalEngine {
+        seen_evidence_count: Arc<Mutex<usize>>,
+    }
+
+    impl ConversationEngine for RecordingLocalEngine {
+        fn is_ready(&self) -> bool {
+            true
+        }
+
+        fn runtime_mode_label(&self) -> &'static str {
+            "privacy_local_first"
+        }
+
+        fn provider_label(&self) -> &'static str {
+            "local_ai"
+        }
+
+        fn model_label(&self) -> String {
+            "fixture-local-ai".to_owned()
+        }
+
+        fn generate_local(
+            &self,
+            command: LocalTurnCommand,
+        ) -> Result<StructuredCharacterResponse, ConversationEngineError> {
+            self.generate_with_options(command, ConversationGenerationOptions::default())
+        }
+
+        fn generate_with_options(
+            &self,
+            _command: LocalTurnCommand,
+            options: ConversationGenerationOptions,
+        ) -> Result<StructuredCharacterResponse, ConversationEngineError> {
+            *self.seen_evidence_count.lock().unwrap() = options.web_search_evidence.len();
+            Ok(StructuredCharacterResponse {
+                speech: "I used the search notes to answer.".to_owned(),
+                suggest_trusted_adult: false,
+            })
+        }
+
+        fn cancel(&self) -> Result<(), ConversationEngineError> {
+            Ok(())
+        }
+
+        fn clear_session(&self) -> Result<(), ConversationEngineError> {
+            Ok(())
+        }
+    }
+
+    #[derive(Debug)]
     struct FixtureVoiceEngine;
 
     impl VoiceEngine for FixtureVoiceEngine {
@@ -8391,6 +9787,52 @@ mod tests {
                 return Err(HostError::InvalidVoiceSample);
             }
             Ok("why is rain wet".to_owned())
+        }
+    }
+
+    #[derive(Debug)]
+    struct FixtureSearchRouter {
+        needs_web_search: bool,
+        ready: bool,
+    }
+
+    impl SearchRouter for FixtureSearchRouter {
+        fn is_ready(&self) -> bool {
+            self.ready
+        }
+
+        fn classify(&self, _text: &str) -> Result<SearchRoutingDecision, HostError> {
+            Ok(SearchRoutingDecision {
+                needs_web_search: self.needs_web_search,
+                confidence: 0.9,
+                reason: "fixture".to_owned(),
+                model: "fixture-router".to_owned(),
+                source: "fixture",
+            })
+        }
+    }
+
+    #[derive(Debug)]
+    struct FixtureWebSearchProvider {
+        ready: bool,
+        evidence: Vec<GroundingEvidence>,
+    }
+
+    impl WebSearchProvider for FixtureWebSearchProvider {
+        fn is_ready(&self) -> bool {
+            self.ready
+        }
+
+        fn search(
+            &self,
+            _query: &str,
+            _maximum_results: u8,
+        ) -> Result<Vec<GroundingEvidence>, HostError> {
+            if self.ready {
+                Ok(self.evidence.clone())
+            } else {
+                Err(HostError::SearchRouterUnavailable)
+            }
         }
     }
 
@@ -9806,6 +11248,34 @@ mod tests {
     }
 
     #[test]
+    fn cloud_ai_provider_store_tracks_web_search_setting() {
+        let store = MemoryProfileStore::default();
+        assert!(!store.web_search_enabled().unwrap());
+        assert!(
+            !store
+                .reasoning_provider_status()
+                .unwrap()
+                .web_search_enabled
+        );
+
+        store
+            .set_web_search_enabled(true)
+            .expect("web search setting saves");
+        assert!(store.web_search_enabled().unwrap());
+        assert!(
+            store
+                .reasoning_provider_status()
+                .unwrap()
+                .web_search_enabled
+        );
+
+        store
+            .set_web_search_enabled(false)
+            .expect("web search setting clears");
+        assert!(!store.web_search_enabled().unwrap());
+    }
+
+    #[test]
     fn character_rename_preserves_scoped_voice_status() {
         let store = MemoryProfileStore::default();
         store
@@ -10666,6 +12136,10 @@ mod tests {
         )
         .with_runtime_mode("cloud_llm")
         .with_model_installer(Arc::new(FixtureInstaller { installed }))
+        .with_search_router(Arc::new(FixtureSearchRouter {
+            needs_web_search: false,
+            ready: true,
+        }))
         .with_conversation_engine(Arc::new(FailingCloudEngine));
 
         let outcome = generate_turn_with_retries(
@@ -10682,6 +12156,7 @@ mod tests {
                 character_play_age_years: Some(3),
                 recent_turns: Vec::new(),
             },
+            false,
         )
         .unwrap();
 
@@ -10689,6 +12164,284 @@ mod tests {
         assert_eq!(outcome.mode, "privacy_local_first");
         assert_eq!(outcome.provider, "local_ai");
         assert_eq!(outcome.response.speech, "Ready");
+    }
+
+    #[test]
+    fn cloud_generation_failure_does_not_use_local_ai_for_current_data_questions() {
+        let installed = Arc::new(AtomicBool::new(true));
+        let state = HostState::new(
+            LoopbackEndpoint { port: 3210 },
+            b"bootstrap",
+            Arc::new(FixedToken),
+            Arc::new(FixedClock),
+        )
+        .with_runtime_mode("cloud_llm")
+        .with_model_installer(Arc::new(FixtureInstaller { installed }))
+        .with_search_router(Arc::new(FixtureSearchRouter {
+            needs_web_search: true,
+            ready: true,
+        }))
+        .with_conversation_engine(Arc::new(FailingCloudEngine));
+
+        let outcome = generate_turn_with_retries(
+            &state,
+            "test-cloud-current-data-no-local-fallback",
+            Arc::new(FailingCloudEngine),
+            LocalTurnCommand {
+                age_band: AgeBand::FourToFive,
+                character_alias: "Buddy".to_owned(),
+                text: "Who is the president of America today?".to_owned(),
+                parent_guidance: None,
+                child_age_years: Some(5),
+                child_age_months: Some(6),
+                character_play_age_years: Some(3),
+                recent_turns: Vec::new(),
+            },
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(runtime_mode_for_state(&state), "cloud_llm");
+        assert_eq!(outcome.mode, "cloud_llm");
+        assert_eq!(outcome.provider, "gemini");
+        assert_ne!(outcome.response.speech, "Ready");
+        assert!(outcome.response.speech.contains("Buddy"));
+    }
+
+    #[test]
+    fn current_data_question_is_blocked_for_cloud_when_web_search_is_off() {
+        let seen_web_search_allowed = Arc::new(AtomicBool::new(false));
+        let state = HostState::new(
+            LoopbackEndpoint { port: 3210 },
+            b"bootstrap",
+            Arc::new(FixedToken),
+            Arc::new(FixedClock),
+        )
+        .with_runtime_mode("cloud_llm")
+        .with_search_router(Arc::new(FixtureSearchRouter {
+            needs_web_search: true,
+            ready: true,
+        }));
+        let engine = Arc::new(RecordingCloudEngine {
+            seen_web_search_allowed: Arc::clone(&seen_web_search_allowed),
+        });
+
+        let outcome = generate_turn_with_retries(
+            &state,
+            "test-search-disabled",
+            engine,
+            LocalTurnCommand {
+                age_band: AgeBand::FourToFive,
+                character_alias: "Buddy".to_owned(),
+                text: "Who is president today?".to_owned(),
+                parent_guidance: None,
+                child_age_years: Some(5),
+                child_age_months: Some(6),
+                character_play_age_years: Some(3),
+                recent_turns: Vec::new(),
+            },
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(outcome.provider, "gemini");
+        assert!(outcome.response.speech.contains("Buddy"));
+        assert!(outcome.response.speech.contains("newest information"));
+        assert!(outcome.response.speech.contains("do not want to guess"));
+        assert!(outcome.response.suggest_trusted_adult);
+        assert!(!seen_web_search_allowed.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn current_data_question_passes_search_option_when_web_search_is_on() {
+        let seen_web_search_allowed = Arc::new(AtomicBool::new(false));
+        let state = HostState::new(
+            LoopbackEndpoint { port: 3210 },
+            b"bootstrap",
+            Arc::new(FixedToken),
+            Arc::new(FixedClock),
+        )
+        .with_runtime_mode("cloud_llm")
+        .with_search_router(Arc::new(FixtureSearchRouter {
+            needs_web_search: true,
+            ready: true,
+        }));
+        let engine = Arc::new(RecordingCloudEngine {
+            seen_web_search_allowed: Arc::clone(&seen_web_search_allowed),
+        });
+
+        let outcome = generate_turn_with_retries(
+            &state,
+            "test-search-enabled",
+            engine,
+            LocalTurnCommand {
+                age_band: AgeBand::FourToFive,
+                character_alias: "Buddy".to_owned(),
+                text: "Who is president today?".to_owned(),
+                parent_guidance: None,
+                child_age_years: Some(5),
+                child_age_months: Some(6),
+                character_play_age_years: Some(3),
+                recent_turns: Vec::new(),
+            },
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(outcome.response.speech, "I checked carefully and answered.");
+        assert!(seen_web_search_allowed.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn cloud_web_search_enabled_does_not_bypass_router_for_timeless_prompts() {
+        let seen_web_search_allowed = Arc::new(AtomicBool::new(false));
+        let state = HostState::new(
+            LoopbackEndpoint { port: 3210 },
+            b"bootstrap",
+            Arc::new(FixedToken),
+            Arc::new(FixedClock),
+        )
+        .with_runtime_mode("cloud_llm")
+        .with_search_router(Arc::new(FixtureSearchRouter {
+            needs_web_search: false,
+            ready: true,
+        }));
+        let engine = Arc::new(RecordingCloudEngine {
+            seen_web_search_allowed: Arc::clone(&seen_web_search_allowed),
+        });
+
+        let outcome = generate_turn_with_retries(
+            &state,
+            "test-search-enabled-router-false-negative",
+            engine,
+            LocalTurnCommand {
+                age_band: AgeBand::FourToFive,
+                character_alias: "Buddy".to_owned(),
+                text: "Tell me a tiny puppy joke.".to_owned(),
+                parent_guidance: None,
+                child_age_years: Some(5),
+                child_age_months: Some(6),
+                character_play_age_years: Some(3),
+                recent_turns: Vec::new(),
+            },
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(outcome.response.speech, "I checked carefully and answered.");
+        assert!(!seen_web_search_allowed.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn local_current_data_question_uses_hub_owned_search_evidence_when_enabled() {
+        let seen_evidence_count = Arc::new(Mutex::new(0_usize));
+        let state = HostState::new(
+            LoopbackEndpoint { port: 3210 },
+            b"bootstrap",
+            Arc::new(FixedToken),
+            Arc::new(FixedClock),
+        )
+        .with_runtime_mode("privacy_local_first")
+        .with_search_router(Arc::new(FixtureSearchRouter {
+            needs_web_search: true,
+            ready: true,
+        }))
+        .with_web_search_provider(Arc::new(FixtureWebSearchProvider {
+            ready: true,
+            evidence: vec![GroundingEvidence {
+                source_id: "fixture-1".to_owned(),
+                title: "Current office holder".to_owned(),
+                excerpt: "The current answer is in this search snippet.".to_owned(),
+                source_url: Some("https://example.com/current".to_owned()),
+            }],
+        }));
+        let engine = Arc::new(RecordingLocalEngine {
+            seen_evidence_count: Arc::clone(&seen_evidence_count),
+        });
+
+        let outcome = generate_turn_with_retries(
+            &state,
+            "test-local-search-enabled",
+            engine,
+            LocalTurnCommand {
+                age_band: AgeBand::FourToFive,
+                character_alias: "Buddy".to_owned(),
+                text: "Who is president today?".to_owned(),
+                parent_guidance: None,
+                child_age_years: Some(5),
+                child_age_months: Some(6),
+                character_play_age_years: Some(3),
+                recent_turns: Vec::new(),
+            },
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(outcome.provider, "local_ai");
+        assert_eq!(
+            outcome.response.speech,
+            "I used the search notes to answer."
+        );
+        assert_eq!(*seen_evidence_count.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn local_current_data_question_fails_safe_when_hub_search_is_unavailable() {
+        let seen_evidence_count = Arc::new(Mutex::new(0_usize));
+        let state = HostState::new(
+            LoopbackEndpoint { port: 3210 },
+            b"bootstrap",
+            Arc::new(FixedToken),
+            Arc::new(FixedClock),
+        )
+        .with_runtime_mode("privacy_local_first")
+        .with_search_router(Arc::new(FixtureSearchRouter {
+            needs_web_search: true,
+            ready: true,
+        }));
+        let engine = Arc::new(RecordingLocalEngine {
+            seen_evidence_count: Arc::clone(&seen_evidence_count),
+        });
+
+        let outcome = generate_turn_with_retries(
+            &state,
+            "test-local-search-unavailable",
+            engine,
+            LocalTurnCommand {
+                age_band: AgeBand::FourToFive,
+                character_alias: "Buddy".to_owned(),
+                text: "Who is president today?".to_owned(),
+                parent_guidance: None,
+                child_age_years: Some(5),
+                child_age_months: Some(6),
+                character_play_age_years: Some(3),
+                recent_turns: Vec::new(),
+            },
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(outcome.provider, "local_ai");
+        assert!(outcome.response.speech.contains("grown-up"));
+        assert_eq!(*seen_evidence_count.lock().unwrap(), 0);
+    }
+
+    #[test]
+    fn keyword_search_router_does_not_treat_timeless_explanations_as_current() {
+        let current = keyword_search_routing_decision("How is the weather today?");
+        let timeless_weather = keyword_search_routing_decision("How does winter weather work?");
+        let timeless_civics = keyword_search_routing_decision("What does a president do?");
+        let current_role = keyword_search_routing_decision("Who is the president of America?");
+        let current_vice_role =
+            keyword_search_routing_decision("Who is the vice president of America?");
+        let current_vp_role = keyword_search_routing_decision("Who is the VP right now?");
+
+        assert!(current.needs_web_search);
+        assert!(!timeless_weather.needs_web_search);
+        assert!(!timeless_civics.needs_web_search);
+        assert!(current_role.needs_web_search);
+        assert!(current_vice_role.needs_web_search);
+        assert!(current_vp_role.needs_web_search);
     }
 
     #[test]
@@ -10720,6 +12473,10 @@ mod tests {
             sanitize_latency_log_token("gemini 2.5 flash\nlatest"),
             "gemini_2.5_flash_latest"
         );
+        let logged = ai_response_log_json("Hello\nBuddy!\u{0007}");
+        assert_eq!(logged, "\"Hello Buddy! \"");
+        let long = ai_response_log_json(&"a".repeat(2_050));
+        assert!(long.contains("[truncated]"));
         assert_eq!(
             conversation_log_fields(None),
             ("unavailable", "unavailable", "none".to_owned())

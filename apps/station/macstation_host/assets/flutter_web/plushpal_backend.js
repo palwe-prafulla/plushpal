@@ -236,13 +236,13 @@
         method: 'POST',
         credentials: 'same-origin',
         headers: {
-          'x-plushpal-bootstrap': token,
-          'x-plushbuddy-client-id': stableClientId(),
-          'x-plushbuddy-client-label': stableClientLabel(),
+          'x-toytalk-bootstrap': token,
+          'x-toytalk-client-id': stableClientId(),
+          'x-toytalk-client-label': stableClientLabel(),
         },
       });
       if (!response.ok) throw new Error('Hub session expired. Open ToyTalk from Hub again.');
-      rememberHubId(response.headers.get('x-plushbuddy-hub-id'));
+      rememberHubId(response.headers.get('x-toytalk-hub-id') || response.headers.get('x-plushbuddy-hub-id'));
       history.replaceState(null, document.title, `${window.location.pathname}${window.location.search}`);
       return;
     }
@@ -257,8 +257,8 @@
       ...options,
       headers: {
         ...(options.body ? {'Content-Type': 'application/json'} : {}),
-        'X-PlushBuddy-Client-Id': stableClientId(),
-        ...(storedHubId() ? {'X-PlushBuddy-Hub-Id': storedHubId()} : {}),
+        'X-ToyTalk-Client-Id': stableClientId(),
+        ...(storedHubId() ? {'X-ToyTalk-Hub-Id': storedHubId()} : {}),
         ...(options.headers || {}),
       },
     });
@@ -388,6 +388,19 @@
     }
   };
 
+  window.toytalkSetWebSearchEnabled = async (pin, enabled) => {
+    const response = await stationFetch('/api/v1/provider/web-search', {
+      method: 'POST',
+      body: JSON.stringify({
+        pin,
+        enabled: Boolean(enabled),
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(await responseErrorMessage(response, 'Could not update web search'));
+    }
+  };
+
   window.toytalkModelStatus = async () => {
     const station = await stationStatus();
     return JSON.stringify({
@@ -398,6 +411,7 @@
       model_install_supported: Boolean(station),
       model_installing: Boolean(station?.model_installing),
       speech_to_text_ready: Boolean(station?.speech_to_text_ready),
+      web_search_provider_ready: Boolean(station?.web_search_provider_ready),
       parent_configured: Boolean(station?.parent_configured),
       age_band: station?.age_band || null,
       character_alias: station?.character_alias || null,

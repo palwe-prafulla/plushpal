@@ -158,10 +158,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(feature = "native-runtime")]
     let state = {
         use plushpal_desktop_host::native_runtime::{
-            ChatterboxVoiceEngine, DemoConversationEngine, DemoVoiceEngine,
-            GeminiConversationEngine, LuxTtsVoiceEngine, NativeConversationEngine,
-            NativeModelInstaller, NativeParentProfileStore, OpenAiConversationEngine,
-            PocketVoiceEngine, WhisperCliSpeechToTextEngine,
+            BraveWebSearchProvider, ChatterboxVoiceEngine, DemoConversationEngine, DemoVoiceEngine,
+            GeminiConversationEngine, LuxTtsVoiceEngine, MiniLmSearchRouter,
+            NativeConversationEngine, NativeModelInstaller, NativeParentProfileStore,
+            OpenAiConversationEngine, PocketVoiceEngine, WhisperCliSpeechToTextEngine,
         };
         let runtime_mode = RuntimeMode::from_env();
         eprintln!("ToyTalk Hub runtime mode: {runtime_mode:?}");
@@ -179,7 +179,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map_err(|error| std::io::Error::other(format!("{error:?}")))?;
         if let Err(error) = profile_store.preflight_keychain_access() {
             eprintln!(
-                "PlushBuddy Hub voice preflight did not complete; existing voice profiles may need to be re-created: {error:?}"
+                "ToyTalk Hub voice preflight did not complete; existing voice profiles may need to be re-created: {error:?}"
             );
         }
         let profile_store = Arc::new(profile_store);
@@ -234,7 +234,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
         if requested_voice_engine.eq_ignore_ascii_case("demo") {
             state = state.with_voice_engine(Arc::new(DemoVoiceEngine));
-            eprintln!("PlushBuddy Hub demo voice engine enabled; this validates flow but does not clone voices.");
+            eprintln!("ToyTalk Hub demo voice engine enabled; this validates flow but does not clone voices.");
         } else if requested_voice_engine.eq_ignore_ascii_case("luxtts") {
             let python_executable = env::var_os("PLUSHPAL_LUXTTS_PYTHON")
                 .map(PathBuf::from)
@@ -254,7 +254,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 env::var("PLUSHPAL_LUXTTS_REF_DURATION").unwrap_or_else(|_| "180".to_owned());
             let rms = env::var("PLUSHPAL_LUXTTS_RMS").unwrap_or_else(|_| "0.01".to_owned());
             let num_steps =
-                env::var("PLUSHPAL_LUXTTS_NUM_STEPS").unwrap_or_else(|_| "8".to_owned());
+                env::var("PLUSHPAL_LUXTTS_NUM_STEPS").unwrap_or_else(|_| "4".to_owned());
             let t_shift = env::var("PLUSHPAL_LUXTTS_T_SHIFT").unwrap_or_else(|_| "0.9".to_owned());
             let speed = env::var("PLUSHPAL_LUXTTS_SPEED").unwrap_or_else(|_| "0.88".to_owned());
             let seed = env::var("PLUSHPAL_LUXTTS_SEED")
@@ -281,7 +281,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 Err(error) => {
                     eprintln!(
-                        "PlushBuddy Hub LuxTTS voice runtime is unavailable; starting without voice cloning: {error:?}"
+                        "ToyTalk Hub LuxTTS voice runtime is unavailable; starting without voice cloning: {error:?}"
                     );
                 }
             }
@@ -331,7 +331,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 Err(error) => {
                     eprintln!(
-                        "PlushBuddy Hub Chatterbox voice runtime is unavailable; starting without voice cloning: {error:?}"
+                        "ToyTalk Hub Chatterbox voice runtime is unavailable; starting without voice cloning: {error:?}"
                     );
                 }
             }
@@ -358,9 +358,44 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
+        if let (Some(python_executable), Some(script_path)) = (
+            env::var_os("PLUSHPAL_SEARCH_ROUTER_PYTHON").map(PathBuf::from),
+            env::var_os("PLUSHPAL_SEARCH_ROUTER_SCRIPT").map(PathBuf::from),
+        ) {
+            let model = env::var("PLUSHPAL_SEARCH_ROUTER_MODEL")
+                .unwrap_or_else(|_| "sentence-transformers/all-MiniLM-L6-v2".to_owned());
+            match MiniLmSearchRouter::new(python_executable, script_path, &data_directory, model) {
+                Ok(router) => {
+                    eprintln!("ToyTalk Hub search router enabled.");
+                    state = state.with_search_router(Arc::new(router));
+                }
+                Err(error) => {
+                    eprintln!(
+                        "ToyTalk Hub search router is unavailable; using conservative keyword fallback: {error:?}"
+                    );
+                }
+            }
+        }
+        if let Some(api_key) = brave_search_api_key() {
+            match BraveWebSearchProvider::new(api_key) {
+                Ok(provider) => {
+                    eprintln!("ToyTalk Hub-owned web search enabled with Brave Search.");
+                    state = state.with_web_search_provider(Arc::new(provider));
+                }
+                Err(error) => {
+                    eprintln!(
+                        "ToyTalk Hub-owned web search is unavailable; Local AI current-info questions will fail safe: {error:?}"
+                    );
+                }
+            }
+        } else {
+            eprintln!(
+                "ToyTalk Hub-owned web search is not configured. Set TOYTALK_BRAVE_SEARCH_API_KEY or PLUSHPAL_BRAVE_SEARCH_API_KEY to let Local AI answer current-info questions with search evidence."
+            );
+        }
         if runtime_mode.uses_demo_conversation() {
             eprintln!(
-                "PlushBuddy Hub demo conversation engine enabled; no cloud reasoning calls will be made."
+                "ToyTalk Hub demo conversation engine enabled; no cloud reasoning calls will be made."
             );
             state = state.with_conversation_engine(Arc::new(DemoConversationEngine));
         } else if !runtime_mode.suppress_cloud_and_local_model() {
@@ -376,14 +411,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             match OpenAiConversationEngine::new(api_key, model.clone()) {
                                 Ok(engine) => {
                                     eprintln!(
-                                        "PlushBuddy Hub OpenAI reasoning enabled with model {model}"
+                                        "ToyTalk Hub OpenAI reasoning enabled with model {model}"
                                     );
                                     state = state.with_conversation_engine(Arc::new(engine));
                                     loaded_conversation = true;
                                 }
                                 Err(error) => {
                                     eprintln!(
-                                        "PlushBuddy Hub OpenAI reasoning is unavailable: {error:?}"
+                                        "ToyTalk Hub OpenAI reasoning is unavailable: {error:?}"
                                     );
                                 }
                             }
@@ -394,14 +429,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             match GeminiConversationEngine::new(api_key, model.clone()) {
                                 Ok(engine) => {
                                     eprintln!(
-                                        "PlushBuddy Hub Gemini reasoning enabled with model {model}"
+                                        "ToyTalk Hub Gemini reasoning enabled with model {model}"
                                     );
                                     state = state.with_conversation_engine(Arc::new(engine));
                                     loaded_conversation = true;
                                 }
                                 Err(error) => {
                                     eprintln!(
-                                        "PlushBuddy Hub Gemini reasoning is unavailable: {error:?}"
+                                        "ToyTalk Hub Gemini reasoning is unavailable: {error:?}"
                                     );
                                 }
                             }
@@ -436,13 +471,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             match OpenAiConversationEngine::new(api_key, model.clone()) {
                                 Ok(engine) => {
                                     eprintln!(
-                                        "PlushBuddy Hub OpenAI reasoning enabled with model {model}"
+                                        "ToyTalk Hub OpenAI reasoning enabled with model {model}"
                                     );
                                     state = state.with_conversation_engine(Arc::new(engine));
                                 }
                                 Err(error) => {
                                     eprintln!(
-                                        "PlushBuddy Hub OpenAI reasoning is unavailable: {error:?}"
+                                        "ToyTalk Hub OpenAI reasoning is unavailable: {error:?}"
                                     );
                                 }
                             }
@@ -453,13 +488,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             match GeminiConversationEngine::new(api_key, model.clone()) {
                                 Ok(engine) => {
                                     eprintln!(
-                                        "PlushBuddy Hub Gemini reasoning enabled with model {model}"
+                                        "ToyTalk Hub Gemini reasoning enabled with model {model}"
                                     );
                                     state = state.with_conversation_engine(Arc::new(engine));
                                 }
                                 Err(error) => {
                                     eprintln!(
-                                        "PlushBuddy Hub Gemini reasoning is unavailable: {error:?}"
+                                        "ToyTalk Hub Gemini reasoning is unavailable: {error:?}"
                                     );
                                 }
                             }
@@ -527,6 +562,18 @@ fn provider_api_key(env_name: &str) -> Option<String> {
 }
 
 #[cfg(feature = "native-runtime")]
+fn brave_search_api_key() -> Option<String> {
+    [
+        "TOYTALK_BRAVE_SEARCH_API_KEY",
+        "PLUSHPAL_BRAVE_SEARCH_API_KEY",
+        "BRAVE_SEARCH_API_KEY",
+    ]
+    .into_iter()
+    .find_map(provider_api_key)
+    .filter(|value| !value.chars().any(char::is_control))
+}
+
+#[cfg(feature = "native-runtime")]
 fn model_directory() -> Result<PathBuf, Box<dyn std::error::Error>> {
     if let Some(configured) = env::var_os("PLUSHPAL_MODEL_DIR") {
         return Ok(PathBuf::from(configured));
@@ -541,7 +588,7 @@ fn model_directory() -> Result<PathBuf, Box<dyn std::error::Error>> {
     let base = env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")));
-    base.map(|path| path.join("PlushPal/models"))
+    base.map(|path| path.join("ToyTalk/models"))
         .ok_or_else(|| "No local application data directory is available".into())
 }
 
@@ -721,13 +768,27 @@ mod tests {
 
     #[cfg(feature = "native-runtime")]
     #[test]
-    fn mac_profile_recommends_strongest_trusted_installable_local_model() {
+    fn mac_profile_recommends_fast_local_model_on_24gb_macs() {
+        let recommendation = local_model_recommendation_for_profile(
+            24_576, 4_873, 128_000, 10, 15, "arm64", "metal",
+        )
+        .expect("24GB Apple Silicon Mac should be eligible for responsive local AI");
+
+        assert_eq!(recommendation.0, "gemma-4-e4b-q4");
+        assert!(recommendation.1.contains("24576 MiB total memory"));
+        assert!(recommendation.1.contains("4873 MiB available memory"));
+        assert!(recommendation.1.contains("Metal acceleration"));
+    }
+
+    #[cfg(feature = "native-runtime")]
+    #[test]
+    fn mac_profile_recommends_latency_first_default_even_on_large_macs() {
         let recommendation = local_model_recommendation_for_profile(
             32_768, 16_384, 128_000, 10, 15, "arm64", "metal",
         )
         .expect("strong Mac profile should be eligible for a local model");
 
-        assert_eq!(recommendation.0, "gemma-4-26b-a4b-q4");
+        assert_eq!(recommendation.0, "gemma-4-e4b-q4");
         assert!(recommendation.1.contains("32768 MiB total memory"));
         assert!(recommendation.1.contains("Metal acceleration"));
     }

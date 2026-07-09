@@ -61,9 +61,9 @@
     const response = await fetch('/api/v1/bootstrap', {
       method: 'POST',
       headers: {
-        'X-PlushPal-Bootstrap': bootstrap,
-        'X-PlushBuddy-Client-Id': clientId(),
-        'X-PlushBuddy-Client-Label': clientLabel(),
+        'X-ToyTalk-Bootstrap': bootstrap,
+        'X-ToyTalk-Client-Id': clientId(),
+        'X-ToyTalk-Client-Label': clientLabel(),
       },
       credentials: 'same-origin',
     });
@@ -72,7 +72,10 @@
       window.__toytalkStationBootstrapStatus = 'failed';
       return 'failed';
     }
-    rememberHubId(response.headers.get('x-plushbuddy-hub-id'));
+    rememberHubId(
+      response.headers.get('x-toytalk-hub-id') ||
+        response.headers.get('x-plushbuddy-hub-id'),
+    );
     window.__toytalkStationBootstrapStatus = 'ready';
     return 'ready';
   })().catch(() => {

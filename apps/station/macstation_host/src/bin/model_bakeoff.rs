@@ -109,7 +109,7 @@ fn run() -> Result<(), String> {
     let models = candidate_models(&models_dir);
     let prompts = bakeoff_prompts();
     let mut notes = vec![
-        "Local results use PlushBuddy's shared child-safe prompt contract and native llama.cpp wrapper.".to_owned(),
+        "Local results use ToyTalk's shared child-safe prompt contract and native llama.cpp wrapper.".to_owned(),
         "Prompts marked needs_recent_data should use bounded search or cloud mode in product; local frozen-weight answers are scored cautiously.".to_owned(),
     ];
     if !env::var("GEMINI_API_KEY").is_ok() && !Path::new("gemiapi").exists() {
@@ -398,6 +398,7 @@ fn call_gemini(
         character_play_age_years: Some(3),
         parent_guidance: Some("Buddy is a tiny plush puppy who talks like a gentle preschool friend. He loves blocks, rainbows, cozy blankets, and pretend puppy adventures.".to_owned()),
         recent_turns: Vec::new(),
+        grounding_evidence: Vec::new(),
         current_text: prompt.text.clone(),
         repair_instruction: None,
         max_response_characters: policy.max_output_characters,
@@ -460,6 +461,7 @@ fn request_for_prompt(prompt: &BakeoffPrompt) -> BoundedConversationRequest {
         character_play_age_years: Some(3),
         parent_guidance: Some("Buddy is a tiny plush puppy who talks like a gentle preschool friend. He loves blocks, rainbows, cozy blankets, and pretend puppy adventures.".to_owned()),
         recent_turns: Vec::new(),
+        grounding_evidence: Vec::new(),
         current_text: prompt.text.clone(),
         repair_instruction: None,
         max_response_characters: policy.max_output_characters,
@@ -609,7 +611,7 @@ fn render_markdown(run: &BakeoffRun) -> String {
         .map(|prompt| (&prompt.id, prompt))
         .collect();
     let mut markdown = String::new();
-    markdown.push_str("# PlushBuddy local model bakeoff\n\n");
+    markdown.push_str("# ToyTalk local model bakeoff\n\n");
     markdown.push_str(&format!(
         "Generated at epoch seconds `{}` for a {} year {} month old child and character `{}` playing age {}.\n\n",
         run.generated_at_epoch_seconds,
@@ -679,11 +681,11 @@ fn render_markdown(run: &BakeoffRun) -> String {
 }
 
 fn default_models_dir() -> PathBuf {
-    PathBuf::from("/Users/prafullakumarpalwe/Downloads/PlushPal/bakeoff/models")
+    PathBuf::from("/Users/prafullakumarpalwe/Downloads/ToyTalk/bakeoff/models")
 }
 
 fn default_results_dir() -> PathBuf {
-    PathBuf::from("/Users/prafullakumarpalwe/Downloads/PlushPal/bakeoff/results")
+    PathBuf::from("/Users/prafullakumarpalwe/Downloads/ToyTalk/bakeoff/results")
 }
 
 #[cfg(test)]

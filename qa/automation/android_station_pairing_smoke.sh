@@ -72,7 +72,7 @@ COOKIE_HEADERS="$RESULT_DIR/bootstrap-headers.txt"
 curl -sS -o /dev/null -D "$COOKIE_HEADERS" \
   -X POST \
   -H "Origin: $BASE_URL" \
-  -H "x-plushpal-bootstrap: $BOOTSTRAP" \
+  -H "x-toytalk-bootstrap: $BOOTSTRAP" \
   "$BASE_URL/api/v1/bootstrap"
 COOKIE="$(grep -i '^set-cookie:' "$COOKIE_HEADERS" | head -1 | sed -E 's/[Ss]et-[Cc]ookie: ([^;]+).*/\\1/' | tr -d '\r')"
 if [[ -z "$COOKIE" ]]; then

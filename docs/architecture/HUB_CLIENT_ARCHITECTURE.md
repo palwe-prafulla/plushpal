@@ -34,9 +34,9 @@ Implemented Hub behavior:
 - Paired clients are UI shells with mic capture, local STT when verified,
   playback, stable client identity, and Hub pairing/session state.
 - Pairing/bootstrap returns the Hub's stable `hub-*` identity in
-  `X-PlushBuddy-Hub-Id`; clients persist it with their pairing credentials.
-- Every private persisted API call includes both `X-PlushBuddy-Client-Id` and
-  `X-PlushBuddy-Hub-Id`. Client-owned APIs resolve the target encrypted store
+  `X-ToyTalk-Hub-Id`; clients persist it with their pairing credentials.
+- Every private persisted API call includes both `X-ToyTalk-Client-Id` and
+  `X-ToyTalk-Hub-Id`. Client-owned APIs resolve the target encrypted store
   from the client ID. Hub-owned APIs, including parent PIN checks and Cloud AI
   model settings, validate the Hub ID and open the Hub-scoped encrypted store
   rather than relying on IP address, LAN URL, or an implicit root fallback.
@@ -151,7 +151,7 @@ clients get isolated encrypted scoped stores for family data.
 Target database:
 
 ```text
-~/Library/Application Support/ToyTalk/toytalk-hub.sqlcipher
+~/Library/Application Support/ToyTalk/toytalk.sqlcipher
 ```
 
 The root DB is retained for compatibility/key derivation. The Hub has a stable
@@ -232,8 +232,8 @@ parent PIN in paired product usage.
 1. Broaden Mac/WebKit microphone QA for the implemented Hub STT fallback.
 2. Broaden local/cloud reasoning safety and quality regression coverage.
 3. Polish the two-choice runtime setup screen and latency diagnostics.
-4. Rename remaining historical `macstation` strings/paths to ToyTalk Hub
-   where practical.
+4. Keep legacy `macstation` source-directory names as internal implementation
+   details until a future non-functional repository cleanup.
 
 ## 11. Current compatibility note
 

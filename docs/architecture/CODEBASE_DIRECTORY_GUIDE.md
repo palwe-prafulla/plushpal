@@ -74,7 +74,7 @@ Important areas:
 | `lib/src/backend/backend_client_stub.dart` | Native Android/iOS Hub HTTP client via platform bridge |
 | `lib/src/backend/backend_client_web.dart` | Browser wrapper for Hub-served local web client |
 | `android/app/src/main/kotlin/.../MainActivity.kt` | Android platform bridge: pairing storage, on-device STT, bounded fallback audio, playback, file pickers |
-| `ios/Runner/PlushPalPlatformPlugin.swift` | iOS platform bridge: pairing storage, on-device STT target, bounded fallback audio, playback, file pickers |
+| `ios/Runner/ToyTalkPlatformPlugin.swift` | iOS platform bridge: pairing storage, on-device STT target, bounded fallback audio, playback, file pickers |
 | `web/plushpal_backend.js` | Local browser JavaScript bridge to the Hub |
 | `test/` | Flutter unit/widget/backend tests |
 
@@ -134,8 +134,8 @@ Important API groups:
 Hub storage routing uses:
 
 ```http
-X-PlushBuddy-Client-Id: <stable client id>
-X-PlushBuddy-Hub-Id: <stable hub id>
+X-ToyTalk-Client-Id: <stable client id>
+X-ToyTalk-Hub-Id: <stable hub id>
 ```
 
 Hub-owned APIs open the Hub-scoped encrypted store. Family-data APIs open the

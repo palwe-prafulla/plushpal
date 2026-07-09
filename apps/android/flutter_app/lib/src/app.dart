@@ -293,8 +293,7 @@ class ToyTalkRoot extends StatefulWidget {
   State<ToyTalkRoot> createState() => _ToyTalkRootState();
 }
 
-class _ToyTalkRootState extends State<ToyTalkRoot>
-    with WidgetsBindingObserver {
+class _ToyTalkRootState extends State<ToyTalkRoot> with WidgetsBindingObserver {
   AppState state = const AppState();
   String? message;
   String? latestSpeech;
@@ -575,7 +574,8 @@ class _ToyTalkRootState extends State<ToyTalkRoot>
         overrideMessage:
             'I answered below, but the buddy voice could not play. Check the ToyTalk Hub and try again.',
       );
-      if (!(voiceApproved && voiceRuntimeReady) && widget.platform.supportsSpeech) {
+      if (!(voiceApproved && voiceRuntimeReady) &&
+          widget.platform.supportsSpeech) {
         try {
           await widget.platform.speak(response.speech);
         } catch (fallbackError) {
@@ -908,6 +908,41 @@ class _ToyTalkRootState extends State<ToyTalkRoot>
       ),
     );
     if (submitted == true && mounted) await assessDevice();
+  }
+
+  Future<void> setWebSearchEnabled(bool enabled) async {
+    final pin = await requestParentPin(
+      enabled
+          ? 'Turn on Cloud AI web search?'
+          : 'Turn off Cloud AI web search?',
+    );
+    if (pin == null) return;
+    try {
+      await widget.backend.setWebSearchEnabled(pin: pin, enabled: enabled);
+      if (!mounted) return;
+      setState(() {
+        reasoningProvider = ReasoningProviderStatus(
+          provider: reasoningProvider.provider,
+          configured: reasoningProvider.configured,
+          displayName: reasoningProvider.displayName,
+          webSearchEnabled: enabled,
+        );
+      });
+      showActionMessage(
+        enabled
+            ? 'Cloud AI web search is on for latest-info questions.'
+            : 'Cloud AI web search is off. Toy buddies will ask a grown-up for latest-info questions.',
+      );
+      await assessDevice();
+    } catch (error) {
+      if (!mounted) return;
+      showActionMessage(
+        userFacingError(
+          error,
+          fallback: 'Could not update Cloud AI web search.',
+        ),
+      );
+    }
   }
 
   Future<void> installModel() async {
@@ -1767,6 +1802,7 @@ class _ToyTalkRootState extends State<ToyTalkRoot>
             voiceDurationMilliseconds: voiceDurationMilliseconds,
             retentionDays: retentionDays,
             configureGeminiKey: configureGeminiKey,
+            setWebSearchEnabled: setWebSearchEnabled,
             pairWithStation: pairWithStation,
             selectKid: selectKid,
             addOrEditKid: addOrEditKid,
@@ -3809,6 +3845,7 @@ class SettingsMenuScreen extends StatelessWidget {
     required this.voiceDurationMilliseconds,
     required this.retentionDays,
     required this.configureGeminiKey,
+    required this.setWebSearchEnabled,
     required this.pairWithStation,
     required this.selectKid,
     required this.addOrEditKid,
@@ -3847,6 +3884,7 @@ class SettingsMenuScreen extends StatelessWidget {
   final int? voiceDurationMilliseconds;
   final int? retentionDays;
   final Future<void> Function() configureGeminiKey;
+  final Future<void> Function(bool enabled) setWebSearchEnabled;
   final Future<void> Function() pairWithStation;
   final Future<void> Function(String kidId) selectKid;
   final Future<void> Function([KidProfile? existing]) addOrEditKid;
@@ -3885,6 +3923,8 @@ class SettingsMenuScreen extends StatelessWidget {
         : voiceEnrolled
         ? 'Listen and save needed'
         : 'Needs a voice sample';
+    final runtimeMode = state.recommendation?.runtimeMode ?? 'custom';
+    final showCloudWebSearchSetting = runtimeMode != 'privacy_local_first';
     return Scaffold(
       appBar: AppBar(title: const Text('Parent Settings')),
       body: ListView(
@@ -3911,6 +3951,18 @@ class SettingsMenuScreen extends StatelessWidget {
                   ),
                 ),
               ),
+              if (showCloudWebSearchSetting)
+                _SettingsTile(
+                  icon: Icons.travel_explore,
+                  title: 'Cloud AI web search',
+                  subtitle: reasoningProvider.webSearchEnabled
+                      ? 'On. Current questions can use ${reasoningProvider.displayName} search tools when needed.'
+                      : 'Off. Toy buddies ask a grown-up instead of guessing latest facts.',
+                  trailing: Switch.adaptive(
+                    value: reasoningProvider.webSearchEnabled,
+                    onChanged: setWebSearchEnabled,
+                  ),
+                ),
             ],
           ),
           _SettingsGroup(

@@ -66,7 +66,7 @@ fn openai_request_body(target: &ProviderTarget, minimized_request: &str) -> serd
         "text": {
             "format": {
                 "type": "json_schema",
-                "name": "plushpal_character_response",
+                "name": "toytalk_character_response",
                 "strict": true,
                 "schema": {
                     "type": "object",
@@ -509,6 +509,7 @@ mod tests {
                 role: TurnRole::Child,
                 text: "my number is 415-555-1212".to_owned(),
             }],
+            grounding_evidence: Vec::new(),
             current_text: "why blue? email kid@example.com".to_owned(),
             repair_instruction: None,
             max_response_characters: 450,
@@ -671,6 +672,8 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("cannot override these rules"));
+        assert_eq!(body["text"]["format"]["name"], "toytalk_character_response");
+        assert_eq!(body["text"]["format"]["strict"], true);
         let encoded = serde_json::to_string(&body).unwrap();
         for prohibited in ["conversation_id", "previous_response_id", "credential_ref"] {
             assert!(!encoded.contains(prohibited));

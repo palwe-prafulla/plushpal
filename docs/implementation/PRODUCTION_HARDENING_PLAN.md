@@ -60,6 +60,9 @@ Reasoning:
   script/requirements checksums.
 - Packaged LuxTTS installer repairs missing, incomplete, or stale runtime
   environments instead of silently reusing them.
+- Packaged search-router installer prepares the MiniLM-L6 current-info
+  classifier outside the app bundle, writes a runtime marker, and repairs stale
+  runtime environments before Hub starts.
 - Hub includes a confirmation-gated “Reset voice runtime” action that
   rebuilds only the local LuxTTS venv and preserves app data/model caches.
 - Public repo check runs a fast LuxTTS installer marker regression test.
@@ -85,7 +88,7 @@ Reasoning:
   - failed worker healthcheck;
   - stale host process/port conflict.
 - Version/checksum marker files for downloaded/runtime components where
-  practical. ✅ for packaged LuxTTS venv
+  practical. ✅ for packaged LuxTTS venv and search-router venv
 - Clear actionable error messages with copyable diagnostics. ✅ initial Hub
   diagnostics path
 
@@ -193,8 +196,8 @@ Done for baseline clone health.
 
 - Demo voice mode exists.
 - Demo conversation mode exists.
-- `PLUSHPAL_RUNTIME_MODE` supports `mock`, `demo`, `local_voice`, `cloud`, and
-  `full`.
+- `PLUSHPAL_RUNTIME_MODE` supports `mock`, `demo`, `local_voice`,
+  `privacy_local_first`, `cloud_llm`, `cloud`, and `full`.
 - Real LuxTTS path remains separate.
 
 ### Remaining deliverables
@@ -206,18 +209,22 @@ Done for baseline clone health.
 | `mock` | fixture response | synthetic WAV | CI and fast local demo |
 | `demo` | fixture/demo response | synthetic WAV | public try-it mode |
 | `local_voice` | fixture response | LuxTTS | voice quality testing |
-| `cloud` | Gemini/OpenAI | synthetic WAV | reasoning testing |
-| `full` | Gemini/OpenAI | LuxTTS | real product flow |
+| `privacy_local_first` | Local AI model | LuxTTS | local-first product flow |
+| `cloud_llm` | Gemini/OpenAI | LuxTTS | Cloud AI product flow |
+| `cloud` | Gemini/OpenAI | LuxTTS | legacy alias for Cloud AI |
+| `full` | Gemini/OpenAI | LuxTTS | legacy full-product flow |
 
 - Central mode parser/config object shared by Hub/app launch scripts. ✅
-- UI labels for non-full modes.
+- UI labels for non-product/demo modes.
 - Tests ensuring mock/demo/local_voice modes never call cloud providers. ✅ for
   Hub mode selection
 
 ### Acceptance criteria
 
 - No test depends on real cloud or heavy model unless explicitly requested.
-- `full` mode is the only mode that combines cloud reasoning and LuxTTS.
+- `cloud_llm`/`cloud`/`full` are the only modes that combine Cloud AI and
+  LuxTTS; `privacy_local_first` combines Local AI and LuxTTS without cloud
+  conversation calls.
 - Logs/status clearly show the active mode.
 
 ### Tests

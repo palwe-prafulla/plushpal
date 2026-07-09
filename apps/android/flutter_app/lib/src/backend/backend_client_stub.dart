@@ -165,6 +165,7 @@ class MethodChannelBackendClient implements BackendClient {
       provider: 'hub',
       configured: false,
       displayName: 'ToyTalk Hub',
+      webSearchEnabled: false,
     );
   }
 
@@ -188,6 +189,18 @@ class MethodChannelBackendClient implements BackendClient {
   @override
   Future<void> configureGeminiApiKey(String apiKey) =>
       configureApiKey(pin: '', provider: 'gemini', apiKey: apiKey);
+
+  @override
+  Future<void> setWebSearchEnabled({
+    required String pin,
+    required bool enabled,
+  }) async {
+    final station = await _stationBackend();
+    if (station != null) {
+      return station.setWebSearchEnabled(pin: pin, enabled: enabled);
+    }
+    _hubRequired();
+  }
 
   @override
   Future<List<KidProfile>> kids() async {
@@ -274,9 +287,7 @@ class MethodChannelBackendClient implements BackendClient {
   Future<String> transcribeSpeech(Uint8List wavBytes) async {
     final station = await _stationBackend();
     if (station != null) return station.transcribeSpeech(wavBytes);
-    throw UnsupportedError(
-      'Hub speech-to-text requires ToyTalk Hub pairing.',
-    );
+    throw UnsupportedError('Hub speech-to-text requires ToyTalk Hub pairing.');
   }
 
   @override
@@ -664,9 +675,9 @@ class _StationBackendClient implements BackendClient {
         baseUrl.replace(path: '/api/v1/bootstrap'),
       );
       request.headers
-        ..set('X-PlushPal-Bootstrap', bootstrap)
-        ..set('X-PlushBuddy-Client-Id', clientId)
-        ..set('X-PlushBuddy-Client-Label', clientLabel)
+        ..set('X-ToyTalk-Bootstrap', bootstrap)
+        ..set('X-ToyTalk-Client-Id', clientId)
+        ..set('X-ToyTalk-Client-Label', clientLabel)
         ..set('origin', origin);
       final response = await request.close().timeout(
         const Duration(seconds: 10),
@@ -697,7 +708,9 @@ class _StationBackendClient implements BackendClient {
       if (cookie == null || cookie.isEmpty) {
         throw const HttpException('Hub did not return a session cookie.');
       }
-      final hubId = response.headers.value('x-plushbuddy-hub-id')?.trim();
+      final hubId =
+          response.headers.value('x-toytalk-hub-id')?.trim() ??
+          response.headers.value('x-plushbuddy-hub-id')?.trim();
       if (hubId == null ||
           hubId.isEmpty ||
           !RegExp(r'^hub-[a-f0-9-]{36}$').hasMatch(hubId)) {
@@ -730,13 +743,13 @@ class _StationBackendClient implements BackendClient {
       if (authenticated) {
         request.headers.set(HttpHeaders.cookieHeader, config.cookie);
       }
-      request.headers.set('X-PlushBuddy-Client-Id', config.clientId);
-      request.headers.set('X-PlushBuddy-Hub-Id', config.hubId);
+      request.headers.set('X-ToyTalk-Client-Id', config.clientId);
+      request.headers.set('X-ToyTalk-Hub-Id', config.hubId);
       final clientLabel = await channel
           .invokeMethod<String>('stationClientLabel')
           .catchError((_) => null);
       if (clientLabel != null && clientLabel.trim().isNotEmpty) {
-        request.headers.set('X-PlushBuddy-Client-Label', clientLabel.trim());
+        request.headers.set('X-ToyTalk-Client-Label', clientLabel.trim());
       }
       // Dart/Android HttpClient is not a browser and does not add Origin
       // automatically. ToyTalk Hub validates API requests against the
@@ -888,6 +901,7 @@ class _StationBackendClient implements BackendClient {
       provider: decoded['provider'] as String? ?? 'gemini',
       configured: decoded['configured'] as bool? ?? false,
       displayName: decoded['display_name'] as String? ?? 'Gemini',
+      webSearchEnabled: decoded['web_search_enabled'] as bool? ?? false,
     );
   }
 
@@ -912,6 +926,16 @@ class _StationBackendClient implements BackendClient {
   @override
   Future<void> configureGeminiApiKey(String apiKey) =>
       configureApiKey(pin: '', provider: 'gemini', apiKey: apiKey);
+
+  @override
+  Future<void> setWebSearchEnabled({
+    required String pin,
+    required bool enabled,
+  }) => _requestBytes(
+    'POST',
+    '/api/v1/provider/web-search',
+    body: {'pin': pin, 'enabled': enabled},
+  );
 
   @override
   Future<List<KidProfile>> kids() async {
@@ -983,6 +1007,8 @@ class _StationBackendClient implements BackendClient {
       parentGuidance: decoded['parent_guidance'] as String?,
       retentionDays: decoded['retention_days'] as int?,
       speechToTextReady: decoded['speech_to_text_ready'] as bool? ?? false,
+      webSearchProviderReady:
+          decoded['web_search_provider_ready'] as bool? ?? false,
     );
   }
 
@@ -1010,8 +1036,8 @@ class _StationBackendClient implements BackendClient {
       headers: {
         HttpHeaders.cookieHeader: config.cookie,
         'origin': config.origin,
-        'X-PlushBuddy-Client-Id': config.clientId,
-        'X-PlushBuddy-Hub-Id': config.hubId,
+        'X-ToyTalk-Client-Id': config.clientId,
+        'X-ToyTalk-Hub-Id': config.hubId,
       },
     ).timeout(const Duration(seconds: 10));
     try {

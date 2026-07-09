@@ -197,7 +197,7 @@ void main() {
       server.listen((request) async {
         observedPaths.add(request.uri.path);
         observedOrigins.add(request.headers.value('origin'));
-        observedLabels.add(request.headers.value('x-plushbuddy-client-label'));
+        observedLabels.add(request.headers.value('x-toytalk-client-label'));
         request.response
           ..headers.contentType = ContentType.json
           ..write(

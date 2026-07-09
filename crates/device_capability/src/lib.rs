@@ -216,7 +216,10 @@ pub fn initial_model_candidates() -> Vec<ModelCandidate> {
     vec![
         ModelCandidate {
             model_id: "gemma-4-e4b-q4".to_owned(),
-            quality_rank: 10,
+            // ToyTalk is a real-time voice toy. E4B is the default local model because
+            // it preserves the child-safe answer style while cutting local response
+            // latency materially versus larger Gemma tiers.
+            quality_rank: 30,
             supported_platforms: platforms.clone(),
             supported_architectures: architectures.clone(),
             minimum_os_versions: minimum_os_versions.clone(),
@@ -232,7 +235,10 @@ pub fn initial_model_candidates() -> Vec<ModelCandidate> {
             supported_platforms: platforms.clone(),
             supported_architectures: architectures.clone(),
             minimum_os_versions: minimum_os_versions.clone(),
-            minimum_total_memory_mib: 16_384,
+            // ToyTalk is an interactive voice toy: response latency matters more than
+            // squeezing the largest eligible model onto mid-memory Macs. Keep 12B for
+            // workstation-class Macs and prefer E4B on 16-24GB machines.
+            minimum_total_memory_mib: 32_768,
             expected_peak_memory_mib: 9_216,
             installed_size_mib: 6_654,
             minimum_logical_cores: 8,
@@ -240,7 +246,7 @@ pub fn initial_model_candidates() -> Vec<ModelCandidate> {
         },
         ModelCandidate {
             model_id: "gemma-4-26b-a4b-q4".to_owned(),
-            quality_rank: 30,
+            quality_rank: 10,
             supported_platforms: platforms,
             supported_architectures: architectures,
             minimum_os_versions,
@@ -271,24 +277,24 @@ mod tests {
     }
 
     #[test]
-    fn enhanced_device_selects_highest_quality_eligible_tier() {
+    fn enhanced_device_selects_latency_first_e4b_default() {
         let result = CapabilityAssessor::default().assess(
             &device(32_768, 32_768, 128_000),
             &initial_model_candidates(),
         );
         assert_eq!(
             result.recommended_model_id.as_deref(),
-            Some("gemma-4-26b-a4b-q4")
+            Some("gemma-4-e4b-q4")
         );
     }
 
     #[test]
-    fn mid_tier_device_selects_12b_when_26b_does_not_fit() {
+    fn mid_tier_device_selects_latency_friendly_e4b() {
         let result = CapabilityAssessor::default()
             .assess(&device(24_576, 24_576, 64_000), &initial_model_candidates());
         assert_eq!(
             result.recommended_model_id.as_deref(),
-            Some("gemma-4-12b-q4")
+            Some("gemma-4-e4b-q4")
         );
     }
 

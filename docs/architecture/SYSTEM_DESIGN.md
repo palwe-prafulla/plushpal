@@ -71,9 +71,7 @@ Remaining architecture work:
 - broaden Mac/WebKit microphone QA for the implemented bounded-audio Hub STT
   fallback path;
 - expand safety/regression evaluation for the selected local Gemma tiers and
-  cloud providers;
-- rename remaining historical `macstation` implementation names to ToyTalk
-  Hub where practical.
+  cloud providers.
 
 Implemented direction:
 
@@ -140,16 +138,19 @@ Candidate model stack:
 | Capability | Primary candidate | Notes |
 |---|---|---|
 | STT fallback | Lazy Hub setup using the Hub-managed Python/Transformers runtime for `openai/whisper-base`; future lean target is `whisper.cpp` | Use smaller/faster Whisper tier on lower-memory machines |
-| Local AI model | `llama.cpp` + signed Google Gemma 4 GGUF manifests | Hub recommends and installs the exact tier that fits Mac memory/storage |
-| TTS / voice clone | LuxTTS | Current best toy-voice match |
+| Current-info routing | `sentence-transformers/all-MiniLM-L6-v2` embeddings + tiny ToyTalk logistic classifier | Installed by Hub setup outside the app bundle; runs on every child question to classify whether the turn needs current/live information before AI routing/search decisions |
+| Cloud AI web search | Gemini/OpenAI provider-native search tools | Parent-facing setting; used only when Cloud AI is active, the parent enables Cloud AI web search, and the current-info router says the turn needs current/live information |
+| Advanced Local AI web evidence | Brave Search API env hook | Developer/power-user path only; not shown in the normal parent UX. If configured, Hub can inject bounded evidence into the shared prompt contract for Local AI. Otherwise Local AI fails safe on current/live questions |
+| Local AI model | `llama.cpp` + signed Google Gemma 4 E4B Q4 GGUF | Hub defaults to the latency-first local model; larger Gemma manifests remain optional/experimental |
+| TTS / voice clone | LuxTTS | Current best toy-voice match using `num_steps=4`, `speed=0.88`, `seed=11`, and full approved reference up to 180 seconds |
 
-Suggested local AI model tiers:
+Suggested local AI model default:
 
 | Hub memory | Suggested Local AI tier |
 |---:|---|
 | 12 GB | Gemma 4 E4B Q4 |
-| 16-24 GB | Gemma 4 12B Q4 |
-| 32 GB+ | Gemma 4 26B A4B Q4 |
+| 16-24 GB | Gemma 4 E4B Q4 |
+| 32 GB+ | Gemma 4 E4B Q4 by default; 12B/26B can be evaluated later as optional slower quality modes |
 
 Pros:
 
@@ -164,6 +165,10 @@ Cons:
 - More memory/CPU/GPU pressure.
 - Local AI model may be less capable than Gemini/OpenAI.
 - Local AI model knowledge can be stale.
+- Current/live Local AI answers use a child-friendly grown-up fallback by
+  default instead of guessing from stale memory. A hidden developer/power-user
+  Brave Search env hook can provide evidence, but it is not part of normal
+  parent setup.
 - Requires broader safety and quality regression evidence before product
   release claims.
 
@@ -232,8 +237,8 @@ flowchart TB
         Pairing["Paired devices<br/>stable client identity"]
         Policy["Guardrails + redaction + prompt builder"]
         LocalSTT["Local STT fallback<br/>packaged Whisper"]
-        LocalLLM["Local AI model<br/>llama.cpp/GGUF"]
-        CloudLLM["Gemini/OpenAI<br/>cloud mode only"]
+        LocalAI["Local AI model<br/>llama.cpp/GGUF"]
+        CloudAI["Gemini/OpenAI<br/>cloud mode only"]
         TTS["LuxTTS worker<br/>toy voice synthesis"]
         VoiceStore["Encrypted voice refs"]
     end
@@ -243,8 +248,8 @@ flowchart TB
     API --> Pairing
     API --> Policy
     API --> LocalSTT
-    Policy --> LocalLLM
-    Policy --> CloudLLM
+    Policy --> LocalAI
+    Policy --> CloudAI
     API --> TTS
     TTS --> VoiceStore
     TTS --> Client
@@ -288,11 +293,8 @@ Each Hub installation has a root encrypted SQLCipher database for Hub registry
 compatibility state and key derivation:
 
 ```text
-~/Library/Application Support/ToyTalk/toytalk-hub.sqlcipher
+~/Library/Application Support/ToyTalk/toytalk.sqlcipher
 ```
-
-Current implementation uses `toytalk.sqlcipher` for compatibility with earlier
-dev builds. A future migration may rename it to `toytalk-hub.sqlcipher`.
 
 The root store is not the normal product data tenant. It is retained for
 compatibility, database bootstrap, key material, and migration support.
@@ -328,16 +330,16 @@ Per-client stores own:
 Every private persisted API request must include:
 
 ```http
-X-PlushBuddy-Client-Id: <stable-client-id>
-X-PlushBuddy-Hub-Id: <hub-id returned during bootstrap/pairing>
-X-PlushBuddy-Client-Label: <friendly device label>
+X-ToyTalk-Client-Id: <stable-client-id>
+X-ToyTalk-Hub-Id: <hub-id returned during bootstrap/pairing>
+X-ToyTalk-Client-Label: <friendly device label>
 ```
 
 The backend uses the request client ID to resolve client-owned data such as
 kids, characters, voice profiles, conversation history, and backups. For
 Hub-owned APIs such as parent PIN verification/update, Cloud AI provider keys,
 active provider selection, paired-device registry, and revocation, the backend
-validates `X-PlushBuddy-Hub-Id` and opens the Hub-scoped store. It does not
+validates `X-ToyTalk-Hub-Id` and opens the Hub-scoped store. It does not
 infer tenancy from IP address, LAN URL, session cookie contents, or the root DB.
 
 The Hub macOS launcher generates and persists its own `hub-*` ID in user
@@ -385,7 +387,7 @@ Pairing flow:
 3. Parent opens Hub pairing QR.
 4. QR contains a one-time bootstrap token and Hub address.
 5. Client exchanges bootstrap token plus `client_id`/public key.
-6. Hub stores the device in `paired_clients` and returns `X-PlushBuddy-Hub-Id`.
+6. Hub stores the device in `paired_clients` and returns `X-ToyTalk-Hub-Id`.
 7. Client persists the Hub ID with its pairing credentials.
 8. Future sessions authenticate with the device credential and receive a short
    session token.
@@ -493,7 +495,29 @@ sequenceDiagram
     Client->>Hub: send transcript + selected kid/character
     Hub->>DB: load profile/history/settings
     Hub->>Hub: redact + build guarded prompt
-    Hub->>Reason: generate response
+    Hub->>Hub: classify current/live info need every turn
+    alt current/live info needed
+        alt Local AI mode
+            Hub->>Web: fetch Hub-owned web evidence
+            alt advanced evidence provider configured
+                Web-->>Hub: title/excerpt evidence
+                Hub->>Reason: generate from guarded prompt + evidence only
+            else no local evidence provider
+                Hub-->>Client: grown-up fallback instead of stale answer
+            end
+        else Cloud AI mode
+            alt Cloud AI web search on
+                Hub->>Reason: generate with provider web-search tool when supported
+            else Cloud AI web search off
+                Hub->>Reason: cloud answer with double-check caveat
+            end
+        end
+    else timeless question
+        Hub->>Reason: generate normally
+    end
+    alt Cloud AI fails on current/live question
+        Hub-->>Client: safe retry/error instead of stale local fallback
+    end
     Reason-->>Hub: structured text
     Hub->>DB: store conversation turn
     Hub->>Lux: synthesize with approved voice
@@ -509,6 +533,18 @@ sequenceDiagram
 - Voice samples stay on the local network and are not sent to Gemini/OpenAI.
 - Cloud AI mode sends only minimized/redacted text.
 - Local-first mode sends no conversation text to Cloud AI providers.
+- The current-info router runs locally on the Hub for every child question. It
+  classifies routing only; it does not answer the child or persist prompts
+  outside the normal local Hub logs/history path.
+- Cloud AI web search is parent-controlled in the encrypted Hub settings. If
+  enabled and the classifier marks a turn as current/live, Gemini/OpenAI may use
+  their native web-search tools. If disabled, Cloud AI responses carry a
+  kid-friendly double-check caveat for current/live turns.
+- Local AI is local-first in the normal UX: if a turn needs current/live
+  information, Hub returns a kid-friendly grown-up fallback instead of using
+  stale model memory. A hidden Brave Search env hook can be used for advanced
+  Local AI evidence experiments; when present, the prompt contract instructs the
+  model to answer only from that evidence.
 - Clients must authenticate every Hub API call.
 - Parent PIN gates settings and destructive actions.
 - Device revocation must be supported.
@@ -538,15 +574,13 @@ Performance tactics:
 
 1. Broaden Local AI model safety and quality regression coverage.
 2. Broaden Mac/WebKit microphone QA and optimize Hub STT runtime packaging.
-3. Rename historical `macstation` implementation paths/strings to ToyTalk Hub.
-4. Windows Hub launcher/runtime.
-5. Linux Hub launcher/runtime.
+3. Windows Hub launcher/runtime.
+4. Linux Hub launcher/runtime.
 
 ## 17. Remaining implementation work
 
 - Broaden local/cloud reasoning safety regression coverage.
 - Polish Hub runtime-mode setup screen around the two parent-facing choices.
 - Broaden Mac/WebKit microphone QA for the implemented Hub STT fallback.
-- Rename remaining user-facing/internal historical `macstation` language to
-  ToyTalk Hub.
-- Keep old `macstation` code paths only as implementation names until renamed.
+- Keep legacy `macstation` source-directory names as internal implementation
+  details until a future non-functional repository cleanup.

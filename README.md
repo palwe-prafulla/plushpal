@@ -53,6 +53,13 @@ clients for mic capture, local STT when available, and playback.
 - Supports voice-first child input on native clients, with typing as fallback.
 - Offers two Hub modes: Local AI or Cloud AI.
 - Redacts/pseudonymizes kid information before cloud reasoning in cloud mode.
+- Runs a small Hub-side smart router on every child question to detect
+  current/live questions, so stale answers are avoided for questions like
+  weather today, sports scores, or current office holders.
+- Lets parents turn Cloud AI web search on/off. When it is on, supported Cloud
+  AI providers may use native search only for questions the router marks as
+  current/live. Local AI stays local and asks the child to check with a grown-up
+  instead of guessing latest facts.
 - Synthesizes the response locally through LuxTTS in the selected toy voice.
 - Keeps conversation history scoped by kid and character.
 
@@ -80,8 +87,8 @@ The Hub also has its own stable `hub-*` client identity. Hub admin data
 including parent PIN, Cloud AI provider keys, active provider, and paired-device
 revocation lives in that Hub-scoped encrypted store. During pairing/bootstrap,
 the Hub returns that Hub ID to the client. After that, every private persisted
-client request sends both `X-PlushBuddy-Client-Id` and
-`X-PlushBuddy-Hub-Id`: client-owned data is isolated by stable device identity,
+client request sends both `X-ToyTalk-Client-Id` and
+`X-ToyTalk-Hub-Id`: client-owned data is isolated by stable device identity,
 while Hub-owned checks such as parent PIN and Cloud AI settings are routed to
 the Hub store explicitly rather than by IP address or hidden global fallback.
 
@@ -92,7 +99,10 @@ flowchart TB
     Hub --> Registry["Root SQLCipher DB<br/>key + compatibility store"]
     Hub --> ClientDB["Per-client SQLCipher stores<br/>kids, characters, history, voices"]
     Hub --> STT["Local STT fallback<br/>packaged Whisper"]
+    Hub --> Router["Smart current-info router<br/>MiniLM-L6 classifier"]
+    Router --> SearchGate["Cloud AI web-search setting<br/>allow / caveat / grown-up fallback"]
     Hub --> AI["Local AI model or Gemini/OpenAI"]
+    SearchGate --> AI
     Hub --> TTS["LuxTTS toy voice"]
     TTS --> Clients
 ```
@@ -183,6 +193,8 @@ Start here:
 - [Detailed system design and architecture](docs/architecture/SYSTEM_DESIGN.md)
 - [Codebase directory guide](docs/architecture/CODEBASE_DIRECTORY_GUIDE.md)
 - [ToyTalk Hub client architecture](docs/architecture/HUB_CLIENT_ARCHITECTURE.md)
+- [Parent/user guide](docs/product/USER_GUIDE.md)
+- [Troubleshooting and debug guide](docs/product/TROUBLESHOOTING.md)
 - [Documentation publication policy](docs/PUBLICATION_POLICY.md)
 - [Production hardening plan](docs/implementation/PRODUCTION_HARDENING_PLAN.md)
 - [QA test plan and latest execution report](docs/release/QA_TEST_PLAN_AND_EXECUTION_2026-06-25.md)
@@ -266,6 +278,9 @@ The implementation has moved to this stricter backend model:
 | Hub backend | Rust, Axum, Tokio |
 | Hub database | SQLCipher via Rust `rusqlite` |
 | Hub STT fallback | Lazy setup using the Hub-managed Python/LuxTTS runtime plus `openai/whisper-base`; `whisper.cpp` is the future lean-runtime target |
+| Current-info router | Lazy setup using `sentence-transformers/all-MiniLM-L6-v2` plus a tiny ToyTalk logistic classifier |
+| Cloud AI web search | Gemini/OpenAI provider-native search tools, used only when the parent enables Cloud AI web search and the local router marks a child turn as current/live |
+| Advanced local web evidence | Optional Brave Search API env hook for developer/power-user Local AI experiments; not part of the normal parent setup UX |
 | Local AI model | `llama.cpp` + signed Google Gemma GGUF model tier by memory |
 | Voice model | LuxTTS through `tools/voice/luxtts_worker.py` |
 | Cloud AI mode | Gemini/OpenAI called from Hub after redaction |
@@ -501,6 +516,9 @@ the background. QR pairing is for external native clients.
    - choose Local AI or Cloud AI mode;
    - configure Gemini/OpenAI if using Cloud AI;
    - install the recommended local model if using Local AI.
+   - optionally enable **Cloud AI web search** if using Cloud AI and you want
+     supported providers to answer current/live questions with their search
+     tools.
 6. In Android settings:
    - create kid profile;
    - create character;
@@ -545,13 +563,13 @@ For physical iPhone:
 The current best local voice path is LuxTTS with:
 
 ```text
-num_steps = 8
+num_steps = 4
 speed     = 0.88
 seed      = 11
 reference = full uploaded reference, up to 180 seconds
 ```
 
-Hub starts a persistent LuxTTS worker so the model stays loaded between requests. It also caches encoded voice prompt/reference state by audio hash where supported, reducing repeated work without changing quality settings.
+Hub starts a persistent LuxTTS worker so the model stays loaded between requests. It also caches encoded voice prompt/reference state by audio hash where supported, reducing repeated work while keeping the latency-friendly ToyTalk voice setting.
 
 Raw uploaded samples are transient. Hub persists only the encrypted processed reference artifact needed for future synthesis.
 
@@ -562,7 +580,8 @@ Chatterbox remains wired as a fallback/smoke-test path. OpenVoice, GPT-SoVITS, F
 Hub setup should offer only two parent-facing modes:
 
 - **Local AI**: verified client STT or Hub STT fallback, local AI model,
-  LuxTTS, and SQLCipher storage.
+  LuxTTS, and SQLCipher storage. Latest/current questions use a safe grown-up
+  fallback rather than stale model memory.
 - **Cloud AI**: verified client STT or Hub STT fallback, Hub redaction and
   guardrails, Gemini/OpenAI text reasoning, LuxTTS, and SQLCipher storage.
 
@@ -664,6 +683,34 @@ qa/automation/macstation_live_reasoning_smoke.mjs
 ```
 
 Generated evidence is written under `~/Downloads/ToyTalk/test-results` by default.
+
+## Troubleshooting and logs
+
+ToyTalk Hub writes local logs under:
+
+```text
+~/Library/Application Support/ToyTalk/logs
+```
+
+Most debugging starts with:
+
+```sh
+tail -100 "$HOME/Library/Application Support/ToyTalk/logs/host.log"
+grep "ToyTalk latency" "$HOME/Library/Application Support/ToyTalk/logs/host.log" | tail -30
+grep "ToyTalk ai_response" "$HOME/Library/Application Support/ToyTalk/logs/host.log" | tail -30
+grep "phase=hub_web_search" "$HOME/Library/Application Support/ToyTalk/logs/host.log" | tail -30
+grep "cloud provider failure" "$HOME/Library/Application Support/ToyTalk/logs/host.log" | tail -30
+```
+
+`ToyTalk ai_response` lines record the local AI/Gemini/OpenAI response that was
+actually used, tagged with mode, provider, model, and request id. Logs are local
+plain files on the Hub Mac, so treat them as private family/debug data before
+sharing. API keys and SQLCipher keys must never appear in logs.
+
+For parent-friendly recovery steps, see
+[docs/product/USER_GUIDE.md](docs/product/USER_GUIDE.md). For technical issue
+triage, see
+[docs/product/TROUBLESHOOTING.md](docs/product/TROUBLESHOOTING.md).
 
 ## Known limitations
 

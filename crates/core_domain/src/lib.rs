@@ -27,6 +27,14 @@ pub enum TurnRole {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GroundingEvidence {
+    pub source_id: String,
+    pub title: String,
+    pub excerpt: String,
+    pub source_url: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BoundedConversationRequest {
     pub policy_version: String,
     pub age_band: AgeBand,
@@ -37,6 +45,7 @@ pub struct BoundedConversationRequest {
     pub character_play_age_years: Option<u8>,
     pub parent_guidance: Option<String>,
     pub recent_turns: Vec<ConversationTurn>,
+    pub grounding_evidence: Vec<GroundingEvidence>,
     pub current_text: String,
     pub repair_instruction: Option<String>,
     pub max_response_characters: usize,

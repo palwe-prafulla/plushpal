@@ -20,7 +20,7 @@ lib/src/backend/backend_client.dart      backend interface
 lib/src/backend/backend_client_stub.dart native Hub HTTP client bridge
 lib/src/backend/backend_client_web.dart  local browser Hub wrapper
 android/app/src/main/kotlin/...          Android platform bridge
-ios/Runner/PlushPalPlatformPlugin.swift  iOS platform bridge
+ios/Runner/ToyTalkPlatformPlugin.swift   iOS platform bridge
 web/plushpal_backend.js                  browser bridge to Hub APIs
 test/                                    unit/widget/backend tests
 ```

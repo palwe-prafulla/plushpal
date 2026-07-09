@@ -28,6 +28,7 @@ class LocalModelReadiness {
     this.parentGuidance,
     this.retentionDays,
     this.speechToTextReady = false,
+    this.webSearchProviderReady = false,
   });
 
   final String modelId;
@@ -43,6 +44,7 @@ class LocalModelReadiness {
   final String? parentGuidance;
   final int? retentionDays;
   final bool speechToTextReady;
+  final bool webSearchProviderReady;
 }
 
 class KidProfile {
@@ -66,11 +68,13 @@ class ReasoningProviderStatus {
     required this.provider,
     required this.configured,
     required this.displayName,
+    this.webSearchEnabled = false,
   });
 
   final String provider;
   final bool configured;
   final String displayName;
+  final bool webSearchEnabled;
 }
 
 class ConversationHistoryEntry {
@@ -183,6 +187,10 @@ abstract interface class BackendClient {
     required String pin,
     required String provider,
     required String apiKey,
+  });
+  Future<void> setWebSearchEnabled({
+    required String pin,
+    required bool enabled,
   });
   Future<void> configureGeminiApiKey(String apiKey);
   Future<List<KidProfile>> kids();

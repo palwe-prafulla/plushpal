@@ -48,7 +48,7 @@ ctest --test-dir "$BUILD_ROOT/native-llama" --output-on-failure
 node --check apps/android/flutter_app/web/plushpal_backend.js
 node --check apps/android/flutter_app/web/audio_normalization.js
 node --test apps/android/flutter_app/test/audio_normalization_test.js
-xcrun swiftc -parse apps/android/flutter_app/ios/Runner/PlushPalPlatformPlugin.swift
+xcrun swiftc -parse apps/android/flutter_app/ios/Runner/ToyTalkPlatformPlugin.swift
 
 sh packaging/macos/package.sh
 test -f apps/android/flutter_app/build/web/assets/assets/fonts/Roboto-Regular.ttf

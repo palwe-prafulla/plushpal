@@ -35,6 +35,8 @@ ROOT = Path(__file__).resolve().parents[2]
 RESULTS_ROOT = Path(
     os.environ.get("PLUSHPAL_TEST_RESULTS_DIR", str(Path.home() / "Downloads" / "ToyTalk" / "test-results"))
 )
+AUTH_CLIENT_ID: str | None = None
+AUTH_HUB_ID: str | None = None
 
 
 def request(
@@ -59,8 +61,12 @@ def request(
     payload: bytes | None = None
     if cookie:
         headers["Cookie"] = cookie
+        if AUTH_CLIENT_ID:
+            headers["X-ToyTalk-Client-Id"] = AUTH_CLIENT_ID
+        if AUTH_HUB_ID:
+            headers["X-ToyTalk-Hub-Id"] = AUTH_HUB_ID
     if bootstrap:
-        headers["x-plushpal-bootstrap"] = bootstrap
+        headers["x-toytalk-bootstrap"] = bootstrap
     if body is not None:
         payload = json.dumps(body).encode("utf-8")
         headers["Content-Type"] = "application/json"
@@ -165,7 +171,7 @@ def main() -> int:
                     "PLUSHPAL_LUXTTS_SCRIPT",
                     str(packaged_app / "Contents" / "Resources" / "voice" / "luxtts_tts.py"),
                 ),
-                "PLUSHPAL_LUXTTS_NUM_STEPS": env.get("PLUSHPAL_LUXTTS_NUM_STEPS", "8"),
+                "PLUSHPAL_LUXTTS_NUM_STEPS": env.get("PLUSHPAL_LUXTTS_NUM_STEPS", "4"),
                 "PLUSHPAL_LUXTTS_SPEED": env.get("PLUSHPAL_LUXTTS_SPEED", "0.88"),
                 "PLUSHPAL_LUXTTS_SEED": env.get("PLUSHPAL_LUXTTS_SEED", "11"),
                 "PLUSHPAL_LUXTTS_REF_DURATION": env.get("PLUSHPAL_LUXTTS_REF_DURATION", "180"),
@@ -177,6 +183,8 @@ def main() -> int:
         "run",
         "--release",
         "-p",
+        "plushpal-desktop-host",
+        "--bin",
         "plushpal-desktop-host",
         "--features",
         "native-runtime",
@@ -222,8 +230,14 @@ def main() -> int:
         )
         expect(status, {204}, "bootstrap exchange", body)
         cookie = headers.get("set-cookie", "").split(";", 1)[0]
+        hub_id = headers.get("x-toytalk-hub-id") or headers.get("x-plushbuddy-hub-id")
         if not cookie:
             raise AssertionError("Bootstrap did not return session cookie")
+        if not hub_id:
+            raise AssertionError("Bootstrap did not return Hub identity")
+        global AUTH_CLIENT_ID, AUTH_HUB_ID
+        AUTH_CLIENT_ID = hub_id
+        AUTH_HUB_ID = hub_id
         report["checks"].append({"name": "bootstrap", "status": status})
 
         status, headers, body = request(base_url, "GET", "/api/v1/status", cookie=cookie)
@@ -255,6 +269,48 @@ def main() -> int:
         )
         expect(status, {204}, "configure parent pin", body)
         report["checks"].append({"name": "configure_parent_pin", "status": status})
+
+        status, headers, body = request(
+            base_url,
+            "POST",
+            "/api/v1/provider/web-search",
+            cookie=cookie,
+            body={"pin": args.pin, "enabled": True},
+        )
+        expect(status, {204}, "enable Cloud AI web search", body)
+        status, headers, body = request(base_url, "GET", "/api/v1/provider/status", cookie=cookie)
+        expect(status, {200}, "provider status after web search on", body)
+        provider_status = parse_json(body)
+        if provider_status.get("web_search_enabled") is not True:
+            raise AssertionError(f"Cloud AI web search did not persist as enabled: {provider_status}")
+        report["checks"].append(
+            {
+                "name": "cloud_ai_web_search_enabled",
+                "status": status,
+                "web_search_enabled": provider_status.get("web_search_enabled"),
+            }
+        )
+
+        status, headers, body = request(
+            base_url,
+            "POST",
+            "/api/v1/provider/web-search",
+            cookie=cookie,
+            body={"pin": args.pin, "enabled": False},
+        )
+        expect(status, {204}, "disable Cloud AI web search", body)
+        status, headers, body = request(base_url, "GET", "/api/v1/provider/status", cookie=cookie)
+        expect(status, {200}, "provider status after web search off", body)
+        provider_status = parse_json(body)
+        if provider_status.get("web_search_enabled") is not False:
+            raise AssertionError(f"Cloud AI web search did not persist as disabled: {provider_status}")
+        report["checks"].append(
+            {
+                "name": "cloud_ai_web_search_disabled",
+                "status": status,
+                "web_search_enabled": provider_status.get("web_search_enabled"),
+            }
+        )
 
         for alias in ["Sheru", "Jenna", "Buddy"]:
             status, headers, body = request(

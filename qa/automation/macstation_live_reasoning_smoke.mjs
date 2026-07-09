@@ -6,7 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const resultRoot = process.env.PLUSHPAL_TEST_RESULTS_DIR || join(process.env.HOME || '.', 'Downloads', 'PlushPal', 'test-results');
+const resultRoot = process.env.PLUSHPAL_TEST_RESULTS_DIR || join(process.env.HOME || '.', 'Downloads', 'ToyTalk', 'test-results');
 const resultDir = join(resultRoot, `hub-reasoning-${timestamp()}`);
 mkdirSync(resultDir, { recursive: true });
 
@@ -37,8 +37,9 @@ const report = {
 };
 
 let host;
+let hubId = '';
 try {
-  host = spawn('cargo', ['run', '--release', '-p', 'plushpal-desktop-host', '--features', 'native-runtime'], {
+  host = spawn('cargo', ['run', '--release', '-p', 'plushpal-desktop-host', '--bin', 'plushpal-desktop-host', '--features', 'native-runtime'], {
     cwd: root,
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -65,11 +66,13 @@ try {
   }
 
   const bootstrapResponse = await httpRaw(baseUrl, 'POST', '/api/v1/bootstrap', {
-    headers: { 'x-plushpal-bootstrap': bootstrap },
+    headers: { 'x-toytalk-bootstrap': bootstrap },
   });
   assertStatus(bootstrapResponse.status, [204], 'bootstrap');
   const cookie = bootstrapResponse.headers.get('set-cookie')?.split(';', 1)[0];
   if (!cookie) throw new Error('Missing session cookie');
+  hubId = bootstrapResponse.headers.get('x-toytalk-hub-id') || bootstrapResponse.headers.get('x-plushbuddy-hub-id') || '';
+  if (!hubId) throw new Error('Missing Hub identity');
   report.checks.push({ name: 'bootstrap', status: bootstrapResponse.status });
 
   const pinPayload = {
@@ -179,7 +182,13 @@ async function httpRaw(baseUrl, method, path, options = {}) {
     ...(options.headers || {}),
   };
   let body;
-  if (options.cookie) headers.Cookie = options.cookie;
+  if (options.cookie) {
+    headers.Cookie = options.cookie;
+    if (hubId) {
+      headers['X-ToyTalk-Client-Id'] = hubId;
+      headers['X-ToyTalk-Hub-Id'] = hubId;
+    }
+  }
   if (options.json) {
     headers['Content-Type'] = 'application/json';
     body = JSON.stringify(options.json);
@@ -200,7 +209,13 @@ function assertStatus(actual, expected, label) {
 
 function openWebSocket(url, cookie, origin) {
   return new Promise((resolvePromise, reject) => {
-    const ws = new WebSocket(url, { headers: { Cookie: cookie, Origin: origin } });
+    const ws = new WebSocket(url, {
+      headers: {
+        Cookie: cookie,
+        Origin: origin,
+        ...(hubId ? { 'X-ToyTalk-Client-Id': hubId, 'X-ToyTalk-Hub-Id': hubId } : {}),
+      },
+    });
     const timeout = setTimeout(() => reject(new Error('Timed out opening websocket')), 10_000);
     ws.addEventListener('open', () => {
       clearTimeout(timeout);

@@ -26,6 +26,8 @@ plushpal-model-lifecycle = { path = "../../../crates/model_lifecycle", optional 
 plushpal-device-capability = { path = "../../../crates/device_capability", optional = true }
 plushpal-encrypted-storage = { path = "../../../crates/encrypted_storage", optional = true }
 plushpal-platform-key-vault = { path = "../../../crates/platform_key_vault", optional = true }
+plushpal-curated-search = { path = "../../../crates/curated_search", optional = true }
+plushpal-search-api = { path = "../../../crates/search_api", optional = true }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -44,6 +46,8 @@ native-runtime = [
     "dep:plushpal-device-capability",
     "dep:plushpal-encrypted-storage",
     "dep:plushpal-platform-key-vault",
+    "dep:plushpal-curated-search",
+    "dep:plushpal-search-api",
     "dep:sherpa-onnx",
 ]
 

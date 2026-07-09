@@ -33,6 +33,7 @@ cargo build --release -p plushpal-desktop-host --features native-runtime
 
 rm -rf "$STATION_APP" "$OUTPUT/ToyTalk.app" "$CLIENT_APP_BUILD"
 mkdir -p "$OUTPUT" "$BUILD_ROOT"
+rm -f "$OUTPUT/ToyTalkStation.entitlements"
 
 mkdir -p "$CLIENT_APP_BUILD/Contents/MacOS" "$CLIENT_APP_BUILD/Contents/Resources"
 swiftc -O \
@@ -57,22 +58,27 @@ cp "$LLAMA_DYLIB" "$STATION_APP/Contents/Frameworks/libplushpal_llama.dylib"
 install_name_tool -add_rpath '@executable_path/../Frameworks' "$STATION_APP/Contents/MacOS/plushpal-desktop-host"
 mkdir -p "$STATION_APP/Contents/Resources/voice"
 mkdir -p "$STATION_APP/Contents/Resources/stt"
+mkdir -p "$STATION_APP/Contents/Resources/search"
 cp tools/voice/chatterbox_tts.py "$STATION_APP/Contents/Resources/voice/chatterbox_tts.py"
 cp tools/voice/luxtts_tts.py "$STATION_APP/Contents/Resources/voice/luxtts_tts.py"
 cp tools/voice/luxtts_worker.py "$STATION_APP/Contents/Resources/voice/luxtts_worker.py"
 cp tools/stt/whisper_transcribe.py "$STATION_APP/Contents/Resources/stt/whisper_transcribe.py"
+cp tools/search/search_router_worker.py "$STATION_APP/Contents/Resources/search/search_router_worker.py"
 chmod +x "$STATION_APP/Contents/Resources/stt/whisper_transcribe.py"
+chmod +x "$STATION_APP/Contents/Resources/search/search_router_worker.py"
 cp packaging/macos/install_chatterbox_runtime.sh "$STATION_APP/Contents/Resources/install_chatterbox_runtime.sh"
 cp packaging/macos/install_luxtts_runtime.sh "$STATION_APP/Contents/Resources/install_luxtts_runtime.sh"
+cp packaging/macos/install_search_router_runtime.sh "$STATION_APP/Contents/Resources/install_search_router_runtime.sh"
+chmod +x "$STATION_APP/Contents/Resources/install_search_router_runtime.sh"
 cp -R "$CLIENT_APP_BUILD" "$STATION_APP/Contents/Resources/ToyTalk.app"
 echo "Building a thin Hub bundle: LuxTTS source, Python dependencies, Hugging Face caches, and local AI models are prepared lazily in user application support."
 sed "s/@VERSION@/$VERSION/g" packaging/macos/StationInfo.plist.in > "$STATION_APP/Contents/Info.plist"
 
 TEAM_ID=${PLUSHPAL_TEAM_ID:-LOCAL}
-STATION_ENTITLEMENTS="$OUTPUT/ToyTalkStation.entitlements"
+STATION_ENTITLEMENTS="$OUTPUT/ToyTalkHub.entitlements"
 CLIENT_ENTITLEMENTS="$OUTPUT/ToyTalk.entitlements"
-sed "s/@TEAM_ID@/$TEAM_ID/g" packaging/macos/PlushBuddyStation.entitlements.in > "$STATION_ENTITLEMENTS"
-sed "s/@TEAM_ID@/$TEAM_ID/g" packaging/macos/PlushPal.entitlements.in > "$CLIENT_ENTITLEMENTS"
+sed "s/@TEAM_ID@/$TEAM_ID/g" packaging/macos/ToyTalkHub.entitlements.in > "$STATION_ENTITLEMENTS"
+sed "s/@TEAM_ID@/$TEAM_ID/g" packaging/macos/ToyTalk.entitlements.in > "$CLIENT_ENTITLEMENTS"
 
 find "$CLIENT_APP_BUILD" "$STATION_APP" -type l -exec touch -h -t "$ARCHIVE_TIMESTAMP" {} +
 find "$CLIENT_APP_BUILD" "$STATION_APP" ! -type l -exec touch -t "$ARCHIVE_TIMESTAMP" {} +

@@ -64,6 +64,7 @@ class FakeBackend implements BackendClient {
     this.restoredTraits = const [],
     this.restoredGuidance,
     this.restoredRetentionDays,
+    this.runtimeMode = 'cloud_llm',
     this.seedFixtureKid = true,
   }) : configuredPin = parentConfigured ? '4826' : null,
        configuredCharacterAlias = restoredCharacterAlias ?? 'Teddy',
@@ -76,6 +77,7 @@ class FakeBackend implements BackendClient {
   final List<String> restoredTraits;
   final String? restoredGuidance;
   final int? restoredRetentionDays;
+  final String runtimeMode;
   final bool seedFixtureKid;
   String? receivedText;
   bool sessionEnded = false;
@@ -84,6 +86,8 @@ class FakeBackend implements BackendClient {
   bool voiceEnrolled = true;
   bool voiceApproved = true;
   bool voiceRuntimeReady = true;
+  bool webSearchEnabled = false;
+  bool? lastWebSearchEnabled;
   String? clonedSpeech;
   Completer<void>? enrollCompleter;
   Completer<void>? previewCompleter;
@@ -152,6 +156,7 @@ class FakeBackend implements BackendClient {
         provider: 'gemini',
         configured: modelReady,
         displayName: 'Gemini',
+        webSearchEnabled: webSearchEnabled,
       );
 
   @override
@@ -166,6 +171,18 @@ class FakeBackend implements BackendClient {
   @override
   Future<void> configureGeminiApiKey(String apiKey) async {
     modelReady = true;
+  }
+
+  @override
+  Future<void> setWebSearchEnabled({
+    required String pin,
+    required bool enabled,
+  }) async {
+    if (configuredPin != null && pin != configuredPin) {
+      throw StateError('unauthorized');
+    }
+    webSearchEnabled = enabled;
+    lastWebSearchEnabled = enabled;
   }
 
   @override
@@ -519,6 +536,7 @@ class FakeBackend implements BackendClient {
         ready: modelReady,
         installSupported: true,
         installing: false,
+        runtimeMode: runtimeMode,
         parentConfigured: configuredPin != null,
         ageBand: restoredAgeBand,
         characterAlias: restoredCharacterAlias,
@@ -1049,9 +1067,7 @@ void main() {
     (tester) async {
       final backend = FakeBackend();
       final platform = FakePlatform(playWavError: StateError('aborted'));
-      await tester.pumpWidget(
-        ToyTalkApp(backend: backend, platform: platform),
-      );
+      await tester.pumpWidget(ToyTalkApp(backend: backend, platform: platform));
       await completeBasicOnboarding(tester);
       await startChildMode(tester);
 
@@ -1368,6 +1384,49 @@ void main() {
       );
     },
   );
+
+  testWidgets('parent can toggle Cloud AI web search through Hub', (
+    tester,
+  ) async {
+    final backend = FakeBackend(
+      parentConfigured: true,
+      restoredAgeBand: '6-8',
+      restoredCharacterAlias: 'Mochi',
+    );
+    await tester.pumpWidget(
+      ToyTalkApp(backend: backend, platform: FakePlatform()),
+    );
+    await tester.pumpAndSettle();
+
+    await openSettings(tester);
+    expect(find.text('Cloud AI web search'), findsOneWidget);
+    expect(find.textContaining('Off. Toy buddies ask'), findsOneWidget);
+
+    await tester.tap(find.byType(Switch).first);
+    await tester.pumpAndSettle();
+    await unlockSettingsIfNeeded(tester);
+
+    expect(backend.lastWebSearchEnabled, isTrue);
+  });
+
+  testWidgets('Cloud AI web search setting is hidden in Local AI mode', (
+    tester,
+  ) async {
+    final backend = FakeBackend(
+      parentConfigured: true,
+      restoredAgeBand: '6-8',
+      restoredCharacterAlias: 'Mochi',
+      runtimeMode: 'privacy_local_first',
+    );
+    await tester.pumpWidget(
+      ToyTalkApp(backend: backend, platform: FakePlatform()),
+    );
+    await tester.pumpAndSettle();
+
+    await openSettings(tester);
+
+    expect(find.text('Cloud AI web search'), findsNothing);
+  });
 
   testWidgets(
     'character add and delete refresh the settings list immediately',

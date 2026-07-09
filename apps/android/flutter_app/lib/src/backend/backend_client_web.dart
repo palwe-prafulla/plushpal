@@ -58,6 +58,12 @@ external JSPromise<JSAny?> _configureApiKey(
   JSString apiKey,
 );
 
+@JS('toytalkSetWebSearchEnabled')
+external JSPromise<JSAny?> _setWebSearchEnabled(
+  JSString pin,
+  JSBoolean enabled,
+);
+
 @JS('toytalkKids')
 external JSPromise<JSString> _kids();
 
@@ -236,6 +242,7 @@ class WebBackendClient implements BackendClient {
       provider: decoded['provider'] as String? ?? 'gemini',
       configured: decoded['configured'] as bool? ?? false,
       displayName: decoded['display_name'] as String? ?? 'Gemini',
+      webSearchEnabled: decoded['web_search_enabled'] as bool? ?? false,
     );
   }
 
@@ -251,6 +258,14 @@ class WebBackendClient implements BackendClient {
   @override
   Future<void> configureGeminiApiKey(String apiKey) =>
       configureApiKey(pin: '', provider: 'gemini', apiKey: apiKey);
+
+  @override
+  Future<void> setWebSearchEnabled({
+    required String pin,
+    required bool enabled,
+  }) async {
+    await _setWebSearchEnabled(pin.toJS, enabled.toJS).toDart;
+  }
 
   @override
   Future<List<KidProfile>> kids() async {
@@ -315,6 +330,8 @@ class WebBackendClient implements BackendClient {
       parentGuidance: decoded['parent_guidance'] as String?,
       retentionDays: decoded['retention_days'] as int?,
       speechToTextReady: decoded['speech_to_text_ready'] as bool? ?? false,
+      webSearchProviderReady:
+          decoded['web_search_provider_ready'] as bool? ?? false,
     );
   }
 

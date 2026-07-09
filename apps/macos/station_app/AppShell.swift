@@ -24,6 +24,14 @@ private struct SetupMilestone {
 private struct HostLaunchContext {
     let lanAddress: String?
     let localModelEnvironment: [String: String]
+    let searchRouterRuntime: SearchRouterRuntime?
+}
+
+private struct SearchRouterRuntime {
+    let python: URL
+    let script: URL
+    let model: String
+    let hfHome: URL
 }
 
 private struct StartupFailure: Error {
@@ -199,6 +207,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var quickGuideButton: NSButton!
     private var parentSetupButton: NSButton!
     private var configureCloudLlmButton: NSButton!
+    private var webSearchButton: NSButton!
     private var localModelInstallButton: NSButton!
     private var localModelCancelButton: NSButton!
     private var pairedDevicesButton: NSButton!
@@ -289,9 +298,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     private func addHubClientHeaders(_ request: inout URLRequest) {
-        request.setValue(hubClientId(), forHTTPHeaderField: "X-PlushBuddy-Client-Id")
-        request.setValue(hubClientId(), forHTTPHeaderField: "X-PlushBuddy-Hub-Id")
-        request.setValue(hubClientLabel(), forHTTPHeaderField: "X-PlushBuddy-Client-Label")
+        request.setValue(hubClientId(), forHTTPHeaderField: "X-ToyTalk-Client-Id")
+        request.setValue(hubClientId(), forHTTPHeaderField: "X-ToyTalk-Hub-Id")
+        request.setValue(hubClientLabel(), forHTTPHeaderField: "X-ToyTalk-Client-Label")
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -551,6 +560,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         configureCloudLlmButton.isHidden = true
         configureCloudLlmButton.translatesAutoresizingMaskIntoConstraints = false
 
+        webSearchButton = NSButton(title: "Cloud AI web search: Off", target: self, action: #selector(toggleWebSearchSetting))
+        webSearchButton.bezelStyle = .rounded
+        webSearchButton.isHidden = true
+        webSearchButton.translatesAutoresizingMaskIntoConstraints = false
+
         localModelInstallButton = NSButton(title: "Install Local AI model", target: self, action: #selector(installLocalAiModel))
         localModelInstallButton.bezelStyle = .rounded
         localModelInstallButton.isHidden = true
@@ -601,6 +615,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             quickGuideButton,
             parentSetupButton,
             configureCloudLlmButton,
+            webSearchButton,
             localModelInstallButton,
             localModelCancelButton,
             pairedDevicesButton,
@@ -678,6 +693,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             localModelInstallButton,
             localModelCancelButton,
             configureCloudLlmButton,
+            webSearchButton,
             sectionTitle("Connect clients"),
             helperText("Phones pair by QR code. Local Mac and browser clients connect directly to this Hub."),
             pairedDevicesSummaryLabel,
@@ -787,6 +803,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             parentSetupButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 260),
             quickGuideButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 260),
             configureCloudLlmButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 260),
+            webSearchButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 260),
             localModelInstallButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 260),
             localModelCancelButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 260),
             openBrowserButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 210),
@@ -832,12 +849,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let preparationLock = NSLock()
         var hostLaunchContext: HostLaunchContext?
         var voicePreparationResult: Result<VoiceRuntime?, StartupFailure>?
+        var searchRouterPreparationResult: Result<SearchRouterRuntime?, StartupFailure>?
 
         preparationGroup.enter()
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             defer { preparationGroup.leave() }
             guard let self else { return }
-            let context = self.prepareHostLaunchContext()
+            let context = self.prepareHostLaunchContext(searchRouterRuntime: nil)
             preparationLock.lock()
             hostLaunchContext = context
             preparationLock.unlock()
@@ -858,6 +876,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             let result = self.prepareVoiceRuntime()
             preparationLock.lock()
             voicePreparationResult = result
+            preparationLock.unlock()
+        }
+
+        preparationGroup.enter()
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            defer { preparationGroup.leave() }
+            guard let self else { return }
+            let result = self.prepareSearchRouterRuntime()
+            preparationLock.lock()
+            searchRouterPreparationResult = result
             preparationLock.unlock()
         }
 
@@ -887,6 +915,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             update(.failed(failure.message))
             return
         }
+        let searchRouterRuntime: SearchRouterRuntime?
+        switch searchRouterPreparationResult ?? .failure(StartupFailure(message: "ToyTalk Hub setup was interrupted before conversation routing completed.")) {
+        case .success(let runtime):
+            searchRouterRuntime = runtime
+            updateServiceStatuses(
+                storage: nil,
+                reasoning: runtime == nil ? "△ Conversations: simple routing" : "✓ Conversations: smart routing ready",
+                voice: nil,
+                stt: nil,
+                host: "○ Hub: starting",
+                browser: nil
+            )
+        case .failure(let failure):
+            updateServiceStatuses(
+                storage: nil,
+                reasoning: "✕ Conversations: routing setup failed",
+                voice: nil,
+                stt: nil,
+                host: "○ Hub: waiting",
+                browser: "○ Apps: waiting"
+            )
+            update(.failed(failure.message))
+            return
+        }
         let sttRuntime = prepareSpeechToTextRuntime(voiceRuntime: voiceRuntime)
         updateServiceStatuses(
             storage: nil,
@@ -900,11 +952,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         startHost(
             voiceRuntime: voiceRuntime,
             speechToTextRuntime: sttRuntime,
-            launchContext: hostLaunchContext ?? prepareHostLaunchContext()
+            launchContext: hostLaunchContext.map { context in
+                HostLaunchContext(
+                    lanAddress: context.lanAddress,
+                    localModelEnvironment: context.localModelEnvironment,
+                    searchRouterRuntime: searchRouterRuntime
+                )
+            } ?? prepareHostLaunchContext(searchRouterRuntime: searchRouterRuntime)
         )
     }
 
-    private func prepareHostLaunchContext() -> HostLaunchContext {
+    private func prepareHostLaunchContext(searchRouterRuntime: SearchRouterRuntime?) -> HostLaunchContext {
         do {
             try FileManager.default.createDirectory(at: applicationSupportDirectory(), withIntermediateDirectories: true)
         } catch {
@@ -912,7 +970,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
         let lanAddress = preferredLanIPv4Address()
         let localModelEnvironment = macLocalModelProfileEnvironment()
-        return HostLaunchContext(lanAddress: lanAddress, localModelEnvironment: localModelEnvironment)
+        return HostLaunchContext(
+            lanAddress: lanAddress,
+            localModelEnvironment: localModelEnvironment,
+            searchRouterRuntime: searchRouterRuntime
+        )
     }
 
     private func prepareVoiceRuntime() -> Result<VoiceRuntime?, StartupFailure> {
@@ -923,6 +985,104 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             return .failure(StartupFailure(message: "The local LuxTTS voice runtime is missing from the ToyTalk Hub app bundle."))
         }
         return prepareChatterboxRuntime()
+    }
+
+    private func prepareSearchRouterRuntime() -> Result<SearchRouterRuntime?, StartupFailure> {
+        if ProcessInfo.processInfo.environment["PLUSHPAL_DISABLE_SEARCH_ROUTER"] != nil {
+            appendLog("app-shell.log", "Search router disabled by environment")
+            return .success(nil)
+        }
+        let bundle = Bundle.main
+        let script = bundle.resourceURL?
+            .appendingPathComponent("search", isDirectory: true)
+            .appendingPathComponent("search_router_worker.py", isDirectory: false)
+        let installer = bundle.resourceURL?
+            .appendingPathComponent("install_search_router_runtime.sh")
+        guard let script, FileManager.default.fileExists(atPath: script.path) else {
+            return .failure(StartupFailure(message: "The ToyTalk conversation router script is missing from the Hub app bundle."))
+        }
+        let support = applicationSupportDirectory()
+        let venv = support.appendingPathComponent("search-router-venv", isDirectory: true)
+        let python = venv.appendingPathComponent("bin/python")
+        let hfHome = support
+            .appendingPathComponent("search-router-runtime", isDirectory: true)
+            .appendingPathComponent("huggingface", isDirectory: true)
+        let model = ProcessInfo.processInfo.environment["PLUSHPAL_SEARCH_ROUTER_MODEL"]
+            ?? "sentence-transformers/all-MiniLM-L6-v2"
+        let bundledPython = Bundle.main.resourceURL?
+            .appendingPathComponent("python", isDirectory: true)
+            .appendingPathComponent("bin/python3")
+
+        if let bundledPython,
+           FileManager.default.isExecutableFile(atPath: bundledPython.path),
+           isSearchRouterRuntimeReady(python: bundledPython, script: script, model: model, hfHome: hfHome) {
+            return .success(SearchRouterRuntime(python: bundledPython, script: script, model: model, hfHome: hfHome))
+        }
+
+        if FileManager.default.isExecutableFile(atPath: python.path),
+           isSearchRouterRuntimeReady(python: python, script: script, model: model, hfHome: hfHome) {
+            return .success(SearchRouterRuntime(python: python, script: script, model: model, hfHome: hfHome))
+        }
+
+        if ProcessInfo.processInfo.environment["PLUSHPAL_SKIP_SEARCH_ROUTER_INSTALL"] != nil {
+            return .success(nil)
+        }
+
+        guard let installer, FileManager.default.isExecutableFile(atPath: installer.path) else {
+            return .failure(StartupFailure(message: "The ToyTalk conversation router installer is missing from the Hub app bundle."))
+        }
+
+        do {
+            try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+            DispatchQueue.main.async { [weak self] in
+                self?.updateServiceStatuses(
+                    storage: nil,
+                    reasoning: "○ Conversations: installing smart router",
+                    voice: nil,
+                    stt: nil,
+                    host: nil,
+                    browser: nil
+                )
+            }
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/sh")
+            process.arguments = [installer.path, venv.path]
+            process.environment = mergedEnvironment(extra: [
+                "PLUSHPAL_SEARCH_ROUTER_SCRIPT": script.path,
+                "PLUSHPAL_SEARCH_ROUTER_MODEL": model,
+                "PLUSHPAL_SEARCH_ROUTER_HF_HOME": hfHome.path,
+                "PLUSHPAL_BUNDLED_PYTHON": Bundle.main.resourceURL?
+                    .appendingPathComponent("python", isDirectory: true)
+                    .appendingPathComponent("bin/python3")
+                    .path ?? "",
+            ])
+
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = pipe
+            pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+                let data = handle.availableData
+                guard !data.isEmpty else {
+                    handle.readabilityHandler = nil
+                    return
+                }
+                self?.appendLogData("setup.log", data)
+                guard let text = String(data: data, encoding: .utf8) else { return }
+                self?.updateSearchRouterSetupDetail(from: text)
+            }
+            try process.run()
+            process.waitUntilExit()
+            pipe.fileHandleForReading.readabilityHandler = nil
+
+            if process.terminationStatus == 0,
+               FileManager.default.isExecutableFile(atPath: python.path),
+               isSearchRouterRuntimeReady(python: python, script: script, model: model, hfHome: hfHome) {
+                return .success(SearchRouterRuntime(python: python, script: script, model: model, hfHome: hfHome))
+            }
+            return .failure(StartupFailure(message: "ToyTalk Hub could not finish installing the smart conversation router. \(setupDiagnosticTail())"))
+        } catch {
+            return .failure(StartupFailure(message: "ToyTalk Hub could not install the smart conversation router: \(error.localizedDescription)\n\n\(setupDiagnosticTail())"))
+        }
     }
 
     private func prepareLuxTtsRuntime() -> Result<VoiceRuntime?, StartupFailure>? {
@@ -1138,6 +1298,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
+    private func isSearchRouterRuntimeReady(python: URL, script: URL, model: String, hfHome: URL) -> Bool {
+        let process = Process()
+        process.executableURL = python
+        process.arguments = [script.path, "--model", model, "--healthcheck"]
+        process.environment = mergedEnvironment(extra: [
+            "HF_HOME": hfHome.path,
+            "HF_HUB_CACHE": hfHome.appendingPathComponent("hub", isDirectory: true).path,
+            "TRANSFORMERS_CACHE": hfHome.appendingPathComponent("hub", isDirectory: true).path,
+        ])
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        } catch {
+            return false
+        }
+    }
+
+    private func updateSearchRouterSetupDetail(from text: String) {
+        let lower = text.lowercased()
+        let message: String?
+        if lower.contains("already installed") {
+            message = "✓ Conversations: smart routing ready"
+        } else if lower.contains("installing search router dependencies") {
+            message = "○ Conversations: installing smart router"
+        } else if lower.contains("downloading and verifying") {
+            message = "○ Conversations: downloading smart router model"
+        } else if lower.contains("search router runtime is ready") {
+            message = "✓ Conversations: smart routing ready"
+        } else if lower.contains("creating search router environment") {
+            message = "○ Conversations: preparing smart router"
+        } else {
+            message = nil
+        }
+        if let message {
+            DispatchQueue.main.async { [weak self] in
+                self?.updateServiceStatuses(
+                    storage: nil,
+                    reasoning: message,
+                    voice: nil,
+                    stt: nil,
+                    host: nil,
+                    browser: nil
+                )
+            }
+        }
+    }
+
     private func prepareSpeechToTextRuntime(voiceRuntime: VoiceRuntime?) -> SpeechToTextRuntime? {
         guard ProcessInfo.processInfo.environment["PLUSHPAL_DISABLE_HUB_STT"] == nil else {
             appendLog("app-shell.log", "Hub STT fallback disabled by environment")
@@ -1270,7 +1480,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 if let source = voiceRuntime.source {
                     extra["PLUSHPAL_LUXTTS_SOURCE_DIR"] = source.path
                 }
-                extra["PLUSHPAL_LUXTTS_NUM_STEPS"] = "8"
+                extra["PLUSHPAL_LUXTTS_NUM_STEPS"] = "4"
                 extra["PLUSHPAL_LUXTTS_SPEED"] = "0.88"
                 extra["PLUSHPAL_LUXTTS_SEED"] = "11"
                 extra["PLUSHPAL_LUXTTS_REF_DURATION"] = "180"
@@ -1284,6 +1494,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             extra["PLUSHPAL_STT_COMMAND"] = speechToTextRuntime.command.path
             extra["PLUSHPAL_STT_MODEL"] = "openai/whisper-base"
             extra["PLUSHPAL_STT_DEVICE"] = "auto"
+        }
+        if let searchRouterRuntime = launchContext.searchRouterRuntime {
+            extra["PLUSHPAL_SEARCH_ROUTER_PYTHON"] = searchRouterRuntime.python.path
+            extra["PLUSHPAL_SEARCH_ROUTER_SCRIPT"] = searchRouterRuntime.script.path
+            extra["PLUSHPAL_SEARCH_ROUTER_MODEL"] = searchRouterRuntime.model
+            extra["PLUSHPAL_SEARCH_ROUTER_HF_HOME"] = searchRouterRuntime.hfHome.path
         }
         process.environment = mergedEnvironment(extra: extra)
 
@@ -1764,7 +1980,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             panel.layer?.backgroundColor = panelBackgrounds[min(index, panelBackgrounds.count - 1)].cgColor
             panel.layer?.borderColor = panelBorders[min(index, panelBorders.count - 1)].cgColor
         }
-        for button in [parentSetupButton, configureCloudLlmButton, pairAndroidButton, pairedDevicesButton, openBrowserButton, openInAppButton, themeModeButton, quickGuideButton] {
+        for button in [parentSetupButton, configureCloudLlmButton, webSearchButton, pairAndroidButton, pairedDevicesButton, openBrowserButton, openInAppButton, themeModeButton, quickGuideButton] {
             button?.contentTintColor = accent
         }
         refreshChecklistButtons()
@@ -1892,7 +2108,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 number: "2",
                 icon: "🧠",
                 title: "Choose AI mode",
-                detail: "Use Local AI for privacy-first play, or Cloud AI with your Gemini/OpenAI key.",
+                detail: "Use Local AI for privacy-first play, or Cloud AI with your Gemini/OpenAI key. Cloud AI can also turn on web search for current facts.",
                 color: NSColor(calibratedRed: 0.22, green: 0.74, blue: 0.97, alpha: 1.0)
             ),
             arrow(),
@@ -2156,7 +2372,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             provider: selectedCloudLlmProvider(),
             configured: false,
             displayName: cloudLlmProviderDisplayName(selectedCloudLlmProvider()),
-            configuredProviders: []
+            configuredProviders: [],
+            webSearchEnabled: false
         )
         if status.configured || !status.configuredProviders.isEmpty {
             manageCloudAiModel(status: status)
@@ -2172,14 +2389,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let active = status.configured
             ? "\(status.displayName) active"
             : "\(status.displayName) selected but missing a key"
+        let webSearchStatus = status.webSearchEnabled ? "On" : "Off"
 
         let alert = NSAlert()
         alert.messageText = "Manage Cloud AI model"
         alert.informativeText = """
         Active model: \(active)
         Available keys: \(available)
+        Cloud AI web search: \(webSearchStatus)
 
-        Add or update a Gemini/OpenAI key, or switch to a provider that already has a saved key.
+        Add or update a Gemini/OpenAI key, or switch to a provider that already has a saved key. Use the Hub checklist button to turn Cloud AI web search on or off.
         """
         alert.addButton(withTitle: "Add / update key")
         let switchProvider = status.configuredProviders.first { $0 != status.provider }
@@ -2256,6 +2475,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             }
         } catch {
             showInfoAlert(title: "Cloud AI model was not changed", message: error.localizedDescription)
+        }
+    }
+
+    @objc private func toggleWebSearchSetting() {
+        guard let pin = requireUnlockedParentPin(reason: "Change Cloud AI web search") else { return }
+        let current = (try? cloudAiModelStatus().webSearchEnabled)
+            ?? UserDefaults.standard.bool(forKey: "ToyTalkHubWebSearchEnabled")
+        let next = !current
+
+        let alert = NSAlert()
+        alert.messageText = next ? "Turn on Cloud AI web search?" : "Turn off Cloud AI web search?"
+        alert.informativeText = next
+            ? "When a child asks for current information, ToyTalk can let supported Cloud AI models use their built-in search tools. Local AI stays local and asks a grown-up for latest facts."
+            : "ToyTalk will stop using Cloud AI web search. If a question needs current information, it will avoid stale answers and ask the child to check with a grown-up."
+        alert.addButton(withTitle: next ? "Turn on" : "Turn off")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        do {
+            try setWebSearchEnabledInHub(enabled: next, pin: pin)
+            UserDefaults.standard.set(next, forKey: "ToyTalkHubWebSearchEnabled")
+            refreshChecklistButtons()
+            showInfoAlert(
+                title: next ? "Cloud AI web search is on" : "Cloud AI web search is off",
+                message: next
+                    ? "ToyTalk will only use provider search when the safety classifier says the question needs latest information."
+                    : "ToyTalk will ask kids to check with a grown-up for latest-information questions."
+            )
+        } catch {
+            showInfoAlert(title: "Cloud AI web search was not changed", message: error.localizedDescription)
         }
     }
 
@@ -2690,6 +2939,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let configured: Bool
         let displayName: String
         let configuredProviders: [String]
+        let webSearchEnabled: Bool
 
         var availableDescription: String {
             configuredProviders.isEmpty
@@ -2721,6 +2971,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if let status {
             UserDefaults.standard.set(status.provider, forKey: "ToyTalkCloudLlmProvider")
             UserDefaults.standard.set(status.configured, forKey: "ToyTalkHubCloudLlmConfigured")
+            UserDefaults.standard.set(status.webSearchEnabled, forKey: "ToyTalkHubWebSearchEnabled")
         } else {
             UserDefaults.standard.set(false, forKey: "ToyTalkHubCloudLlmConfigured")
         }
@@ -2765,6 +3016,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 scheduleLocalAiInstallPoll()
             }
         }
+        let webSearchEnabled = status?.webSearchEnabled
+            ?? UserDefaults.standard.bool(forKey: "ToyTalkHubWebSearchEnabled")
+        let webSearchTitle = webSearchEnabled
+            ? "Cloud AI web search: On"
+            : "Cloud AI web search: Off"
+        setChecklistButton(webSearchButton, title: webSearchTitle, complete: webSearchEnabled)
+        webSearchButton.toolTip = webSearchEnabled
+            ? "If a child asks for current facts in Cloud AI mode, ToyTalk may use provider web search when the selected model supports it."
+            : "ToyTalk will not answer current-fact questions from stale model memory. It will ask the child to check with a grown-up."
     }
 
     private func setChecklistButton(_ button: NSButton?, title: String, complete: Bool) {
@@ -2923,6 +3183,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
+    private func setWebSearchEnabledInHub(enabled: Bool, pin: String) throws {
+        let statusCode = try postJsonToHub(path: "/api/v1/provider/web-search", body: [
+            "pin": pin,
+            "enabled": enabled,
+        ])
+        guard (200..<300).contains(statusCode) else {
+            let message: String
+            switch statusCode {
+            case 401:
+                message = "Parent PIN was incorrect."
+            case 501:
+                message = "Encrypted Hub storage is not available."
+            default:
+                message = "Hub returned HTTP \(statusCode)."
+            }
+            throw NSError(domain: "ToyTalkHub", code: statusCode, userInfo: [NSLocalizedDescriptionKey: message])
+        }
+    }
+
     private func updateRuntimeModeInHub(_ mode: String) throws {
         let statusCode = try postJsonToHub(path: "/api/v1/runtime/mode", body: [
             "mode": mode,
@@ -2959,7 +3238,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             provider: provider,
             configured: configured,
             displayName: displayName,
-            configuredProviders: configuredProviders
+            configuredProviders: configuredProviders,
+            webSearchEnabled: object["web_search_enabled"] as? Bool ?? false
         )
     }
 
@@ -3207,7 +3487,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.timeoutInterval = 10
-        request.setValue(token, forHTTPHeaderField: "x-plushpal-bootstrap")
+        request.setValue(token, forHTTPHeaderField: "x-toytalk-bootstrap")
         request.setValue(try stationOrigin(), forHTTPHeaderField: "Origin")
         addHubClientHeaders(&request)
         let result = blockingHttpStatus(request)
@@ -3289,8 +3569,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 from: String(line),
                 prefixes: [
                     "ToyTalk Hub test bootstrap URL:",
-                    "PlushBuddy Hub test bootstrap URL:",
-                    "PlushPal test bootstrap URL:",
                 ]
             ) {
                 guard parsedHostUrlText != urlText else { continue }
@@ -3316,8 +3594,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 from: String(line),
                 prefixes: [
                     "ToyTalk Hub LAN bootstrap URL:",
-                    "PlushBuddy Hub LAN bootstrap URL:",
-                    "PlushPal LAN bootstrap URL:",
                 ]
             ) {
                 if let url = URL(string: urlText), lanPairingUrl?.absoluteString != urlText {
@@ -3664,6 +3940,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.quickGuideButton.isHidden = true
                 self.parentSetupButton.isHidden = true
                 self.configureCloudLlmButton.isHidden = true
+                self.webSearchButton.isHidden = true
                 self.localModelInstallButton.isHidden = true
                 self.localModelCancelButton.isHidden = true
                 self.copyDiagnosticsButton.isHidden = true
@@ -3688,6 +3965,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.quickGuideButton.isHidden = true
                 self.parentSetupButton.isHidden = true
                 self.configureCloudLlmButton.isHidden = true
+                self.webSearchButton.isHidden = true
                 self.localModelInstallButton.isHidden = true
                 self.localModelCancelButton.isHidden = true
                 self.copyDiagnosticsButton.isHidden = true
@@ -3712,6 +3990,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.quickGuideButton.isHidden = true
                 self.parentSetupButton.isHidden = true
                 self.configureCloudLlmButton.isHidden = true
+                self.webSearchButton.isHidden = true
                 self.localModelInstallButton.isHidden = true
                 self.localModelCancelButton.isHidden = true
                 self.copyDiagnosticsButton.isHidden = true
@@ -3743,6 +4022,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.quickGuideButton.isHidden = false
                 self.parentSetupButton.isHidden = false
                 self.configureCloudLlmButton.isHidden = false
+                self.webSearchButton.isHidden = false
                 self.localModelInstallButton.isHidden = self.selectedRuntimeMode() != "privacy_local_first"
                 self.localModelCancelButton.isHidden = true
                 self.promptLocalAiSetupIfNeeded()
@@ -3776,6 +4056,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.quickGuideButton.isHidden = true
                 self.parentSetupButton.isHidden = true
                 self.configureCloudLlmButton.isHidden = true
+                self.webSearchButton.isHidden = true
                 self.localModelInstallButton.isHidden = true
                 self.localModelCancelButton.isHidden = true
                 self.copyDiagnosticsButton.isHidden = true
@@ -3802,6 +4083,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.quickGuideButton.isHidden = false
                 self.parentSetupButton.isHidden = true
                 self.configureCloudLlmButton.isHidden = true
+                self.webSearchButton.isHidden = true
                 self.localModelInstallButton.isHidden = true
                 self.localModelCancelButton.isHidden = true
                 self.copyDiagnosticsButton.isHidden = false
