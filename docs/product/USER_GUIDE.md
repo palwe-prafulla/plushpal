@@ -77,7 +77,8 @@ If the PIN is not set, set it in ToyTalk Hub first.
 
 Voice samples, voice profiles, family settings, characters, and conversation
 history are stored by ToyTalk Hub on your Mac. In Cloud AI mode, ToyTalk sends
-redacted text to the selected AI provider so it can answer the child.
+redacted text and a small amount of recent conversation context to the selected
+AI provider so it can answer the child naturally.
 
 If Cloud AI web search is on, supported Cloud AI providers may use their own
 search/grounding tools for current questions such as today’s weather, scores, or

@@ -121,7 +121,7 @@ fn run() -> Result<(), String> {
 
     let mut results = Vec::new();
     for model in &models {
-        if model.id == "gemini-2.5-flash" {
+        if model.id == "gemini-3.5-flash" {
             results.extend(run_gemini_model(model, &prompts));
         } else {
             results.extend(run_local_model(model, &prompts));
@@ -180,7 +180,7 @@ fn candidate_models(models_dir: &Path) -> Vec<BakeoffModel> {
         },
     ];
     models.push(BakeoffModel {
-        id: "gemini-2.5-flash".to_owned(),
+        id: "gemini-3.5-flash".to_owned(),
         family: "Gemini cloud".to_owned(),
         tier: "cloud-reference".to_owned(),
         path: None,
@@ -408,7 +408,7 @@ fn call_gemini(
         ModelPromptMode::Cloud,
     ))
     .map_err(|error| format!("prompt contract: {error}"))?;
-    let model = env::var("PLUSHPAL_GEMINI_MODEL").unwrap_or_else(|_| "gemini-2.5-flash".to_owned());
+    let model = env::var("PLUSHPAL_GEMINI_MODEL").unwrap_or_else(|_| "gemini-3.5-flash".to_owned());
     let url =
         format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent");
     let body = serde_json::json!({

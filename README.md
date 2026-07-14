@@ -60,6 +60,9 @@ clients for mic capture, local STT when available, and playback.
   AI providers may use native search only for questions the router marks as
   current/live. Local AI stays local and asks the child to check with a grown-up
   instead of guessing latest facts.
+- Keeps Hub-owned encrypted conversation history as the canonical memory. Cloud
+  prompts receive bounded recent context for natural follow-ups, while
+  provider-managed cloud threads remain a future parent-consented optimization.
 - Synthesizes the response locally through LuxTTS in the selected toy voice.
 - Keeps conversation history scoped by kid and character.
 

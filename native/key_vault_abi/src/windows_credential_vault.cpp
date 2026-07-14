@@ -29,7 +29,7 @@ bool to_target_name(pp_key_vault_bytes_t record_id, std::wstring &target) {
                           length) != length) {
     return false;
   }
-  target = L"PlushPal/" + record;
+  target = L"ToyTalk/" + record;
   return true;
 }
 
@@ -62,7 +62,7 @@ extern "C" pp_key_vault_status_t pp_key_vault_store(
   credential.CredentialBlobSize = static_cast<DWORD>(secret.length);
   credential.CredentialBlob = const_cast<LPBYTE>(secret.data);
   credential.Persist = CRED_PERSIST_LOCAL_MACHINE;
-  credential.UserName = const_cast<LPWSTR>(L"PlushPal");
+  credential.UserName = const_cast<LPWSTR>(L"ToyTalk");
   if (!CredWriteW(&credential, 0)) return map_error(GetLastError());
   return PP_KEY_VAULT_OK;
 }

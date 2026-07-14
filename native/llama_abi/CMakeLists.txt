@@ -21,7 +21,7 @@ add_subdirectory(
   EXCLUDE_FROM_ALL
 )
 
-option(PLUSHPAL_LLAMA_SHARED "Build the PlushBuddy Hub llama ABI as a shared library" ON)
+option(PLUSHPAL_LLAMA_SHARED "Build the ToyTalk Hub llama ABI as a shared library" ON)
 if(PLUSHPAL_LLAMA_SHARED)
   add_library(plushpal_llama SHARED src/plushpal_llama.cpp)
 else()

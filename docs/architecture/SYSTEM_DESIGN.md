@@ -55,6 +55,11 @@ The current implementation has completed the main Hub-first migration:
   characters, provider keys, voice lifecycle, conversation turns, and history.
 - Gemini and OpenAI cloud reasoning are activated from the Hub after parent
   authorization and encrypted key storage.
+- Hub-owned encrypted conversation history is the canonical memory for all
+  modes. Cloud provider thread/session IDs may be used later as an opt-in
+  optimization, but they are not the source of truth because Hub must perform
+  safety, routing, redaction, mode selection, and cross-provider continuity
+  before any provider call.
 - Clients generate stable `client_id` values and send them with every private
   Hub request so Hub routing does not depend on IP address.
 - Hub stores a paired-client registry with platform/label/last-seen metadata
@@ -495,6 +500,7 @@ sequenceDiagram
     Client->>Hub: send transcript + selected kid/character
     Hub->>DB: load profile/history/settings
     Hub->>Hub: redact + build guarded prompt
+    Hub->>Hub: resolve bounded follow-up context
     Hub->>Hub: classify current/live info need every turn
     alt current/live info needed
         alt Local AI mode
@@ -507,7 +513,7 @@ sequenceDiagram
             end
         else Cloud AI mode
             alt Cloud AI web search on
-                Hub->>Reason: generate with provider web-search tool when supported
+                Hub->>Reason: generate with provider web-search tool + bounded safe context
             else Cloud AI web search off
                 Hub->>Reason: cloud answer with double-check caveat
             end
@@ -532,6 +538,10 @@ sequenceDiagram
 - SQLCipher protects Hub records at rest.
 - Voice samples stay on the local network and are not sent to Gemini/OpenAI.
 - Cloud AI mode sends only minimized/redacted text.
+- Cloud AI prompts include bounded recent turns and safe city/area context when
+  needed to resolve follow-ups such as “around me.” Recent turns are explicitly
+  marked as context only; providers are instructed to answer the current child
+  message rather than continuing an older topic.
 - Local-first mode sends no conversation text to Cloud AI providers.
 - The current-info router runs locally on the Hub for every child question. It
   classifies routing only; it does not answer the child or persist prompts
@@ -545,6 +555,49 @@ sequenceDiagram
   stale model memory. A hidden Brave Search env hook can be used for advanced
   Local AI evidence experiments; when present, the prompt contract instructs the
   model to answer only from that evidence.
+
+### 14.1 Conversation memory and provider-managed cloud state
+
+ToyTalk uses Hub-owned memory first:
+
+- every private client request carries a stable `client_id` and Hub/session
+  authentication;
+- Hub opens the matching encrypted SQLCipher store for that client;
+- Hub loads the selected kid, character, persona, parent guidance, settings, and
+  recent character-scoped conversation turns;
+- Hub performs redaction, current-info routing, safety checks, runtime-mode
+  selection, and prompt construction before calling Local AI, Gemini, or OpenAI.
+
+This design keeps conversation continuity consistent when the parent switches
+between Local AI, Gemini, and OpenAI. It also lets Hub resolve follow-ups such
+as:
+
+1. Child: “How is the weather?”
+2. Toy: “Tell me where you are?”
+3. Child: “I am in San Jose.”
+4. Later child: “What is happening today around me?”
+
+The Hub can use the prior safe city-level context (“San Jose”) without storing
+or asking for precise addresses, schools, contact details, or private location.
+
+OpenAI and Gemini both expose provider-managed multi-turn mechanisms in their
+modern APIs. ToyTalk treats those IDs as optional cloud-provider acceleration
+metadata, not canonical memory:
+
+- provider state must be parent-consented because it can cause the provider to
+  retain conversation state outside the Hub;
+- Hub still sends the current guardrails/system instructions, response schema,
+  tools/search setting, child/character context, and bounded Hub context each
+  turn;
+- Hub must continue to work if provider state is unavailable, reset, provider is
+  changed, or Local AI is selected;
+- Local AI does not rely on provider thread IDs and uses Hub-owned history plus
+  optional local in-memory model/session caches.
+
+Current implementation status: Hub-owned encrypted history and bounded cloud
+prompt context are active. Provider-managed OpenAI/Gemini thread IDs are
+documented as a future explicit opt-in because the current privacy-first Cloud
+AI path avoids hidden provider-side durable conversation state.
 - Clients must authenticate every Hub API call.
 - Parent PIN gates settings and destructive actions.
 - Device revocation must be supported.

@@ -192,6 +192,7 @@ Likely causes:
 
 - missing/invalid API key;
 - provider HTTP error;
+- cloud provider retired or renamed the configured model;
 - provider ignored the structured-output schema;
 - network unavailable;
 - request timed out.
@@ -199,6 +200,14 @@ Likely causes:
 ToyTalk uses provider-native system instructions and structured output. If a
 provider ignores the schema and returns a bare fragment, Hub rejects it and logs
 the failure instead of treating it as a valid toy response.
+
+If the log says a Gemini model is no longer available, rate limited, or under
+high demand, ToyTalk tries its built-in Gemini fallback chain before showing the
+safe toy fallback. You can also start the Hub with an explicit model override:
+
+```sh
+PLUSHPAL_GEMINI_MODEL=gemini-3.5-flash open "$HOME/Downloads/ToyTalk/artifacts/macos/ToyTalk Hub.app"
+```
 
 ### Speech-to-text works but there is no response
 

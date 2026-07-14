@@ -26,10 +26,15 @@ Current paired-product architecture:
 | Mode | Cloud use | Local processing |
 |---|---|---|
 | Local AI | No Cloud AI calls after model setup/update checks. Current/live questions use a safe grown-up fallback in the normal UX rather than stale model memory. | Packaged Hub local STT fallback, Hub-installed local Gemma/llama.cpp tier, LuxTTS, SQLCipher |
-| Cloud AI | Redacted/minimized text prompt goes to Gemini/OpenAI. If parent enables Cloud AI web search, supported providers may use their native search/grounding tools for current/live questions. | Redaction, guardrails, provider-native web search when enabled/needed, LuxTTS, SQLCipher |
+| Cloud AI | Redacted/minimized text prompt plus bounded recent Hub context goes to Gemini/OpenAI. If parent enables Cloud AI web search, supported providers may use their native search/grounding tools for current/live questions. Provider-managed cloud threads are not used silently. | Redaction, guardrails, provider-native web search when enabled/needed, Hub-owned encrypted history, LuxTTS, SQLCipher |
 
 Provider cloud STT is not used silently. If cloud STT is ever added, it must be
 an explicit parent opt-in.
+
+Provider-managed cloud conversation state is also not used silently. Hub-owned
+encrypted history remains canonical. If ToyTalk later enables OpenAI/Gemini
+thread/session IDs, it should be a parent-visible opt-in because provider-side
+state retention changes the privacy model.
 
 ## Speech privacy
 

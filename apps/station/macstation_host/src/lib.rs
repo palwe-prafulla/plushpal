@@ -43,6 +43,49 @@ use tokio::sync::broadcast;
 
 include!(concat!(env!("OUT_DIR"), "/flutter_assets.rs"));
 
+pub const DEFAULT_GEMINI_MODEL: &str = "gemini-3.5-flash";
+pub const DEFAULT_OPENAI_MODEL: &str = "gpt-4.1-mini";
+pub const DEFAULT_GEMINI_FALLBACK_MODELS: &[&str] = &[
+    "gemini-3.1-flash-lite",
+    "gemini-flash-latest",
+    "gemini-2.5-flash-lite",
+];
+
+#[cfg(feature = "native-runtime")]
+pub fn configured_gemini_model() -> String {
+    normalize_gemini_model(
+        env::var("PLUSHPAL_GEMINI_MODEL")
+            .ok()
+            .as_deref()
+            .unwrap_or(DEFAULT_GEMINI_MODEL),
+    )
+}
+
+#[cfg(feature = "native-runtime")]
+fn normalize_gemini_model(model: &str) -> String {
+    match model.trim() {
+        "" | "gemini-2.5-flash" | "models/gemini-2.5-flash" => DEFAULT_GEMINI_MODEL.to_owned(),
+        value => value.trim_start_matches("models/").to_owned(),
+    }
+}
+
+#[cfg(feature = "native-runtime")]
+fn gemini_model_candidates(primary: &str) -> Vec<String> {
+    let mut models = vec![normalize_gemini_model(primary)];
+    for fallback in DEFAULT_GEMINI_FALLBACK_MODELS {
+        let fallback = normalize_gemini_model(fallback);
+        if !models.iter().any(|model| model == &fallback) {
+            models.push(fallback);
+        }
+    }
+    models
+}
+
+#[cfg(feature = "native-runtime")]
+pub fn configured_openai_model() -> String {
+    env::var("PLUSHPAL_OPENAI_MODEL").unwrap_or_else(|_| DEFAULT_OPENAI_MODEL.to_owned())
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum HostError {
     EntropyUnavailable,
@@ -2156,22 +2199,14 @@ fn build_provider_engine(
 ) -> Result<Arc<dyn ConversationEngine>, ConversationEngineError> {
     let provider = provider.trim().to_ascii_lowercase();
     let engine: Arc<dyn ConversationEngine> = match provider.as_str() {
-        "gemini" => {
-            let model =
-                env::var("PLUSHPAL_GEMINI_MODEL").unwrap_or_else(|_| "gemini-2.5-flash".to_owned());
-            Arc::new(native_runtime::GeminiConversationEngine::new(
-                api_key.to_owned(),
-                model,
-            )?)
-        }
-        "openai" => {
-            let model =
-                env::var("PLUSHPAL_OPENAI_MODEL").unwrap_or_else(|_| "gpt-4.1-mini".to_owned());
-            Arc::new(native_runtime::OpenAiConversationEngine::new(
-                api_key.to_owned(),
-                model,
-            )?)
-        }
+        "gemini" => Arc::new(native_runtime::GeminiConversationEngine::new(
+            api_key.to_owned(),
+            configured_gemini_model(),
+        )?),
+        "openai" => Arc::new(native_runtime::OpenAiConversationEngine::new(
+            api_key.to_owned(),
+            configured_openai_model(),
+        )?),
         _ => return Err(ConversationEngineError::InvalidRequest),
     };
     Ok(engine)
@@ -3040,7 +3075,7 @@ fn search_routing_decision_for_text(state: &HostState, text: &str) -> SearchRout
 }
 
 fn keyword_search_routing_decision(text: &str) -> SearchRoutingDecision {
-    let lower = text.to_ascii_lowercase();
+    let lower = normalized_matching_text(text);
     let has_current_marker = [
         "today",
         "tomorrow",
@@ -3091,10 +3126,22 @@ fn keyword_search_routing_decision(text: &str) -> SearchRoutingDecision {
         ]
         .iter()
         .any(|needle| lower.contains(needle));
+    let asks_location_weather = lower.contains("weather")
+        && ["how is", "how's", "what is", "what's"]
+            .iter()
+            .any(|prefix| lower.trim_start().starts_with(prefix))
+        && [" in ", " at ", " near "]
+            .iter()
+            .any(|needle| lower.contains(needle));
+    let asks_clarified_weather = lower.contains("weather")
+        && lower.contains("child clarification")
+        && safe_city_or_area_from_text(text).is_some();
     let needs_web_search = [
         has_current_marker,
         asks_current_role,
         asks_live_weather,
+        asks_location_weather,
+        asks_clarified_weather,
         lower.contains("election") && has_current_marker,
     ]
     .into_iter()
@@ -3110,6 +3157,251 @@ fn keyword_search_routing_decision(text: &str) -> SearchRoutingDecision {
         model: "keyword-fallback".to_owned(),
         source: "keyword_fallback",
     }
+}
+
+fn contextualized_turn_for_generation(turn: &LocalTurnCommand) -> LocalTurnCommand {
+    let Some((previous_child_text, previous_character_text)) =
+        latest_unresolved_clarification_exchange(&turn.recent_turns)
+    else {
+        return turn.clone();
+    };
+    if !previous_character_asked_for_missing_context(previous_character_text)
+        || !current_text_looks_like_clarification_answer(&turn.text)
+        || !previous_child_can_accept_clarification(previous_child_text)
+    {
+        return turn.clone();
+    }
+    let mut contextualized = turn.clone();
+    contextualized.text = format!(
+        "{}? Child clarification: {}.",
+        previous_child_text
+            .trim()
+            .trim_end_matches(['?', '.', '!', ',']),
+        turn.text.trim()
+    );
+    contextualized
+}
+
+fn latest_unresolved_clarification_exchange(
+    recent_turns: &[ConversationTurn],
+) -> Option<(&str, &str)> {
+    let exchanges = child_character_exchanges(recent_turns);
+    for (child_text, character_text) in exchanges.into_iter().rev() {
+        if previous_character_asked_for_missing_context(character_text)
+            && previous_child_can_accept_clarification(child_text)
+        {
+            return Some((child_text, character_text));
+        }
+        if !is_non_substantive_intervening_child_turn(child_text) {
+            return None;
+        }
+    }
+    None
+}
+
+fn child_character_exchanges(recent_turns: &[ConversationTurn]) -> Vec<(&str, &str)> {
+    let mut pending_child: Option<&str> = None;
+    let mut exchanges: Vec<(&str, &str)> = Vec::new();
+    for turn in recent_turns {
+        match turn.role {
+            TurnRole::Child => pending_child = Some(turn.text.as_str()),
+            TurnRole::Character => {
+                if let Some(child_text) = pending_child {
+                    exchanges.push((child_text, turn.text.as_str()));
+                }
+                pending_child = None;
+            }
+        }
+    }
+    exchanges
+}
+
+fn is_non_substantive_intervening_child_turn(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+    let normalized = normalized_matching_text(trimmed);
+    if matches!(
+        normalized.as_str(),
+        "ok" | "okay" | "um" | "uh" | "hmm" | "mmm" | "oops"
+    ) {
+        return true;
+    }
+    trimmed
+        .chars()
+        .all(|character| character.is_ascii_punctuation() || character.is_whitespace())
+}
+
+fn previous_character_asked_for_missing_context(text: &str) -> bool {
+    let lower = normalized_matching_text(text);
+    [
+        "tell me where",
+        "where you are",
+        "where are you",
+        "which place",
+        "what place",
+        "what city",
+        "which city",
+        "what town",
+        "which town",
+        "what location",
+        "which location",
+        "where will you be",
+        "where you will be",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+        || (lower.contains("where")
+            && (lower.contains("you are")
+                || lower.contains("are you")
+                || lower.contains("you live")
+                || lower.contains("you will be")))
+}
+
+fn current_text_looks_like_clarification_answer(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() || trimmed.contains('?') {
+        return false;
+    }
+    let lower = normalized_matching_text(trimmed);
+    if [
+        "what ", "why ", "how ", "when ", "who ", "can ", "could ", "will ", "should ", "is ",
+        "are ", "do ", "does ",
+    ]
+    .iter()
+    .any(|prefix| lower.starts_with(prefix))
+    {
+        return false;
+    }
+    trimmed.split_whitespace().take(13).count() <= 12
+}
+
+fn previous_child_can_accept_clarification(text: &str) -> bool {
+    let lower = normalized_matching_text(text);
+    let asks_live_weather = lower.contains("weather")
+        || lower.contains("rain")
+        || lower.contains("sunny")
+        || lower.contains("hot")
+        || lower.contains("cold")
+        || lower.contains("outside");
+    asks_live_weather
+        || keyword_search_routing_decision(text).needs_web_search
+        || [
+            "near me",
+            "around me",
+            "where i am",
+            "where we are",
+            "in my city",
+            "at my house",
+            "at school",
+        ]
+        .iter()
+        .any(|needle| lower.contains(needle))
+}
+
+fn normalized_matching_text(text: &str) -> String {
+    text.replace(['’', '`', '‘'], "'")
+        .replace(['“', '”'], "\"")
+        .to_ascii_lowercase()
+}
+
+#[cfg(feature = "native-runtime")]
+fn search_prompt_recent_turns(recent_turns: &[ConversationTurn]) -> serde_json::Value {
+    let recent = recent_turns
+        .iter()
+        .rev()
+        .take(8)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .map(|turn| {
+            serde_json::json!({
+                "role": match turn.role {
+                    TurnRole::Child => "child",
+                    TurnRole::Character => "character",
+                },
+                "text": redact_for_prompt_context(&turn.text)
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::Value::Array(recent)
+}
+
+#[cfg(feature = "native-runtime")]
+fn redact_for_prompt_context(text: &str) -> String {
+    redact_personal_info(text)
+}
+
+#[cfg(feature = "native-runtime")]
+fn safe_session_context_for_search(command: &LocalTurnCommand) -> serde_json::Value {
+    serde_json::json!({
+        "safe_city_or_area": safe_city_or_area_from_recent_turns(&command.recent_turns),
+        "privacy_rule": "Use only city/area-level context from recent turns. Never ask for or infer precise address, school, contact info, or private location."
+    })
+}
+
+#[cfg(feature = "native-runtime")]
+fn safe_city_or_area_from_recent_turns(recent_turns: &[ConversationTurn]) -> Option<String> {
+    recent_turns
+        .iter()
+        .rev()
+        .filter(|turn| turn.role == TurnRole::Child)
+        .filter_map(|turn| safe_city_or_area_from_text(&turn.text))
+        .next()
+}
+
+fn safe_city_or_area_from_text(text: &str) -> Option<String> {
+    let lower = normalized_matching_text(text);
+    let marker = [
+        "child clarification: ",
+        "i am in ",
+        "i'm in ",
+        "we are in ",
+        "we're in ",
+        "in ",
+    ]
+    .into_iter()
+    .find(|marker| lower.contains(marker))?;
+    let normalized_start = lower.find(marker)? + marker.len();
+    let original_start = text
+        .char_indices()
+        .nth(lower[..normalized_start].chars().count())
+        .map(|(index, _)| index)
+        .unwrap_or(text.len());
+    let candidate = text
+        .get(original_start..)?
+        .split(|character: char| {
+            matches!(
+                character,
+                '.' | '!' | '?' | ',' | ';' | ':' | '\n' | '\r' | '\t'
+            )
+        })
+        .next()?
+        .trim();
+    let word_count = candidate.split_whitespace().count();
+    let char_count = candidate.chars().count();
+    if !(1..=5).contains(&word_count) || !(2..=80).contains(&char_count) {
+        return None;
+    }
+    let lower_candidate = candidate.to_ascii_lowercase();
+    if [
+        "my house",
+        "my home",
+        "home",
+        "school",
+        "my school",
+        "class",
+        "classroom",
+        "bedroom",
+        "room",
+    ]
+    .iter()
+    .any(|blocked| lower_candidate.contains(blocked))
+    {
+        return None;
+    }
+    Some(candidate.to_owned())
 }
 
 fn local_web_search_evidence_for_turn(
@@ -3153,7 +3445,16 @@ fn generate_turn_with_retries(
     web_search_enabled: bool,
 ) -> Result<ConversationGenerationOutcome, ConversationEngineError> {
     let (mode, provider, model) = conversation_log_fields(Some(&engine));
-    let routing = search_routing_decision_for_text(state, &turn.text);
+    let generation_turn = contextualized_turn_for_generation(&turn);
+    if generation_turn.text != turn.text {
+        eprintln!(
+            "ToyTalk conversation_context status=clarification_resolved original_chars={} resolved_chars={} recent_turns={}",
+            turn.text.chars().count(),
+            generation_turn.text.chars().count(),
+            turn.recent_turns.len()
+        );
+    }
+    let routing = search_routing_decision_for_text(state, &generation_turn.text);
     if routing.needs_web_search && engine.provider_label() == "local_ai" {
         if !web_search_enabled {
             eprintln!(
@@ -3166,7 +3467,8 @@ fn generate_turn_with_retries(
                 model,
             });
         }
-        let evidence = match local_web_search_evidence_for_turn(state, request_id, &turn) {
+        let evidence = match local_web_search_evidence_for_turn(state, request_id, &generation_turn)
+        {
             Ok(evidence) => evidence,
             Err(error) => {
                 eprintln!(
@@ -3185,7 +3487,7 @@ fn generate_turn_with_retries(
             web_search_allowed: true,
             web_search_evidence: evidence,
         };
-        return match engine.generate_with_options(turn.clone(), options.clone()) {
+        return match engine.generate_with_options(generation_turn.clone(), options.clone()) {
             Ok(response) => Ok(conversation_generation_outcome(&engine, response)),
             Err(ConversationEngineError::NotReady) => Err(ConversationEngineError::NotReady),
             Err(first_error) => {
@@ -3193,7 +3495,7 @@ fn generate_turn_with_retries(
                     "ToyTalk latency request_id={request_id} phase=conversation_retry attempt=1 status=failed mode={mode} provider={provider} model={model} error={first_error:?}"
                 );
                 std::thread::sleep(std::time::Duration::from_millis(150));
-                match engine.generate_with_options(turn.clone(), options) {
+                match engine.generate_with_options(generation_turn.clone(), options) {
                     Ok(response) => Ok(conversation_generation_outcome(&engine, response)),
                     Err(ConversationEngineError::NotReady) => {
                         Err(ConversationEngineError::NotReady)
@@ -3229,7 +3531,7 @@ fn generate_turn_with_retries(
         web_search_allowed: web_search_enabled && routing.needs_web_search,
         web_search_evidence: Vec::new(),
     };
-    match engine.generate_with_options(turn.clone(), options.clone()) {
+    match engine.generate_with_options(generation_turn.clone(), options.clone()) {
         Ok(response) => Ok(conversation_generation_outcome(&engine, response)),
         Err(ConversationEngineError::NotReady) => Err(ConversationEngineError::NotReady),
         Err(first_error) => {
@@ -3237,7 +3539,7 @@ fn generate_turn_with_retries(
                 "ToyTalk latency request_id={request_id} phase=conversation_retry attempt=1 status=failed mode={mode} provider={provider} model={model} error={first_error:?}"
             );
             std::thread::sleep(std::time::Duration::from_millis(150));
-            match engine.generate_with_options(turn.clone(), options.clone()) {
+            match engine.generate_with_options(generation_turn.clone(), options.clone()) {
                 Ok(response) => Ok(conversation_generation_outcome(&engine, response)),
                 Err(ConversationEngineError::NotReady) => Err(ConversationEngineError::NotReady),
                 Err(second_error) => {
@@ -3251,7 +3553,7 @@ fn generate_turn_with_retries(
                                 let (local_mode, local_provider, local_model) =
                                     conversation_log_fields(Some(&local_engine));
                                 match local_engine.generate_with_options(
-                                    turn.clone(),
+                                    generation_turn.clone(),
                                     ConversationGenerationOptions::default(),
                                 ) {
                                     Ok(response) => {
@@ -3274,7 +3576,7 @@ fn generate_turn_with_retries(
                                         );
                                         std::thread::sleep(std::time::Duration::from_millis(75));
                                         match local_engine.generate_with_options(
-                                            turn.clone(),
+                                            generation_turn.clone(),
                                             ConversationGenerationOptions::default(),
                                         ) {
                                             Ok(response) => {
@@ -7527,15 +7829,62 @@ pub mod native_runtime {
                 contract["current_child_text"],
                 "Why does rain fall from clouds?"
             );
-            assert_eq!(contract["recent_turns"], serde_json::json!([]));
+            assert_eq!(
+                contract["recent_turns"][0]["text"],
+                "Who is the Vice President of the United States?"
+            );
             assert!(contract["must_answer"]
                 .as_str()
                 .unwrap()
-                .contains("Answer current_child_text only"));
+                .contains("Do not answer or continue any older recent_turns"));
             assert!(contract["clarification_rule"]
                 .as_str()
                 .unwrap()
                 .contains("ask exactly one short friendly clarifying question"));
+        }
+
+        #[test]
+        fn cloud_search_prompt_keeps_safe_location_context_for_followups() {
+            let prompt = GeminiConversationEngine::search_prompt(&LocalTurnCommand {
+                age_band: AgeBand::FourToFive,
+                character_alias: "Buddy".to_owned(),
+                text: "What is happening today around me?".to_owned(),
+                parent_guidance: Some("Pretend to be a tiny puppy.".to_owned()),
+                child_age_years: Some(5),
+                child_age_months: Some(6),
+                character_play_age_years: Some(2),
+                recent_turns: vec![
+                    ConversationTurn {
+                        role: TurnRole::Child,
+                        text: "How is the weather?".to_owned(),
+                    },
+                    ConversationTurn {
+                        role: TurnRole::Character,
+                        text: "I can tell you if you tell me where you are?".to_owned(),
+                    },
+                    ConversationTurn {
+                        role: TurnRole::Child,
+                        text: "I am in San Jose".to_owned(),
+                    },
+                    ConversationTurn {
+                        role: TurnRole::Character,
+                        text: "San Jose is sunny today.".to_owned(),
+                    },
+                ],
+            });
+
+            let contract: serde_json::Value = serde_json::from_str(&prompt).unwrap();
+
+            assert_eq!(
+                contract["current_child_text"],
+                "What is happening today around me?"
+            );
+            assert_eq!(contract["session_context"]["safe_city_or_area"], "San Jose");
+            assert!(contract["session_context"]["privacy_rule"]
+                .as_str()
+                .unwrap()
+                .contains("city/area-level"));
+            assert_eq!(contract["recent_turns"][2]["text"], "I am in San Jose");
         }
 
         #[test]
@@ -8145,13 +8494,14 @@ done
                 "schema_version": 1,
                 "mode": "cloud_search",
                 "current_child_text": redact_personal_info(&command.text),
-                "must_answer": "Answer current_child_text only. Do not answer or continue any older recent_turns unless current_child_text explicitly asks to continue them.",
+                "must_answer": "Answer current_child_text only. Do not answer or continue any older recent_turns. Use recent_turns and session_context only to resolve pronouns, short follow-ups, or safe city/area phrases such as around me.",
                 "clarification_rule": "If the current_child_text is missing necessary context such as location, person, object, or time, ask exactly one short friendly clarifying question. Do not guess the missing detail.",
                 "character_alias": command.character_alias,
                 "child_age": child_age,
                 "character_play_age_years": command.character_play_age_years,
                 "parent_guidance": command.parent_guidance.as_deref().map(redact_personal_info),
-                "recent_turns": [],
+                "recent_turns": search_prompt_recent_turns(&command.recent_turns),
+                "session_context": safe_session_context_for_search(command),
                 "response_style": "Speak as the toy. Prefer 2-5 short spoken sentences. Start with a tiny natural reaction when it helps, then answer the actual question clearly.",
                 "accuracy_rule": "For public current or live facts, use search-grounded information when available and answer directly in kid-friendly words. If search is unavailable, context is missing, or you are not sure, ask a clarifying question or say to check with a grown-up instead of guessing.",
                 "maximum_response_characters": policy.max_output_characters,
@@ -8403,42 +8753,65 @@ done
             command: LocalTurnCommand,
             options: ConversationGenerationOptions,
         ) -> Result<StructuredCharacterResponse, ConversationEngineError> {
-            let url = format!(
-                "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
-                self.model
-            );
             let body = Self::gemini_request_body_with_options(&command, options);
-            let response = self
-                .client
-                .post(url)
-                .header("x-goog-api-key", &self.api_key)
-                .json(&body)
-                .send()
-                .map_err(|error| {
-                    log_cloud_provider_failure("gemini", "transport", &error.to_string());
+            let candidates = gemini_model_candidates(&self.model);
+            for (index, model) in candidates.iter().enumerate() {
+                let url = format!(
+                    "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+                );
+                let response = self
+                    .client
+                    .post(url)
+                    .header("x-goog-api-key", &self.api_key)
+                    .json(&body)
+                    .send()
+                    .map_err(|error| {
+                        log_cloud_provider_failure(
+                            "gemini",
+                            "transport",
+                            &format!("model={model} detail={error}"),
+                        );
+                        ConversationEngineError::GenerationFailed
+                    })?;
+                if !response.status().is_success() {
+                    let status = response.status();
+                    let status_code = status.as_u16();
+                    let body = response
+                        .text()
+                        .unwrap_or_else(|error| format!("provider body unavailable: {error}"));
+                    log_cloud_provider_failure(
+                        "gemini",
+                        "http_status",
+                        &format!(
+                            "model={} status={} detail={}",
+                            model,
+                            status_code,
+                            summarize_cloud_error_body(&body)
+                        ),
+                    );
+                    if gemini_status_can_try_next_model(status_code) && index + 1 < candidates.len()
+                    {
+                        eprintln!(
+                            "ToyTalk cloud provider fallback provider=gemini from_model={} to_model={} reason=http_{}",
+                            sanitize_latency_log_token(model),
+                            sanitize_latency_log_token(&candidates[index + 1]),
+                            status_code
+                        );
+                        continue;
+                    }
+                    return Err(ConversationEngineError::GenerationFailed);
+                }
+                let bytes = response.bytes().map_err(|error| {
+                    log_cloud_provider_failure(
+                        "gemini",
+                        "body_read",
+                        &format!("model={model} detail={error}"),
+                    );
                     ConversationEngineError::GenerationFailed
                 })?;
-            if !response.status().is_success() {
-                let status = response.status();
-                let body = response
-                    .text()
-                    .unwrap_or_else(|error| format!("provider body unavailable: {error}"));
-                log_cloud_provider_failure(
-                    "gemini",
-                    "http_status",
-                    &format!(
-                        "status={} detail={}",
-                        status.as_u16(),
-                        summarize_cloud_error_body(&body)
-                    ),
-                );
-                return Err(ConversationEngineError::GenerationFailed);
+                return Self::parse_response(bytes.as_ref());
             }
-            let bytes = response.bytes().map_err(|error| {
-                log_cloud_provider_failure("gemini", "body_read", &error.to_string());
-                ConversationEngineError::GenerationFailed
-            })?;
-            Self::parse_response(bytes.as_ref())
+            Err(ConversationEngineError::GenerationFailed)
         }
 
         fn cancel(&self) -> Result<(), ConversationEngineError> {
@@ -8448,6 +8821,10 @@ done
         fn clear_session(&self) -> Result<(), ConversationEngineError> {
             Ok(())
         }
+    }
+
+    pub(super) fn gemini_status_can_try_next_model(status_code: u16) -> bool {
+        matches!(status_code, 404 | 429 | 503)
     }
 
     impl OpenAiConversationEngine {
@@ -12330,6 +12707,260 @@ mod tests {
 
         assert_eq!(outcome.response.speech, "I checked carefully and answered.");
         assert!(!seen_web_search_allowed.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn clarification_answer_inherits_previous_weather_question() {
+        let turn = LocalTurnCommand {
+            age_band: AgeBand::FourToFive,
+            character_alias: "Buddy".to_owned(),
+            text: "I am in San Jose".to_owned(),
+            parent_guidance: None,
+            child_age_years: Some(5),
+            child_age_months: Some(6),
+            character_play_age_years: Some(3),
+            recent_turns: vec![
+                ConversationTurn {
+                    role: TurnRole::Child,
+                    text: "How is the weather?".to_owned(),
+                },
+                ConversationTurn {
+                    role: TurnRole::Character,
+                    text: "Oh, the weather! I can tell you if you tell me where you are?"
+                        .to_owned(),
+                },
+            ],
+        };
+
+        let contextualized = contextualized_turn_for_generation(&turn);
+
+        assert_eq!(
+            contextualized.text,
+            "How is the weather? Child clarification: I am in San Jose."
+        );
+        assert!(keyword_search_routing_decision(&contextualized.text).needs_web_search);
+        assert_eq!(turn.text, "I am in San Jose");
+    }
+
+    #[test]
+    fn clarification_answer_accepts_location_prompt_without_question_mark() {
+        let turn = LocalTurnCommand {
+            age_band: AgeBand::FourToFive,
+            character_alias: "Buddy".to_owned(),
+            text: "San Jose".to_owned(),
+            parent_guidance: None,
+            child_age_years: Some(5),
+            child_age_months: Some(6),
+            character_play_age_years: Some(3),
+            recent_turns: vec![
+                ConversationTurn {
+                    role: TurnRole::Child,
+                    text: "How is the weather?".to_owned(),
+                },
+                ConversationTurn {
+                    role: TurnRole::Character,
+                    text:
+                        "Oh, the weather! I can tell you all about it if you tell me where you are!"
+                            .to_owned(),
+                },
+            ],
+        };
+
+        let contextualized = contextualized_turn_for_generation(&turn);
+
+        assert_eq!(
+            contextualized.text,
+            "How is the weather? Child clarification: San Jose."
+        );
+        assert!(keyword_search_routing_decision(&contextualized.text).needs_web_search);
+    }
+
+    #[test]
+    fn clarification_answer_accepts_curly_apostrophe_location() {
+        let turn = LocalTurnCommand {
+            age_band: AgeBand::FourToFive,
+            character_alias: "Buddy".to_owned(),
+            text: "I’m in San Jose".to_owned(),
+            parent_guidance: None,
+            child_age_years: Some(5),
+            child_age_months: Some(6),
+            character_play_age_years: Some(3),
+            recent_turns: vec![
+                ConversationTurn {
+                    role: TurnRole::Child,
+                    text: "Is it raining today?".to_owned(),
+                },
+                ConversationTurn {
+                    role: TurnRole::Character,
+                    text: "Where are you today?".to_owned(),
+                },
+            ],
+        };
+
+        let contextualized = contextualized_turn_for_generation(&turn);
+
+        assert_eq!(
+            contextualized.text,
+            "Is it raining today? Child clarification: I’m in San Jose."
+        );
+        assert!(keyword_search_routing_decision(&contextualized.text).needs_web_search);
+        assert_eq!(
+            safe_city_or_area_from_text("I’m in San Jose").as_deref(),
+            Some("San Jose")
+        );
+    }
+
+    #[test]
+    fn clarification_answer_ignores_intervening_dot_noise() {
+        let turn = LocalTurnCommand {
+            age_band: AgeBand::FourToFive,
+            character_alias: "Buddy".to_owned(),
+            text: "San Jose".to_owned(),
+            parent_guidance: None,
+            child_age_years: Some(5),
+            child_age_months: Some(6),
+            character_play_age_years: Some(3),
+            recent_turns: vec![
+                ConversationTurn {
+                    role: TurnRole::Child,
+                    text: "How is the weather today?".to_owned(),
+                },
+                ConversationTurn {
+                    role: TurnRole::Character,
+                    text: "It is warm in lots of places. Could you tell me what city or state you are in?"
+                        .to_owned(),
+                },
+                ConversationTurn {
+                    role: TurnRole::Child,
+                    text: "................................................".to_owned(),
+                },
+                ConversationTurn {
+                    role: TurnRole::Character,
+                    text: "It looks like you sent a lot of dots. Did you have a question?"
+                        .to_owned(),
+                },
+            ],
+        };
+
+        let contextualized = contextualized_turn_for_generation(&turn);
+
+        assert_eq!(
+            contextualized.text,
+            "How is the weather today? Child clarification: San Jose."
+        );
+        assert!(keyword_search_routing_decision(&contextualized.text).needs_web_search);
+    }
+
+    #[test]
+    fn clarification_answer_does_not_cross_substantive_intervening_turn() {
+        let turn = LocalTurnCommand {
+            age_band: AgeBand::FourToFive,
+            character_alias: "Buddy".to_owned(),
+            text: "San Jose".to_owned(),
+            parent_guidance: None,
+            child_age_years: Some(5),
+            child_age_months: Some(6),
+            character_play_age_years: Some(3),
+            recent_turns: vec![
+                ConversationTurn {
+                    role: TurnRole::Child,
+                    text: "How is the weather today?".to_owned(),
+                },
+                ConversationTurn {
+                    role: TurnRole::Character,
+                    text: "Could you tell me what city or state you are in?".to_owned(),
+                },
+                ConversationTurn {
+                    role: TurnRole::Child,
+                    text: "Why do dogs wag tails?".to_owned(),
+                },
+                ConversationTurn {
+                    role: TurnRole::Character,
+                    text: "Dogs wag tails when they feel excited or happy!".to_owned(),
+                },
+            ],
+        };
+
+        let contextualized = contextualized_turn_for_generation(&turn);
+
+        assert_eq!(contextualized.text, "San Jose");
+    }
+
+    #[test]
+    fn gemini_default_model_is_current_stable_flash() {
+        assert_eq!(DEFAULT_GEMINI_MODEL, "gemini-3.5-flash");
+    }
+
+    #[test]
+    #[cfg(feature = "native-runtime")]
+    fn retired_gemini_flash_model_is_self_healed() {
+        assert_eq!(
+            normalize_gemini_model("gemini-2.5-flash"),
+            DEFAULT_GEMINI_MODEL
+        );
+        assert_eq!(
+            normalize_gemini_model("models/gemini-2.5-flash"),
+            DEFAULT_GEMINI_MODEL
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "native-runtime")]
+    fn gemini_model_candidates_include_non_duplicate_fallbacks() {
+        assert_eq!(
+            gemini_model_candidates("gemini-3.5-flash"),
+            vec![
+                "gemini-3.5-flash".to_owned(),
+                "gemini-3.1-flash-lite".to_owned(),
+                "gemini-flash-latest".to_owned(),
+                "gemini-2.5-flash-lite".to_owned(),
+            ]
+        );
+        assert_eq!(
+            gemini_model_candidates("gemini-3.1-flash-lite"),
+            vec![
+                "gemini-3.1-flash-lite".to_owned(),
+                "gemini-flash-latest".to_owned(),
+                "gemini-2.5-flash-lite".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "native-runtime")]
+    fn gemini_model_fallback_is_only_for_availability_errors() {
+        assert!(native_runtime::gemini_status_can_try_next_model(404));
+        assert!(native_runtime::gemini_status_can_try_next_model(429));
+        assert!(native_runtime::gemini_status_can_try_next_model(503));
+        assert!(!native_runtime::gemini_status_can_try_next_model(400));
+        assert!(!native_runtime::gemini_status_can_try_next_model(401));
+    }
+
+    #[test]
+    fn clarification_context_does_not_steal_unrelated_followup() {
+        let turn = LocalTurnCommand {
+            age_band: AgeBand::FourToFive,
+            character_alias: "Buddy".to_owned(),
+            text: "Why do dogs wag tails?".to_owned(),
+            parent_guidance: None,
+            child_age_years: Some(5),
+            child_age_months: Some(6),
+            character_play_age_years: Some(3),
+            recent_turns: vec![
+                ConversationTurn {
+                    role: TurnRole::Child,
+                    text: "How is the weather?".to_owned(),
+                },
+                ConversationTurn {
+                    role: TurnRole::Character,
+                    text: "I can tell you if you tell me where you are?".to_owned(),
+                },
+            ],
+        };
+
+        let contextualized = contextualized_turn_for_generation(&turn);
+
+        assert_eq!(contextualized.text, "Why do dogs wag tails?");
     }
 
     #[test]

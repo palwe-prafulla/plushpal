@@ -16,6 +16,8 @@ use plushpal_desktop_gateway::LoopbackEndpoint;
 #[cfg(feature = "native-runtime")]
 use plushpal_desktop_host::ParentProfileStore;
 use plushpal_desktop_host::{build_router, HostState, OsTokenSource, SystemClock, TokenSource};
+#[cfg(feature = "native-runtime")]
+use plushpal_desktop_host::{configured_gemini_model, configured_openai_model};
 use tokio::net::TcpListener;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -406,8 +408,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 {
                     match provider.as_str() {
                         "openai" => {
-                            let model = env::var("PLUSHPAL_OPENAI_MODEL")
-                                .unwrap_or_else(|_| "gpt-4.1-mini".to_owned());
+                            let model = configured_openai_model();
                             match OpenAiConversationEngine::new(api_key, model.clone()) {
                                 Ok(engine) => {
                                     eprintln!(
@@ -424,8 +425,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
                         _ => {
-                            let model = env::var("PLUSHPAL_GEMINI_MODEL")
-                                .unwrap_or_else(|_| "gemini-2.5-flash".to_owned());
+                            let model = configured_gemini_model();
                             match GeminiConversationEngine::new(api_key, model.clone()) {
                                 Ok(engine) => {
                                     eprintln!(
@@ -466,8 +466,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 {
                     match provider.as_str() {
                         "openai" => {
-                            let model = env::var("PLUSHPAL_OPENAI_MODEL")
-                                .unwrap_or_else(|_| "gpt-4.1-mini".to_owned());
+                            let model = configured_openai_model();
                             match OpenAiConversationEngine::new(api_key, model.clone()) {
                                 Ok(engine) => {
                                     eprintln!(
@@ -483,8 +482,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
                         _ => {
-                            let model = env::var("PLUSHPAL_GEMINI_MODEL")
-                                .unwrap_or_else(|_| "gemini-2.5-flash".to_owned());
+                            let model = configured_gemini_model();
                             match GeminiConversationEngine::new(api_key, model.clone()) {
                                 Ok(engine) => {
                                     eprintln!(

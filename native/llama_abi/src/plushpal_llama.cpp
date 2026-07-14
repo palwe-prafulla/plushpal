@@ -66,7 +66,7 @@ std::string token_piece(const llama_vocab *vocab, llama_token token) {
 
 void log_native_error(enum ggml_log_level level, const char *text, void *) {
   if (level == GGML_LOG_LEVEL_ERROR && text != nullptr) {
-    std::fputs("PlushBuddy Hub llama runtime: ", stderr);
+    std::fputs("ToyTalk Hub llama runtime: ", stderr);
     std::fputs(text, stderr);
   }
 }
@@ -146,7 +146,7 @@ void run_generation(pp_llama_engine_t *engine, llama_model *model,
   const std::string user_payload = prompt_text;
   const char *chat_template = llama_model_chat_template(model, nullptr);
   constexpr const char *system_prompt =
-      "You are the local PlushBuddy child-safety response engine. Follow the "
+      "You are the local ToyTalk child-safety response engine. Follow the "
       "immutable policy in the user payload. Never expose internal reasoning. "
       "Return exactly one JSON object and no Markdown.";
   bool applied_template = false;
