@@ -1,6 +1,6 @@
 # Third-party components
 
-PlushBuddy combines app code, local model/runtime integrations, and optional
+ToyTalk combines app code, local model/runtime integrations, and optional
 cloud provider APIs. Check each third-party component's license and terms before
 redistributing production builds.
 
@@ -9,11 +9,11 @@ redistributing production builds.
 | Component | How it is used | Notes |
 |---|---|---|
 | Flutter / Dart | Shared Android, iPhone, browser UI | Managed through Flutter tooling. |
-| Rust crates | PlushBuddy Hub host, shared domain/provider/storage logic | Managed through Cargo. |
-| Axum / Tokio | Local PlushBuddy Hub HTTP/WebSocket host | Managed through Cargo. |
+| Rust crates | ToyTalk Hub host, shared domain/provider/storage logic | Managed through Cargo. |
+| Axum / Tokio | Local ToyTalk Hub HTTP/WebSocket host | Managed through Cargo. |
 | llama.cpp | Pinned submodule for local reasoning experiments/fallbacks | Keep upstream license files with the submodule. |
-| LuxTTS | Downloaded by public build/setup scripts for local voice synthesis | Downloaded under `~/Downloads/PlushPal/deps` or bundled into local artifacts. Review upstream license/model card before redistribution. |
-| LinaCodec / torch / torchaudio / transformers / onnxruntime / librosa and related Python packages | LuxTTS runtime dependencies | Installed into the packaged local PlushBuddy Hub runtime during macOS artifact creation. |
+| LuxTTS | Downloaded/prepared by ToyTalk Hub setup for local voice synthesis | Stored outside the repo in user-local support/cache locations. Review upstream license/model card before redistribution. |
+| LinaCodec / torch / torchaudio / transformers / onnxruntime / librosa and related Python packages | LuxTTS runtime dependencies | Prepared by ToyTalk Hub setup rather than committed to the source repo. |
 | Gemini API | Optional parent-configured cloud reasoning provider | Users provide their own key and accept provider terms. |
 | OpenAI API | Optional parent-configured cloud reasoning provider | Users provide their own key and accept provider terms. |
 
@@ -26,6 +26,6 @@ reviewed the applicable provider/model terms.
 
 ## Release note
 
-The local `make public-artifacts` command creates large macOS artifacts because
-it bundles the local Python/LuxTTS runtime. Those artifacts are intentionally
-written outside the source repository under `~/Downloads/PlushPal/artifacts`.
+The local `make public-artifacts` command writes generated apps outside the
+source repository under `~/Downloads/ToyTalk/artifacts`. Heavy model/runtime
+payloads are prepared by ToyTalk Hub setup instead of being committed to git.

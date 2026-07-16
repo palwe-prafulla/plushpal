@@ -1,6 +1,6 @@
 # Security Policy
 
-PlushBuddy is an experimental local-first voice companion. Please treat child
+ToyTalk is an experimental local-first voice companion. Please treat child
 data, voice samples, photos, and provider API keys as sensitive.
 
 ## Supported versions
@@ -16,7 +16,7 @@ GitHub, or contact the repository owner directly.
 
 Useful reports include:
 
-- impacted platform: Android, iPhone, browser, Mac client, or PlushBuddy Hub;
+- impacted platform: Android, iPhone, browser, Mac client, or ToyTalk Hub;
 - reproduction steps;
 - whether private audio/photo/profile/API-key data can be exposed;
 - logs with secrets redacted.

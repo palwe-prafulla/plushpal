@@ -1,6 +1,6 @@
-# Contributing to PlushBuddy
+# Contributing to ToyTalk
 
-Thanks for taking a look at PlushBuddy.
+Thanks for taking a look at ToyTalk.
 
 This public repository is currently a personal showcase/open-source reference
 project. It is not accepting external pull requests, patches, direct commits,
@@ -27,7 +27,7 @@ qa/automation/run_local_quality_gate.sh
 ```
 
 Build and test outputs are written outside the repository under
-`~/Downloads/PlushPal` by default.
+`~/Downloads/ToyTalk` by default.
 
 If you fork the project and make local changes, the main local quality gate is:
 
@@ -41,9 +41,9 @@ If your change touches packaging, also run:
 make public-artifacts
 ```
 
-If your change touches Android, iPhone, browser, Mac client, or PlushBuddy Hub
+If your change touches Android, iPhone, browser, Mac client, or ToyTalk Hub
 behavior in your fork, keep the relevant smoke-test evidence from
-`~/Downloads/PlushPal/test-results`.
+`~/Downloads/ToyTalk/test-results`.
 
 ## Privacy and safety rules
 
@@ -58,6 +58,6 @@ behavior in your fork, keep the relevant smoke-test evidence from
 ## Code style
 
 - Keep reusable product logic in shared Flutter/Rust layers where possible.
-- Keep PlushBuddy Hub responsible for voice/model services, not for owning client
+- Keep ToyTalk Hub responsible for voice/model services, not for owning client
   profile/history state.
 - Prefer focused tests for each regression.
